@@ -22,8 +22,11 @@ server/data/cr_cache.json
 *.json.gz
 
 # Packages & Archives
+release/
 *.zip
 *.tar.gz
+*.dmg
+*.blockmap
 
 # Logs
 logs

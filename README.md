@@ -67,24 +67,20 @@
 
 ## 💻 설치 및 실행 방법 (Quick Start Guide)
 
-### 🪟 Windows 환경
+### 🍎 macOS 환경 (추천: 전용 설치형 DMG 또는 스크립트)
 
-1. [GitHub Releases](https://github.com/HyungdukSeo/E-sim/releases) 또는 저장소에서 프로젝트를 다운로드합니다.
-2. 폴더 내의 **`start.bat`** 파일을 **더블 클릭**합니다.
-   * Node.js가 설치되어 있다면 필요한 모듈을 자동 구성하고 로컬 서버를 즉시 시작합니다.
-   * 브라우저(`http://localhost:3001`)가 자동으로 실행됩니다.
-3. 서비스 종료 시에는 **`stop.bat`**을 더블 클릭하거나 실행 창을 닫으시면 됩니다.
+#### 방법 1: macOS 전용 설치형 DMG 파일로 설치 (가장 간편)
+1. [GitHub Releases](https://github.com/HyungdukSeo/E-sim/releases)에서 **`Mantis CR Ultra Hub-1.0.0-arm64.dmg`** 를 다운로드합니다.
+2. 다운로드한 `.dmg` 파일을 열고 **`Mantis CR Ultra Hub`** 아이콘을 **`Applications`** 폴더로 드래그하여 설치합니다.
+3. 실행하면 상단 **메뉴바(시스템 트레이)에 번개 아이콘이 상주**하며 백그라운드로 작동합니다.
+   * **트레이 아이콘 클릭 메뉴**:
+     * 🌐 **Mantis CR Hub 열기** (전용 데스크톱 창 또는 브라우저 실행)
+     * 🔄 **Mantis 최신 데이터 즉시 동기화 / 업데이트** (원격 7,700건 원클릭 갱신)
+     * 🟢 **서버 상태 실시간 모니터링 (Port 3001)**
+     * ⚙️ **ClearCase SSH 설정 열기**
+     * 🚪 **완전 종료**
 
-```cmd
-:: 수동 실행 시 (Windows CMD / PowerShell)
-cd E-sim
-start.bat
-```
-
----
-
-### 🍎 macOS / 🐧 Linux 환경
-
+#### 방법 2: 터미널 스크립트로 실행
 1. 저장소를 클론합니다:
    ```bash
    git clone https://github.com/HyungdukSeo/E-sim.git
@@ -100,6 +96,22 @@ start.bat
    ```bash
    ./stop.sh
    ```
+
+---
+
+### 🪟 Windows 환경
+
+1. [GitHub Releases](https://github.com/HyungdukSeo/E-sim/releases) 또는 저장소에서 프로젝트를 다운로드합니다.
+2. 폴더 내의 **`start.bat`** 파일을 **더블 클릭**합니다.
+   * Node.js가 설치되어 있다면 필요한 모듈을 자동 구성하고 로컬 서버를 즉시 시작합니다.
+   * 브라우저(`http://localhost:3001`)가 자동으로 실행됩니다.
+3. 서비스 종료 시에는 **`stop.bat`**을 더블 클릭하거나 실행 창을 닫으시면 됩니다.
+
+```cmd
+:: 수동 실행 시 (Windows CMD / PowerShell)
+cd E-sim
+start.bat
+```
 
 ---
 
