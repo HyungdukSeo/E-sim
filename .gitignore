@@ -21,6 +21,10 @@ data/cr_database.json
 server/data/cr_cache.json
 *.json.gz
 
+# Packages & Archives
+*.zip
+*.tar.gz
+
 # Logs
 logs
 *.log
