@@ -1,0 +1,25 @@
+         sdpLen = 454
+         sdpBody =
+v=0^M
+o=iPECSCM 3919 1 IN IP4 172.17.48.253^M
+s=iPECSCM Call^M
+c=IN IP4 172.17.48.253^M
+t=0 0^M
+m=audio 8154 RTP/AVP 8 0 18 101^M
+a=rtpmap:8 PCMA/8000^M
+a=rtpmap:0 PCMU/8000^M
+a=rtpmap:18 G729/8000^M
+a=fmtp:18 annexb=no^M
+a=rtpmap:101 telephone-event/8000^M
+a=fmtp:101 0-15^M
+a=sendrecv^M
+m=video 8160 RTP/AVP 96^M
+a=rtpmap:96 H264/90000^M
+a=fmtp:96 profile-level-id=42801F^M
+a=rtcp-fb:* trr-int 1000^M
+a=rtcp-fb:* ccm tmmbr^M
+a=rtcp-fb:96 nack pli^M
+a=rtcp-fb:96 ccm fir^M
+
+         useVideo = TRUE
+         useSrtp = FALSE
