@@ -25,8 +25,15 @@ function logErrorToFile(msg) {
   } catch (e) {}
 }
 
+// Only these process images are ever safe to auto-kill — the app's own
+// leftover Node/Electron instance from a previous crash. Never kill an
+// arbitrary PID just because it happens to occupy our port: on a shared
+// machine or with a port collision, that could be someone else's process.
+const KILLABLE_PROCESS_NAMES = new Set(['node.exe', 'electron.exe', 'Mantis CR Ultra Hub.exe']);
+
 /**
- * Kill any zombie process occupying PORT from previous crash or run
+ * Kill any zombie process occupying PORT from previous crash or run.
+ * Verifies the PID's process image name before killing it.
  */
 function killOldPortProcess(port = PORT) {
   try {
@@ -37,10 +44,23 @@ function killOldPortProcess(port = PORT) {
         if (line.includes('LISTENING')) {
           const parts = line.trim().split(/\s+/);
           const pid = parts[parts.length - 1];
-          if (pid && parseInt(pid, 10) !== process.pid) {
-            console.log(`[Electron] Clearing lingering process PID ${pid} on port ${port}...`);
-            execSync(`taskkill /f /pid ${pid} >nul 2>nul`);
+          if (!pid || parseInt(pid, 10) === process.pid) continue;
+
+          let imageName = '';
+          try {
+            const taskOutput = execSync(`tasklist /fi "PID eq ${pid}" /fo csv /nh`, { encoding: 'utf-8' });
+            const match = taskOutput.match(/^"([^"]+)"/);
+            imageName = match ? match[1] : '';
+          } catch (e) {}
+
+          if (!KILLABLE_PROCESS_NAMES.has(imageName)) {
+            console.log(`[Electron] Skipping PID ${pid} on port ${port} (image "${imageName}" not recognized as our own process)`);
+            logErrorToFile(`Skipped killing PID ${pid} on port ${port}: unrecognized image "${imageName}"`);
+            continue;
           }
+
+          console.log(`[Electron] Clearing lingering process PID ${pid} (${imageName}) on port ${port}...`);
+          execSync(`taskkill /f /pid ${pid} >nul 2>nul`);
         }
       }
     }

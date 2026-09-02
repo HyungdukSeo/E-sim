@@ -49,7 +49,12 @@ function smartDecode(buf) {
 /**
  * Execute command over SSH and capture raw Binary Buffer
  */
-function execSSHBuffer(conn, command, timeoutMs = 8000) {
+/**
+ * @param {object} [onStream] - optional out-param; if provided, its `.stream` is set
+ *   to the live ssh2 stream once opened, so a caller racing several of these can
+ *   close the losers' channels instead of leaving them running server-side.
+ */
+function execSSHBuffer(conn, command, timeoutMs = 8000, onStream) {
   return new Promise((resolve, reject) => {
     let timer = setTimeout(() => {
       reject(new Error(`명령어 실행 시간 초과 (${timeoutMs / 1000}초)`));
@@ -60,6 +65,8 @@ function execSSHBuffer(conn, command, timeoutMs = 8000) {
         clearTimeout(timer);
         return reject(err);
       }
+
+      if (onStream) onStream.stream = stream;
 
       const chunks = [];
       let stderr = '';
@@ -282,11 +289,15 @@ async function fetchOneVersion(conn, vobSubPath, versionSuffix, candidateViews) 
     view: candidateViews[0] || 'default'
   });
 
-  // Run ALL attempts in PARALLEL — first non-empty buffer wins
+  // Run ALL attempts in PARALLEL — first non-empty buffer wins.
+  // Track each attempt's live stream so the losers' channels can be closed
+  // as soon as we have a winner, instead of left running server-side for
+  // up to their own 6s timeout.
+  const streamRefs = attempts.map(() => ({ stream: undefined }));
   try {
     const result = await Promise.any(
-      attempts.map(({ cmd, view }) =>
-        execSSHBuffer(conn, cmd, 6000).then((res) => {
+      attempts.map(({ cmd, view }, i) =>
+        execSSHBuffer(conn, cmd, 6000, streamRefs[i]).then((res) => {
           if (res.buffer && res.buffer.length > 0) {
             console.log(`[SSH Diff] Read ${res.buffer.length} bytes via view=${view} path=${filePath}`);
             return { buffer: res.buffer, view };
@@ -299,6 +310,12 @@ async function fetchOneVersion(conn, vobSubPath, versionSuffix, candidateViews) 
   } catch {
     // All attempts returned empty or timed out
     return { buffer: Buffer.alloc(0), view: candidateViews[0] || 'default' };
+  } finally {
+    for (const ref of streamRefs) {
+      if (ref.stream && !ref.stream.destroyed) {
+        try { ref.stream.close(); } catch (e) {}
+      }
+    }
   }
 }
 
@@ -391,7 +408,13 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '') {
   const cacheKey = getCacheKey(config.host, vobSubPath, prevSuffix, currSuffix);
   if (diffCache.has(cacheKey)) {
     console.log(`[SSH Diff Cache HIT] ${cacheKey} (0ms)`);
-    return diffCache.get(cacheKey);
+    // Map iterates in insertion order, so re-insert on hit to mark this
+    // entry as most-recently-used — otherwise eviction below is plain
+    // FIFO and frequently-viewed diffs get evicted just as fast as one-offs.
+    const hit = diffCache.get(cacheKey);
+    diffCache.delete(cacheKey);
+    diffCache.set(cacheKey, hit);
+    return hit;
   }
 
   // Ordered candidate views (Target view 1st)

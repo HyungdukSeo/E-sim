@@ -117,26 +117,31 @@ export function filterAndSearchCRs(
   const hasKeywords = parsedQuery.rawKeywords.length > 0 || parsedQuery.exactPhrases.length > 0;
   const hasFieldFilters = Object.keys(parsedQuery.fieldFilters).length > 0;
 
-  const filtered = allCrs.filter(cr => {
+  type FacetField = 'projects' | 'statuses' | 'customers' | 'reporters' | 'assignees';
+
+  // Applies every non-sidebar-facet predicate, plus all sidebar facets EXCEPT `skip`.
+  // Used both for the final result set (skip = none) and for computing each facet's
+  // own counts (skip = that facet), so selecting a project doesn't hide sibling projects.
+  const matchesCr = (cr: CRItem, skip?: FacetField): boolean => {
     // 1. Bookmarks filter
     if (bookmarkedOnly && !bookmarks.has(cr.crid)) {
       return false;
     }
 
     // 2. Facet filters (Sidebar)
-    if (projects.length > 0 && !projects.includes(cr.project)) {
+    if (skip !== 'projects' && projects.length > 0 && !projects.includes(cr.project)) {
       return false;
     }
-    if (statuses.length > 0 && !statuses.includes(cr.status)) {
+    if (skip !== 'statuses' && statuses.length > 0 && !statuses.includes(cr.status)) {
       return false;
     }
-    if (customers.length > 0 && !customers.includes(cr.customer || '공통/미지정')) {
+    if (skip !== 'customers' && customers.length > 0 && !customers.includes(cr.customer || '공통/미지정')) {
       return false;
     }
-    if (reporters.length > 0 && !reporters.includes(cr.reporter)) {
+    if (skip !== 'reporters' && reporters.length > 0 && !reporters.includes(cr.reporter)) {
       return false;
     }
-    if (assignees.length > 0 && !assignees.includes(cr.assignee)) {
+    if (skip !== 'assignees' && assignees.length > 0 && !assignees.includes(cr.assignee)) {
       return false;
     }
     if (hasCheckinOnly && (!cr.files || cr.files.length === 0)) {
@@ -192,9 +197,13 @@ export function filterAndSearchCRs(
     }
 
     return true;
-  });
+  };
 
-  // Calculate dynamic facets for the active result set
+  const filtered = allCrs.filter(cr => matchesCr(cr));
+
+  // Calculate dynamic facets. Each facet is derived from the result set filtered by
+  // every OTHER active filter but not by itself, so e.g. checking one project still
+  // shows the other available projects (with their narrowed counts) instead of hiding them.
   const facetProjects: Record<string, number> = {};
   const facetStatuses: Record<string, number> = {};
   const facetCustomers: Record<string, number> = {};
@@ -202,13 +211,25 @@ export function filterAndSearchCRs(
   const facetAssignees: Record<string, number> = {};
   let withCheckinCount = 0;
 
+  for (const item of allCrs) {
+    if (item.project && matchesCr(item, 'projects')) {
+      facetProjects[item.project] = (facetProjects[item.project] || 0) + 1;
+    }
+    if (item.status && matchesCr(item, 'statuses')) {
+      facetStatuses[item.status] = (facetStatuses[item.status] || 0) + 1;
+    }
+    if (matchesCr(item, 'customers')) {
+      const cust = item.customer || '공통/미지정';
+      facetCustomers[cust] = (facetCustomers[cust] || 0) + 1;
+    }
+    if (item.reporter && matchesCr(item, 'reporters')) {
+      facetReporters[item.reporter] = (facetReporters[item.reporter] || 0) + 1;
+    }
+    if (item.assignee && matchesCr(item, 'assignees')) {
+      facetAssignees[item.assignee] = (facetAssignees[item.assignee] || 0) + 1;
+    }
+  }
   for (const item of filtered) {
-    if (item.project) facetProjects[item.project] = (facetProjects[item.project] || 0) + 1;
-    if (item.status) facetStatuses[item.status] = (facetStatuses[item.status] || 0) + 1;
-    const cust = item.customer || '공통/미지정';
-    facetCustomers[cust] = (facetCustomers[cust] || 0) + 1;
-    if (item.reporter) facetReporters[item.reporter] = (facetReporters[item.reporter] || 0) + 1;
-    if (item.assignee) facetAssignees[item.assignee] = (facetAssignees[item.assignee] || 0) + 1;
     if (item.files && item.files.length > 0) withCheckinCount++;
   }
 

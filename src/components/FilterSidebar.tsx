@@ -50,6 +50,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
 
   const [projectSearch, setProjectSearch] = useState('');
   const [reporterSearch, setReporterSearch] = useState('');
+  const [assigneeSearch, setAssigneeSearch] = useState('');
 
   const toggleSection = (section: keyof typeof openSections) => {
     setOpenSections(prev => ({ ...prev, [section]: !prev[section] }));
@@ -82,6 +83,12 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
   // Reporters
   const sortedReporters = Object.entries(facets.reporters)
     .filter(([r]) => !reporterSearch || r.toLowerCase().includes(reporterSearch.toLowerCase()))
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 15);
+
+  // Assignees
+  const sortedAssignees = Object.entries(facets.assignees)
+    .filter(([a]) => !assigneeSearch || a.toLowerCase().includes(assigneeSearch.toLowerCase()))
     .sort((a, b) => b[1] - a[1])
     .slice(0, 15);
 
@@ -148,6 +155,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                   return (
                     <label
                       key={proj}
+                      onClick={() => toggleArrayFilter('projects', proj)}
                       className="flex items-center justify-between text-xs py-1 px-1.5 rounded-lg hover:bg-slate-800/60 cursor-pointer group transition-colors"
                     >
                       <div className="flex items-center gap-2 truncate max-w-[170px]">
@@ -187,6 +195,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                 return (
                   <label
                     key={st}
+                    onClick={() => toggleArrayFilter('statuses', st)}
                     className="flex items-center justify-between text-xs py-1 px-1.5 rounded-lg hover:bg-slate-800/60 cursor-pointer group transition-colors"
                   >
                     <div className="flex items-center gap-2">
@@ -225,6 +234,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                 return (
                   <label
                     key={cust}
+                    onClick={() => toggleArrayFilter('customers', cust)}
                     className="flex items-center justify-between text-xs py-1 px-1.5 rounded-lg hover:bg-slate-800/60 cursor-pointer group transition-colors"
                   >
                     <div className="flex items-center gap-2 truncate max-w-[170px]">
@@ -271,6 +281,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                   return (
                     <label
                       key={rep}
+                      onClick={() => toggleArrayFilter('reporters', rep)}
                       className="flex items-center justify-between text-xs py-1 px-1.5 rounded-lg hover:bg-slate-800/60 cursor-pointer group transition-colors"
                     >
                       <div className="flex items-center gap-2 truncate max-w-[170px]">
@@ -290,7 +301,55 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
           )}
         </div>
 
-        {/* 5. VOB & Specific File Keyword */}
+        {/* 5. Top Assignees Section */}
+        <div className="pt-2 border-t border-slate-800/80">
+          <button
+            onClick={() => toggleSection('assignees')}
+            className="w-full flex items-center justify-between text-xs font-semibold text-slate-300 py-1 hover:text-white"
+          >
+            <span className="flex items-center gap-1.5">
+              <UserCheck className="w-3.5 h-3.5 text-cyan-400" />
+              담당자 (Assignee)
+            </span>
+            {openSections.assignees ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          </button>
+
+          {openSections.assignees && (
+            <div className="mt-2 space-y-1">
+              <input
+                type="text"
+                placeholder="담당자 검색..."
+                value={assigneeSearch}
+                onChange={e => setAssigneeSearch(e.target.value)}
+                className="w-full px-2.5 py-1 text-xs bg-slate-900/90 text-slate-200 rounded-lg border border-slate-800 focus:border-mantis-500/50 outline-none mb-1.5"
+              />
+              <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
+                {sortedAssignees.map(([asn, count]) => {
+                  const isChecked = filterState.assignees.includes(asn);
+                  return (
+                    <label
+                      key={asn}
+                      onClick={() => toggleArrayFilter('assignees', asn)}
+                      className="flex items-center justify-between text-xs py-1 px-1.5 rounded-lg hover:bg-slate-800/60 cursor-pointer group transition-colors"
+                    >
+                      <div className="flex items-center gap-2 truncate max-w-[170px]">
+                        <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border transition-all ${
+                          isChecked ? 'bg-mantis-500 border-mantis-500 text-slate-950' : 'border-slate-700 bg-slate-900 group-hover:border-slate-600'
+                        }`}>
+                          {isChecked && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                        </div>
+                        <span className={`truncate ${isChecked ? 'text-mantis-300 font-semibold' : 'text-slate-300'}`}>{asn}</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 font-mono">{count.toLocaleString()}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 6. VOB & Specific File Keyword */}
         <div className="pt-2 border-t border-slate-800/80">
           <button
             onClick={() => toggleSection('vob')}
@@ -330,7 +389,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
           )}
         </div>
 
-        {/* 6. Date Range */}
+        {/* 7. Date Range */}
         <div className="pt-2 border-t border-slate-800/80">
           <button
             onClick={() => toggleSection('date')}

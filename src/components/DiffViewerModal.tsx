@@ -103,8 +103,13 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
     }
   }
 
+  // Guards against a stale response landing after the modal has moved on to a
+  // different file (or closed) — only the most recently issued request may setState.
+  const requestTokenRef = useRef(0);
+
   const loadDiff = async () => {
     if (!filePath) return;
+    const myToken = ++requestTokenRef.current;
     setLoading(true);
     setError(null);
 
@@ -112,11 +117,13 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
 
     try {
       const res = await fetchFileDiff(config, filePath, checkinLog);
+      if (requestTokenRef.current !== myToken) return;
       setDiffData(res);
     } catch (err: any) {
+      if (requestTokenRef.current !== myToken) return;
       setError(err.response?.data?.error || err.message || 'SSH Diff 조회 실패');
     } finally {
-      setLoading(false);
+      if (requestTokenRef.current === myToken) setLoading(false);
     }
   };
 
@@ -124,6 +131,7 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
     if (isOpen && filePath) {
       loadDiff();
     } else {
+      requestTokenRef.current++;
       setDiffData(null);
       setError(null);
       setSearchQuery('');
