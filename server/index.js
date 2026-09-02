@@ -258,21 +258,55 @@ if (fs.existsSync(DIST_DIR)) {
   console.warn(`[Backend] Warning: Frontend dist directory not found at ${DIST_DIR}`);
 }
 
-// Start listening
-app.listen(PORT, async () => {
-  console.log(`[Backend] Mantis CR API Server running on http://localhost:${PORT}`);
-  console.log(`[Backend] Portable DB file location: ${DB_FILE}`);
-  
-  const { crs } = getLocalDatabase();
-  if (crs.length === 0) {
-    console.log('[Backend] DB is empty. Performing initial fetch from Mantis...');
+let serverInstance = null;
+
+export function startServer(port = PORT) {
+  if (serverInstance) return Promise.resolve(serverInstance);
+
+  return new Promise((resolve, reject) => {
     try {
-      await syncMantisData('http://192.168.16.200');
+      serverInstance = app.listen(port, async () => {
+        console.log(`[Backend] Mantis CR API Server running on http://localhost:${port}`);
+        console.log(`[Backend] Portable DB file location: ${DB_FILE}`);
+        
+        const { crs } = getLocalDatabase();
+        if (crs.length === 0) {
+          console.log('[Backend] DB is empty. Performing initial fetch from Mantis...');
+          try {
+            await syncMantisData('http://192.168.16.200');
+          } catch (e) {
+            console.warn('[Backend] Initial sync failed (will retry or manual sync):', e.message);
+          }
+        } else {
+          console.log(`[Backend] Loaded ${crs.length} CRs from independent DB file.`);
+        }
+        resolve(serverInstance);
+      });
+
+      serverInstance.on('error', (err) => {
+        console.error('[Backend Server Error]', err);
+        serverInstance = null;
+        reject(err);
+      });
     } catch (e) {
-      console.warn('[Backend] Initial sync failed (will retry or manual sync):', e.message);
+      reject(e);
     }
-  } else {
-    console.log(`[Backend] Loaded ${crs.length} CRs from independent DB file.`);
-  }
+  });
+}
+
+export function stopServer() {
+  return new Promise((resolve) => {
+    if (!serverInstance) return resolve();
+    serverInstance.close(() => {
+      console.log('[Backend] Server stopped successfully.');
+      serverInstance = null;
+      resolve();
+    });
+  });
+}
+
+// Auto-start when imported as module or run directly
+startServer(PORT).catch((err) => {
+  console.warn('[Backend] Auto-start note:', err.message);
 });
 

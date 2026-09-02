@@ -26,26 +26,60 @@ if (!gotTheLock) {
   });
 }
 
+let serverModule = null;
+
 /**
  * Start or import local backend server
  */
-function startBackendServer() {
+async function startBackendServer() {
   if (isServerRunning) return;
   try {
     process.env.USER_DATA_DIR = app.getPath('userData');
-    // Dynamically import ESM server/index.js in background
-    import('../server/index.js')
-      .then(() => {
-        isServerRunning = true;
-        updateTrayMenu();
-        console.log('[Electron] Backend Express server initialized on port', PORT);
-      })
-      .catch((err) => {
-        console.error('[Electron] Failed to start backend server:', err);
-      });
+    if (!serverModule) {
+      serverModule = await import('../server/index.js');
+    }
+    if (serverModule && typeof serverModule.startServer === 'function') {
+      await serverModule.startServer(PORT);
+    }
+    isServerRunning = true;
+    updateTrayMenu();
+    console.log('[Electron] Backend Express server initialized on port', PORT);
   } catch (err) {
-    console.error('[Electron] Server launch error:', err);
+    console.error('[Electron] Failed to start backend server:', err);
+    showNotification('서버 시작 오류 ⚠️', err.message);
   }
+}
+
+/**
+ * Stop local backend server
+ */
+async function stopBackendServer() {
+  if (!isServerRunning) return;
+  try {
+    if (serverModule && typeof serverModule.stopServer === 'function') {
+      await serverModule.stopServer();
+    }
+    isServerRunning = false;
+    updateTrayMenu();
+    showNotification('서버 중지됨 ⏹️', 'Mantis 백엔드 서버(3001)가 중지되었습니다.');
+    console.log('[Electron] Backend server stopped.');
+  } catch (err) {
+    console.error('[Electron] Failed to stop backend server:', err);
+  }
+}
+
+/**
+ * Restart local backend server
+ */
+async function restartBackendServer() {
+  await stopBackendServer();
+  setTimeout(async () => {
+    await startBackendServer();
+    showNotification('서버 재시작 완료 🚀', 'Mantis 백엔드 서버가 다시 구동되었습니다.');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.reload();
+    }
+  }, 400);
 }
 
 /**
@@ -188,26 +222,45 @@ function updateTrayMenu() {
       enabled: false
     },
     {
-      label: isServerRunning ? '🟢 서버 상태: 정상 구동 중 (3001)' : '🟡 서버 상태: 준비 중',
+      label: isServerRunning ? '🟢 서버 상태: 정상 구동 중 (3001)' : '🔴 서버 상태: 중지됨',
       enabled: false
     },
     { type: 'separator' },
     {
       label: '🌐 Mantis CR Hub 열기',
+      enabled: isServerRunning,
       click: () => openAppWindow()
     },
     {
       label: '🔗 기본 웹 브라우저에서 열기',
+      enabled: isServerRunning,
       click: () => shell.openExternal(`http://localhost:${PORT}`)
     },
     { type: 'separator' },
     {
+      label: '▶️ 로컬 서버 시작 (Start Server)',
+      enabled: !isServerRunning,
+      click: () => startBackendServer()
+    },
+    {
+      label: '⏹️ 로컬 서버 중지 (Stop Server)',
+      enabled: isServerRunning,
+      click: () => stopBackendServer()
+    },
+    {
+      label: '🔄 로컬 서버 재시작 (Restart Server)',
+      enabled: isServerRunning,
+      click: () => restartBackendServer()
+    },
+    { type: 'separator' },
+    {
       label: isSyncing ? '⏳ Mantis 데이터 동기화 중...' : '🔄 Mantis 최신 데이터 동기화 / 업데이트',
-      enabled: !isSyncing,
+      enabled: isServerRunning && !isSyncing,
       click: () => triggerMantisSync()
     },
     {
       label: '⚙️ SSH / ClearCase 설정',
+      enabled: isServerRunning,
       click: () => {
         openAppWindow();
         mainWindow.webContents.executeJavaScript("window.location.hash = '#settings';");
@@ -229,7 +282,7 @@ function updateTrayMenu() {
   ]);
 
   tray.setContextMenu(contextMenu);
-  tray.setToolTip('Mantis CR Ultra Search & AI Hub (실행 중)');
+  tray.setToolTip(isServerRunning ? 'Mantis CR Ultra Search & AI Hub (구동 중)' : 'Mantis CR Ultra Search & AI Hub (서버 중지됨)');
 }
 
 /**
