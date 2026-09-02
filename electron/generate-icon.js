@@ -1,32 +1,87 @@
 import fs from 'fs';
 import path from 'path';
 
-// Generate a valid 32x32 and 256x256 PNG tray/app icon
-// We can use a simple SVG converted to PNG or direct PNG buffer
-const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+// Standard 1024x1024 macOS Big Sur/Monterey/Sonoma/Sequoia App Icon
+const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <defs>
-    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#3b82f6" />
-      <stop offset="50%" stop-color="#10b981" />
-      <stop offset="100%" stop-color="#06b6d4" />
+    <!-- Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b1120" />
+      <stop offset="50%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
     </linearGradient>
-    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="6" result="blur" />
+
+    <!-- Glowing Accent Gradient -->
+    <linearGradient id="neonGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f2fe" />
+      <stop offset="50%" stop-color="#4facfe" />
+      <stop offset="100%" stop-color="#00f5a0" />
+    </linearGradient>
+
+    <linearGradient id="boltGrad" x1="20%" y1="0%" x2="80%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="45%" stop-color="#00f2fe" />
+      <stop offset="100%" stop-color="#10b981" />
+    </linearGradient>
+
+    <!-- Border Rim Light -->
+    <linearGradient id="rimGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.8" />
+      <stop offset="50%" stop-color="#818cf8" stop-opacity="0.4" />
+      <stop offset="100%" stop-color="#34d399" stop-opacity="0.8" />
+    </linearGradient>
+
+    <!-- Drop Shadow Filter -->
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="24" flood-color="#000000" flood-opacity="0.6" />
+    </filter>
+
+    <!-- Lightning Glow Filter -->
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="18" result="blur" />
       <feComposite in="SourceGraphic" in2="blur" operator="over" />
     </filter>
   </defs>
-  <rect width="256" height="256" rx="64" fill="#0f172a" />
-  <rect x="8" y="8" width="240" height="240" rx="56" fill="none" stroke="url(#grad)" stroke-width="4" opacity="0.6" />
+
+  <!-- macOS App Squircle Base (fills full canvas with standard 22% radius) -->
+  <rect x="48" y="48" width="928" height="928" rx="210" fill="url(#bgGrad)" filter="url(#shadow)" />
   
-  <!-- Central Lightning & Hub Symbol -->
-  <path d="M140 28 L64 144 L124 144 L116 228 L192 112 L132 112 Z" fill="url(#grad)" filter="url(#glow)" />
-  
-  <!-- Pulse circles -->
-  <circle cx="64" cy="64" r="8" fill="#10b981" opacity="0.8" />
-  <circle cx="192" cy="192" r="8" fill="#3b82f6" opacity="0.8" />
-  <circle cx="192" cy="64" r="6" fill="#06b6d4" opacity="0.8" />
-  <circle cx="64" cy="192" r="6" fill="#10b981" opacity="0.8" />
+  <!-- Subtle inner rim stroke -->
+  <rect x="52" y="52" width="920" height="920" rx="206" fill="none" stroke="url(#rimGrad)" stroke-width="8" opacity="0.85" />
+
+  <!-- Background Circuit & Network Grid Elements -->
+  <g opacity="0.35">
+    <circle cx="512" cy="512" r="320" fill="none" stroke="#38bdf8" stroke-width="3" stroke-dasharray="8,12" />
+    <circle cx="512" cy="512" r="210" fill="none" stroke="#10b981" stroke-width="2" opacity="0.6" />
+    <line x1="160" y1="512" x2="864" y2="512" stroke="#38bdf8" stroke-width="2" stroke-dasharray="6,8" />
+    <line x1="512" y1="160" x2="512" y2="864" stroke="#38bdf8" stroke-width="2" stroke-dasharray="6,8" />
+  </g>
+
+  <!-- Network Nodes -->
+  <g filter="url(#glow)">
+    <circle cx="270" cy="270" r="24" fill="#38bdf8" />
+    <circle cx="754" cy="270" r="24" fill="#00f2fe" />
+    <circle cx="270" cy="754" r="24" fill="#10b981" />
+    <circle cx="754" cy="754" r="24" fill="#34d399" />
+  </g>
+
+  <!-- Connecting Beams -->
+  <path d="M270 270 L512 360 L754 270" fill="none" stroke="url(#neonGrad)" stroke-width="6" opacity="0.6" />
+  <path d="M270 754 L512 660 L754 754" fill="none" stroke="url(#neonGrad)" stroke-width="6" opacity="0.6" />
+
+  <!-- Bold Central Ultra Lightning Bolt (Fills 75% of icon height) -->
+  <g filter="url(#glow)">
+    <path d="M552 140 L280 530 L490 530 L430 884 L764 450 L534 450 Z"
+          fill="url(#boltGrad)" />
+  </g>
+
+  <!-- Central Energy Core Highlight -->
+  <path d="M540 210 L350 510 L490 510 L450 780 L680 470 L520 470 Z"
+        fill="#ffffff" opacity="0.3" />
 </svg>`;
 
-fs.writeFileSync(path.join(process.cwd(), 'electron/assets/icon.svg'), svgIcon, 'utf-8');
-console.log('Generated icon.svg');
+const assetsDir = path.join(process.cwd(), 'electron/assets');
+if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
+
+fs.writeFileSync(path.join(assetsDir, 'icon.svg'), svgIcon, 'utf-8');
+console.log('Created full-bleed 1024x1024 icon.svg');
