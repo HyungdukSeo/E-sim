@@ -405,6 +405,7 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '') {
   const uniqueViews = Array.from(new Set(candidateViews)).filter(Boolean);
 
   let conn;
+  let oldConn;
   try {
     const t0 = Date.now();
     conn = await createSSHClient(config);
@@ -414,12 +415,20 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '') {
     // 1. Ensure target view is started in /bin/sh (parallel start)
     await execSSHBuffer(conn, `/bin/sh -c 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH; cleartool startview "${uniqueViews[0]}" 2>/dev/null || true'`, 3000);
 
-    // 2. Fetch current and previous versions in parallel
+    // 2. Fetch current and previous versions in parallel.
+    // Each fetchOneVersion() races many exec() channels at once (per-view x per-strategy),
+    // so old/new MUST use separate SSH connections — sharing one connection made both
+    // sides compete for the same channel slots and the server would silently starve
+    // whichever side's channels opened second (observed: old/left side always empty).
+    const needOld = predVersion !== '0';
+    if (needOld) {
+      oldConn = await createSSHClient(config);
+    }
     const [newRes, oldRes] = await Promise.all([
       fetchOneVersion(conn, vobSubPath, currSuffix, uniqueViews),
-      predVersion === '0' 
-        ? Promise.resolve({ buffer: Buffer.alloc(0), view: uniqueViews[0] }) 
-        : fetchOneVersion(conn, vobSubPath, prevSuffix, uniqueViews)
+      needOld
+        ? fetchOneVersion(oldConn, vobSubPath, prevSuffix, uniqueViews)
+        : Promise.resolve({ buffer: Buffer.alloc(0), view: uniqueViews[0] })
     ]);
 
     const newBuf = newRes.buffer;
@@ -505,6 +514,10 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '') {
     if (conn) {
       try { conn.end(); } catch (e) {}
       try { conn.destroy(); } catch (e) {}
+    }
+    if (oldConn) {
+      try { oldConn.end(); } catch (e) {}
+      try { oldConn.destroy(); } catch (e) {}
     }
   }
 }
