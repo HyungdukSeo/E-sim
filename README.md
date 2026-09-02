@@ -97,6 +97,29 @@
    ./stop.sh
    ```
 
+#### 방법 3: 소스에서 직접 macOS DMG 빌드
+
+> [!IMPORTANT]
+> **전제 조건**: `data/cr_database.json` 파일이 반드시 있어야 합니다.  
+> 이 파일은 234MB로 GitHub에 올라가 있지 않으므로, **기존 설치된 앱에서 DB를 복사**하거나 앱을 먼저 실행하여 동기화해야 합니다.
+
+```bash
+# 1. 저장소 클론
+git clone https://github.com/HyungdukSeo/E-sim.git
+cd E-sim
+
+# 2. 의존성 설치
+npm install
+
+# 3. data/cr_database.json 준비 (아래 두 방법 중 하나)
+#    방법 A: 기존 설치된 앱의 DB 파일 복사
+#    cp ~/Library/Application\ Support/Mantis\ CR\ Ultra\ Hub/data/cr_database.json data/
+#    방법 B: 앱을 먼저 실행하여 Mantis 서버와 동기화 후 복사
+
+# 4. macOS DMG 빌드 (DB 파일 존재 여부를 자동 검증)
+npm run dist:mac
+```
+
 ---
 
 ### 🪟 Windows 환경

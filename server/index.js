@@ -323,13 +323,20 @@ export function stopServer() {
   });
 }
 
-// Auto-start only when run directly (not when imported by Electron main process)
-const isMain = process.argv[1] && (
-  process.argv[1].endsWith('index.js') || process.argv[1].endsWith('index.cjs')
-);
-if (isMain) {
+// Auto-start only when run directly (e.g., `node server/index.js`)
+// When imported by Electron via `import('../server/index.js')`, Electron calls startServer() manually.
+// process.argv[1] points to the entry file; compare using file URL to be platform-safe (handles Windows backslashes too).
+const _isDirectRun = (() => {
+  try {
+    const entryUrl = new URL('file://' + process.argv[1].replace(/\\/g, '/')).href;
+    return import.meta.url === entryUrl;
+  } catch {
+    return false;
+  }
+})();
+
+if (_isDirectRun) {
   startServer(PORT).catch((err) => {
-    console.warn('[Backend] Auto-start note:', err.message);
+    console.warn('[Backend] Direct-run auto-start note:', err.message);
   });
 }
-
