@@ -142,14 +142,35 @@ function openAppWindow() {
     backgroundColor: '#0b1120'
   });
 
-  mainWindow.loadURL(`http://localhost:${PORT}`);
+  // Load URL with resilient retry mechanism until server responds
+  function tryLoadURL(retries = 15) {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+
+    http.get(`http://localhost:${PORT}/api/status`, (res) => {
+      if (res.statusCode === 200) {
+        mainWindow.loadURL(`http://localhost:${PORT}`);
+      } else if (retries > 0) {
+        setTimeout(() => tryLoadURL(retries - 1), 250);
+      } else {
+        mainWindow.loadURL(`http://localhost:${PORT}`);
+      }
+    }).on('error', () => {
+      if (retries > 0) {
+        setTimeout(() => tryLoadURL(retries - 1), 250);
+      } else {
+        mainWindow.loadURL(`http://localhost:${PORT}`);
+      }
+    });
+  }
+
+  tryLoadURL();
 
   // Minimize to tray instead of quitting
   mainWindow.on('close', (event) => {
     if (!app.isQuitting) {
       event.preventDefault();
       mainWindow.hide();
-      showNotification('Mantis CR Hub 백그라운드 실행', '앱이 작업표시줄 트레이에서 계속 실행 중입니다. 트레이 아이콘을 우클릭하여 메뉴를 이용하세요.');
+      showNotification('Mantis CR Hub 백그라운드 실행', '앱이 작업표시줄 트레이에서 계속 실행 중입니다. 트레이 아이콘을 클릭하여 메뉴를 이용하세요.');
     }
   });
 }
@@ -214,13 +235,18 @@ function updateTrayMenu() {
  * Initialize System Tray Icon
  */
 function createTray() {
-  const iconPath = path.join(__dirname, 'assets', 'tray-icon.png');
-  const fallbackPath = path.join(__dirname, 'assets', 'icon.png');
-  const selectedIcon = fs.existsSync(iconPath) ? iconPath : fallbackPath;
+  const templatePath = path.join(__dirname, 'assets', 'tray-iconTemplate.png');
+  const fallbackPath = path.join(__dirname, 'assets', 'tray-icon.png');
+  const iconFile = fs.existsSync(templatePath) ? templatePath : fallbackPath;
 
-  tray = new Tray(selectedIcon);
+  const image = nativeImage.createFromPath(iconFile);
+  if (process.platform === 'darwin') {
+    image.setTemplateImage(true);
+  }
 
-  // Double click tray icon to open window
+  tray = new Tray(image);
+
+  // Single click or double click tray icon to open window
   tray.on('double-click', () => {
     openAppWindow();
   });

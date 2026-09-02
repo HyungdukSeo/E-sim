@@ -3,9 +3,15 @@ import cors from 'cors';
 import compression from 'compression';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { syncMantisData, getLocalDatabase, importDatabase, fetchCRPageDetails, DB_FILE, META_FILE } from './sync.js';
 import { processAiQuery } from './ai.js';
 import { testSSHConnection, fetchFileDiffSSH } from './ssh.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const ROOT_DIR = path.resolve(__dirname, '..');
+const DIST_DIR = path.join(ROOT_DIR, 'dist');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -238,13 +244,16 @@ app.post('/api/ssh/diff', async (req, res) => {
 });
 
 // Serve static frontend in production
-const DIST_DIR = path.join(process.cwd(), 'dist');
+console.log(`[Backend] Checking frontend distribution in: ${DIST_DIR}`);
 if (fs.existsSync(DIST_DIR)) {
+  console.log(`[Backend] Serving static frontend from: ${DIST_DIR}`);
   app.use(express.static(DIST_DIR));
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api')) return next();
     res.sendFile(path.join(DIST_DIR, 'index.html'));
   });
+} else {
+  console.warn(`[Backend] Warning: Frontend dist directory not found at ${DIST_DIR}`);
 }
 
 // Start listening
