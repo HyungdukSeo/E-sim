@@ -1,7 +1,9 @@
-const { app, BrowserWindow, Tray, Menu, Notification, shell, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, Notification, shell, nativeImage } = require('electron');
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
+const { execSync } = require('child_process');
+const { pathToFileURL } = require('url');
 
 let mainWindow = null;
 let tray = null;
@@ -9,6 +11,41 @@ let serverProcess = null;
 let isServerRunning = false;
 let isSyncing = false;
 const PORT = 3001;
+let activePort = PORT;
+
+/**
+ * Log diagnostic messages/errors to AppData file for troubleshooting
+ */
+function logErrorToFile(msg) {
+  try {
+    const logDir = process.env.APPDATA ? path.join(process.env.APPDATA, 'MantisCRHub') : __dirname;
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    const logFile = path.join(logDir, 'app.log');
+    fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${msg}\n`);
+  } catch (e) {}
+}
+
+/**
+ * Kill any zombie process occupying PORT from previous crash or run
+ */
+function killOldPortProcess(port = PORT) {
+  try {
+    if (process.platform === 'win32') {
+      const output = execSync(`netstat -aon | findstr :${port}`, { encoding: 'utf-8' });
+      const lines = output.split(/\r?\n/);
+      for (const line of lines) {
+        if (line.includes('LISTENING')) {
+          const parts = line.trim().split(/\s+/);
+          const pid = parts[parts.length - 1];
+          if (pid && parseInt(pid, 10) !== process.pid) {
+            console.log(`[Electron] Clearing lingering process PID ${pid} on port ${port}...`);
+            execSync(`taskkill /f /pid ${pid} >nul 2>nul`);
+          }
+        }
+      }
+    }
+  } catch (e) {}
+}
 
 // Prevent multiple instances
 const gotTheLock = app.requestSingleInstanceLock();
@@ -35,17 +72,33 @@ async function startBackendServer() {
   if (isServerRunning) return;
   try {
     process.env.USER_DATA_DIR = app.getPath('userData');
+    killOldPortProcess(PORT);
+
     if (!serverModule) {
-      serverModule = await import('../server/index.js');
+      let serverScriptPath = path.join(__dirname, '..', 'server', 'index.js');
+      if (app.isPackaged && !fs.existsSync(serverScriptPath)) {
+        serverScriptPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'server', 'index.js');
+      }
+      const fileUrl = pathToFileURL(serverScriptPath).href;
+      serverModule = await import(fileUrl);
     }
+
     if (serverModule && typeof serverModule.startServer === 'function') {
-      await serverModule.startServer(PORT);
+      const res = await serverModule.startServer(PORT);
+      if (res && res.port) {
+        activePort = res.port;
+      } else if (typeof serverModule.getActivePort === 'function') {
+        activePort = serverModule.getActivePort();
+      }
     }
+
     isServerRunning = true;
     updateTrayMenu();
-    console.log('[Electron] Backend Express server initialized on port', PORT);
+    console.log('[Electron] Backend Express server running on port', activePort);
+    logErrorToFile(`Backend Express server started successfully on port ${activePort}`);
   } catch (err) {
     console.error('[Electron] Failed to start backend server:', err);
+    logErrorToFile(`Failed to start server: ${err.stack || err.message}`);
     showNotification('서버 시작 오류 ⚠️', err.message);
   }
 }
@@ -61,7 +114,7 @@ async function stopBackendServer() {
     }
     isServerRunning = false;
     updateTrayMenu();
-    showNotification('서버 중지됨 ⏹️', 'Mantis 백엔드 서버(3001)가 중지되었습니다.');
+    showNotification('서버 중지됨 ⏹️', `Mantis 백엔드 서버(포트 ${activePort})가 중지되었습니다.`);
     console.log('[Electron] Backend server stopped.');
   } catch (err) {
     console.error('[Electron] Failed to stop backend server:', err);
@@ -75,7 +128,7 @@ async function restartBackendServer() {
   await stopBackendServer();
   setTimeout(async () => {
     await startBackendServer();
-    showNotification('서버 재시작 완료 🚀', 'Mantis 백엔드 서버가 다시 구동되었습니다.');
+    showNotification('서버 재시작 완료 🚀', `Mantis 백엔드 서버가 포트 ${activePort}에서 다시 구동되었습니다.`);
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.reload();
     }
@@ -95,7 +148,7 @@ function triggerMantisSync() {
   const postData = JSON.stringify({ mantisUrl: 'http://192.168.16.200' });
   const options = {
     hostname: 'localhost',
-    port: PORT,
+    port: activePort,
     path: '/api/sync',
     method: 'POST',
     headers: {
@@ -181,19 +234,19 @@ function openAppWindow() {
   function tryLoadURL(retries = 15) {
     if (!mainWindow || mainWindow.isDestroyed()) return;
 
-    http.get(`http://localhost:${PORT}/api/status`, (res) => {
+    http.get(`http://localhost:${activePort}/api/status`, (res) => {
       if (res.statusCode === 200) {
-        mainWindow.loadURL(`http://localhost:${PORT}`);
+        mainWindow.loadURL(`http://localhost:${activePort}`);
       } else if (retries > 0) {
         setTimeout(() => tryLoadURL(retries - 1), 250);
       } else {
-        mainWindow.loadURL(`http://localhost:${PORT}`);
+        mainWindow.loadURL(`http://localhost:${activePort}`);
       }
     }).on('error', () => {
       if (retries > 0) {
         setTimeout(() => tryLoadURL(retries - 1), 250);
       } else {
-        mainWindow.loadURL(`http://localhost:${PORT}`);
+        mainWindow.loadURL(`http://localhost:${activePort}`);
       }
     });
   }
@@ -222,7 +275,7 @@ function updateTrayMenu() {
       enabled: false
     },
     {
-      label: isServerRunning ? '🟢 서버 상태: 정상 구동 중 (3001)' : '🔴 서버 상태: 중지됨',
+      label: isServerRunning ? `🟢 서버 상태: 정상 구동 중 (${activePort})` : '🔴 서버 상태: 중지됨',
       enabled: false
     },
     { type: 'separator' },
@@ -234,7 +287,7 @@ function updateTrayMenu() {
     {
       label: '🔗 기본 웹 브라우저에서 열기',
       enabled: isServerRunning,
-      click: () => shell.openExternal(`http://localhost:${PORT}`)
+      click: () => shell.openExternal(`http://localhost:${activePort}`)
     },
     { type: 'separator' },
     {
@@ -282,7 +335,7 @@ function updateTrayMenu() {
   ]);
 
   tray.setContextMenu(contextMenu);
-  tray.setToolTip(isServerRunning ? 'Mantis CR Ultra Search & AI Hub (구동 중)' : 'Mantis CR Ultra Search & AI Hub (서버 중지됨)');
+  tray.setToolTip(isServerRunning ? `Mantis CR Ultra Search & AI Hub (구동 중: ${activePort})` : 'Mantis CR Ultra Search & AI Hub (서버 중지됨)');
 }
 
 /**
@@ -300,7 +353,11 @@ function createTray() {
 
   tray = new Tray(image);
 
-  // Single click or double click tray icon to open window
+  // Click tray icon to show window on Windows/Mac
+  tray.on('click', () => {
+    openAppWindow();
+  });
+
   tray.on('double-click', () => {
     openAppWindow();
   });

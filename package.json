@@ -31,6 +31,11 @@
       "electron/**/*",
       "package.json"
     ],
+    "asar": true,
+    "asarUnpack": [
+      "server/**",
+      "dist/**"
+    ],
     "mac": {
       "target": ["dmg"],
       "icon": "electron/assets/icon.icns",
@@ -65,7 +70,9 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Mantis CR Ultra Hub"
+      "shortcutName": "Mantis CR Ultra Hub",
+      "artifactName": "MantisCRHub-Setup-${version}.${ext}",
+      "include": "build/installer.nsh"
     }
   },
   "dependencies": {

@@ -259,14 +259,25 @@ if (fs.existsSync(DIST_DIR)) {
 }
 
 let serverInstance = null;
+let currentBoundPort = PORT;
 
-export function startServer(port = PORT) {
-  if (serverInstance) return Promise.resolve(serverInstance);
+export function getActivePort() {
+  return currentBoundPort;
+}
+
+export function startServer(defaultPort = PORT) {
+  if (serverInstance) return Promise.resolve({ server: serverInstance, port: currentBoundPort });
 
   return new Promise((resolve, reject) => {
-    try {
-      serverInstance = app.listen(port, async () => {
-        console.log(`[Backend] Mantis CR API Server running on http://localhost:${port}`);
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    function tryListen(p) {
+      const server = app.listen(p, async () => {
+        serverInstance = server;
+        currentBoundPort = p;
+        process.env.ACTIVE_PORT = String(p);
+        console.log(`[Backend] Mantis CR API Server running on http://localhost:${p}`);
         console.log(`[Backend] Portable DB file location: ${DB_FILE}`);
         
         const { crs } = getLocalDatabase();
@@ -280,17 +291,24 @@ export function startServer(port = PORT) {
         } else {
           console.log(`[Backend] Loaded ${crs.length} CRs from independent DB file.`);
         }
-        resolve(serverInstance);
+        resolve({ server, port: p });
       });
 
-      serverInstance.on('error', (err) => {
-        console.error('[Backend Server Error]', err);
-        serverInstance = null;
-        reject(err);
+      server.on('error', (err) => {
+        if (err.code === 'EADDRINUSE' && attempts < maxAttempts) {
+          attempts++;
+          const nextPort = p + 1;
+          console.warn(`[Backend] Port ${p} is in use (EADDRINUSE). Retrying on port ${nextPort}...`);
+          tryListen(nextPort);
+        } else {
+          console.error('[Backend Server Error]', err);
+          serverInstance = null;
+          reject(err);
+        }
       });
-    } catch (e) {
-      reject(e);
     }
+
+    tryListen(defaultPort);
   });
 }
 
@@ -305,8 +323,13 @@ export function stopServer() {
   });
 }
 
-// Auto-start when imported as module or run directly
-startServer(PORT).catch((err) => {
-  console.warn('[Backend] Auto-start note:', err.message);
-});
+// Auto-start only when run directly (not when imported by Electron main process)
+const isMain = process.argv[1] && (
+  process.argv[1].endsWith('index.js') || process.argv[1].endsWith('index.cjs')
+);
+if (isMain) {
+  startServer(PORT).catch((err) => {
+    console.warn('[Backend] Auto-start note:', err.message);
+  });
+}
 
