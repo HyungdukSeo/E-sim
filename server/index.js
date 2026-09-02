@@ -54,11 +54,11 @@ app.post('/api/sync', async (req, res) => {
       count: result.crs.length
     });
   } catch (err) {
-    console.error('[API Sync Error]', err);
-    res.status(500).json({
+    console.error('[API Sync Error]', err.message);
+    res.status(400).json({
       ok: false,
       error: err.message,
-      details: 'Mantis 서버에 연결할 수 없거나 파싱 중 오류가 발생했습니다.'
+      details: 'Mantis 서버에 연결할 수 없습니다. 사내망(VPN 또는 회사 Wi-Fi) 연결 상태를 확인해주세요.'
     });
   }
 });
@@ -225,7 +225,8 @@ app.post('/api/ssh/test', async (req, res) => {
     const result = await testSSHConnection(sshConfig || {});
     res.json(result);
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    console.error('[SSH Test Error]', err.message);
+    res.status(400).json({ ok: false, error: err.message });
   }
 });
 
@@ -239,7 +240,8 @@ app.post('/api/ssh/diff', async (req, res) => {
     const result = await fetchFileDiffSSH(sshConfig || {}, filePath, checkinLog || '');
     res.json(result);
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    console.error('[SSH Diff Error]', err.message);
+    res.status(400).json({ ok: false, error: err.message });
   }
 });
 

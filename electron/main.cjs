@@ -32,6 +32,7 @@ if (!gotTheLock) {
 function startBackendServer() {
   if (isServerRunning) return;
   try {
+    process.env.USER_DATA_DIR = app.getPath('userData');
     // Dynamically import ESM server/index.js in background
     import('../server/index.js')
       .then(() => {

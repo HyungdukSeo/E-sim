@@ -26,6 +26,7 @@
     "files": [
       "dist/**/*",
       "server/**/*",
+      "data/cr_database.json",
       "data/cr_meta.json",
       "electron/**/*",
       "package.json"

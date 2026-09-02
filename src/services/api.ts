@@ -91,8 +91,13 @@ export async function fetchAllCRs(): Promise<{ meta: SyncMeta; crs: CRItem[] }> 
 }
 
 export async function triggerSync(mantisUrl: string): Promise<{ meta: SyncMeta; count: number }> {
-  const resp = await axios.post(`${API_BASE}/sync`, { mantisUrl }, { timeout: 90000 });
-  return resp.data;
+  try {
+    const resp = await axios.post(`${API_BASE}/sync`, { mantisUrl }, { timeout: 90000 });
+    return resp.data;
+  } catch (err: any) {
+    const msg = err.response?.data?.details || err.response?.data?.error || err.message;
+    throw new Error(msg);
+  }
 }
 
 export async function fetchCRDetail(crid: string): Promise<{ cr: CRItem; similar: CRItem[] }> {
@@ -115,16 +120,26 @@ export async function queryAI(query: string, contextCrs: CRItem[], aiConfig: App
 }
 
 export async function testSSH(sshConfig: SSHConfig): Promise<{ ok: boolean; message: string }> {
-  const resp = await axios.post(`${API_BASE}/ssh/test`, { sshConfig }, { timeout: 12000 });
-  return resp.data;
+  try {
+    const resp = await axios.post(`${API_BASE}/ssh/test`, { sshConfig }, { timeout: 15000 });
+    return resp.data;
+  } catch (err: any) {
+    const msg = err.response?.data?.error || err.response?.data?.message || err.message;
+    throw new Error(msg);
+  }
 }
 
 export async function fetchFileDiff(sshConfig: SSHConfig, filePath: string, checkinLog?: string): Promise<DiffResult> {
-  const resp = await axios.post(`${API_BASE}/ssh/diff`, {
-    sshConfig,
-    filePath,
-    checkinLog
-  }, { timeout: 25000 });
-  return resp.data;
+  try {
+    const resp = await axios.post(`${API_BASE}/ssh/diff`, {
+      sshConfig,
+      filePath,
+      checkinLog
+    }, { timeout: 30000 });
+    return resp.data;
+  } catch (err: any) {
+    const msg = err.response?.data?.error || err.response?.data?.message || err.message;
+    throw new Error(msg);
+  }
 }
 

@@ -1,24 +1,64 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import axios from 'axios';
 import { parse } from 'csv-parse/sync';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const ROOT_DIR = path.join(__dirname, '..');
-const DATA_DIR = path.join(ROOT_DIR, 'data');
+const ROOT_DIR = path.resolve(__dirname, '..');
+const BUNDLED_DATA_DIR = path.join(ROOT_DIR, 'data');
 
+// Determine writable data directory
+function getWritableDataDirectory() {
+  if (process.env.USER_DATA_DIR) {
+    const dir = path.join(process.env.USER_DATA_DIR, 'data');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+  
+  if (process.resourcesPath) {
+    const appData = process.env.APPDATA || (process.platform === 'darwin' 
+      ? path.join(os.homedir(), 'Library', 'Application Support') 
+      : path.join(os.homedir(), '.config'));
+    const dir = path.join(appData, 'Mantis CR Ultra Hub', 'data');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  const localDataDir = path.join(ROOT_DIR, 'data');
+  if (!fs.existsSync(localDataDir)) fs.mkdirSync(localDataDir, { recursive: true });
+  return localDataDir;
+}
+
+export const DATA_DIR = getWritableDataDirectory();
 export const DB_FILE = path.join(DATA_DIR, 'cr_database.json');
 export const META_FILE = path.join(DATA_DIR, 'cr_meta.json');
+
+// Auto-seed bundled database if user data directory is empty
+function autoSeedBundledDatabase() {
+  try {
+    const bundledDb = path.join(BUNDLED_DATA_DIR, 'cr_database.json');
+    const bundledMeta = path.join(BUNDLED_DATA_DIR, 'cr_meta.json');
+
+    if (!fs.existsSync(DB_FILE) && fs.existsSync(bundledDb)) {
+      console.log(`[DB] Seeding writable database from bundled data: ${bundledDb} -> ${DB_FILE}`);
+      fs.copyFileSync(bundledDb, DB_FILE);
+    }
+    if (!fs.existsSync(META_FILE) && fs.existsSync(bundledMeta)) {
+      fs.copyFileSync(bundledMeta, META_FILE);
+    }
+  } catch (err) {
+    console.warn('[DB] Auto-seed error (non-fatal):', err.message);
+  }
+}
+
+autoSeedBundledDatabase();
 
 // In-memory cache for 0ms API response
 let inMemoryCrs = null;
 let inMemoryMeta = null;
-
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
 
 export function parseTitleTags(title) {
   if (!title) return { customer: '', vob: '', module: '', authorInTitle: '', cleanSummary: '' };
@@ -125,14 +165,21 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
   console.log(`[Sync] Fetching Mantis CSV from ${exportUrl}...`);
   
   const startTime = Date.now();
-  const response = await axios.get(exportUrl, {
-    responseType: 'arraybuffer',
-    timeout: 90000,
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/csv,text/plain,*/*'
-    }
-  });
+  let response;
+  try {
+    response = await axios.get(exportUrl, {
+      responseType: 'arraybuffer',
+      timeout: 60000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/csv,text/plain,*/*'
+      }
+    });
+  } catch (netErr) {
+    console.error('[Sync Network Error]', netErr.message);
+    const customMsg = `Mantis 서버(${mantisUrl})에 연결할 수 없습니다. (원인: ${netErr.message}) 사내망(VPN 또는 회사 Wi-Fi) 연결 상태를 확인해주세요.`;
+    throw new Error(customMsg);
+  }
 
   let csvText = Buffer.from(response.data).toString('utf-8');
   if (csvText.charCodeAt(0) === 0xFEFF) {
