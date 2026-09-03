@@ -14,7 +14,10 @@
     "electron": "electron electron/main.cjs",
     "predist:mac": "node -e \"const fs=require('fs');if(!fs.existsSync('data/cr_database.json')){console.error('\\n❌ 빌드 오류: data/cr_database.json 파일이 없습니다.\\n   Mantis 서버에서 동기화하거나 기존 DB 파일을 data/ 폴더에 복사한 후 다시 시도하세요.\\n');process.exit(1);}else{console.log('✅ data/cr_database.json 확인 완료. 빌드를 시작합니다...');}\"",
     "dist:mac": "npm run build && electron-builder --mac",
-    "dist:win": "npm run build && electron-builder --win nsis"
+    "dist:win": "npm run build && electron-builder --win nsis",
+    "build:mac": "npm run dist:mac",
+    "build:mac_dist": "npm run dist:mac",
+    "mac:dist": "npm run dist:mac"
   },
   "build": {
     "appId": "com.mantis.crhub",
@@ -38,7 +41,9 @@
       "dist/**"
     ],
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "icon": "electron/assets/icon.icns",
       "category": "public.app-category.developer-tools"
     },
@@ -61,7 +66,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "electron/assets/icon.png"
@@ -91,7 +98,9 @@
     "lucide-react": "^0.475.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
     "recharts": "^2.15.1",
+    "remark-gfm": "^4.0.1",
     "ssh2": "^1.17.0",
     "tailwind-merge": "^3.0.2"
   },

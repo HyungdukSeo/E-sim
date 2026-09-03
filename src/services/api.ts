@@ -8,9 +8,15 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoSyncIntervalMin: 60,
   ai: {
     provider: 'local',
-    apiKey: '',
-    ollamaUrl: 'http://localhost:11434',
-    model: ''
+    apiKey: 'b644f37bc89d3472041218af3976fb9e',
+    customUrl: 'http://10.100.8.39:8502/v1',
+    model: 'aico-rag-qwen2.5-coder-7b',
+    providerModels: {
+      custom: 'aico-rag-qwen2.5-coder-7b',
+      openai: 'gpt-5.6-sol',
+      gemini: 'gemini-3.8-flash-high',
+      claude: 'claude-3-5-sonnet-latest'
+    }
   },
   ssh: {
     host: '192.168.16.200',
@@ -42,8 +48,37 @@ export function loadSettings(): AppSettings {
 export function saveSettings(settings: AppSettings): void {
   try {
     localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(settings));
+    // Also asynchronously persist to local disk file via API
+    axios.post(`${API_BASE}/settings`, settings).catch(err => {
+      console.warn('Failed to persist settings to disk API:', err.message);
+    });
   } catch (e) {
     console.warn('Failed to save settings', e);
+  }
+}
+
+export async function fetchSettingsFromDisk(): Promise<AppSettings | null> {
+  try {
+    const res = await axios.get(`${API_BASE}/settings`);
+    if (res.data && res.data.ok && res.data.settings) {
+      const merged = { ...DEFAULT_SETTINGS, ...res.data.settings };
+      localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(merged));
+      return merged;
+    }
+  } catch (e) {
+    console.warn('[Settings] Failed to fetch settings from disk API:', e);
+  }
+  return null;
+}
+
+export async function saveSettingsToDisk(settings: AppSettings): Promise<{ ok: boolean; message?: string }> {
+  try {
+    localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(settings));
+    const res = await axios.post(`${API_BASE}/settings`, settings);
+    return res.data;
+  } catch (e: any) {
+    console.warn('[Settings] Failed to save settings to disk API:', e);
+    return { ok: false, message: e.message };
   }
 }
 
@@ -110,12 +145,22 @@ export async function fetchStats(): Promise<StatsData> {
   return resp.data;
 }
 
-export async function queryAI(query: string, contextCrs: CRItem[], aiConfig: AppSettings['ai']): Promise<{ answer: string; matchedCrs?: any[]; provider?: string }> {
+export async function queryAI(
+  query: string, 
+  contextCrs: CRItem[], 
+  aiConfig: AppSettings['ai'],
+  useDeepAnalysis: boolean = false,
+  sshConfig?: SSHConfig
+): Promise<{ answer: string; matchedCrs?: any[]; provider?: string }> {
   const resp = await axios.post(`${API_BASE}/ai/query`, {
     query,
     crs: contextCrs.slice(0, 20),
-    config: aiConfig
-  }, { timeout: 60000 });
+    config: {
+      ...aiConfig,
+      useDeepAnalysis,
+      sshConfig
+    }
+  }, { timeout: 120000 }); // Increase timeout to 120s for deep SSH diff fetching
   return resp.data.result;
 }
 

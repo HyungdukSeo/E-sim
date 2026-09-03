@@ -151,7 +151,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
             onChange={e => setLocalQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="CR 제목, 번호(0016117), 담당자, 작성자, 수정파일명(IudhAsSts.c), 키워드 검색... (Enter 키로 검색)"
-            className={`w-full pl-12 pr-28 py-3.5 bg-slate-900/95 hover:bg-slate-900 text-slate-100 text-sm md:text-base rounded-2xl border transition-all outline-none placeholder:text-slate-500 shadow-xl ${
+            className={`w-full pl-12 pr-28 py-3.5 bg-slate-900/95 hover:bg-slate-900 text-slate-100 text-sm md:text-base rounded-2xl border transition-all outline-none placeholder:text-main0 shadow-xl ${
               hasPendingChanges
                 ? 'border-mantis-500/80 ring-2 ring-mantis-500/20'
                 : 'border-slate-700/80 focus:border-mantis-500/80 focus:ring-4 focus:ring-mantis-500/15'
@@ -171,10 +171,10 @@ export const SearchBar: React.FC<SearchBarProps> = ({
 
             <button
               onClick={onOpenAI}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/30 text-xs font-semibold transition-all"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30 text-xs font-semibold transition-all"
               title="자연어로 질문하고 연관 CR 찾기"
             >
-              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+              <Sparkles className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
               <span className="hidden sm:inline">AI 질의</span>
             </button>
           </div>
@@ -219,7 +219,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
         
         {/* Preset chips */}
         <div className="flex flex-wrap items-center gap-1.5 overflow-x-auto py-0.5">
-          <span className="text-slate-500 font-medium flex items-center gap-1 mr-1">
+          <span className="text-main0 font-medium flex items-center gap-1 mr-1">
             <Tag className="w-3 h-3" /> 추천 검색:
           </span>
 
@@ -276,7 +276,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
 
       {/* Quick Customer & Status Filter Badges */}
       <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-800/80">
-        <span className="text-slate-500 text-xs font-medium">고객사:</span>
+        <span className="text-main0 text-xs font-medium">고객사:</span>
         {['KT', 'LGU+', 'SKB', '공통'].map(c => {
           const isSelected = filterState.customers.includes(c);
           return (
@@ -296,7 +296,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
 
         <span className="text-slate-600 mx-1">|</span>
 
-        <span className="text-slate-500 text-xs font-medium">상태:</span>
+        <span className="text-main0 text-xs font-medium">상태:</span>
         {[
           { key: 'opened', label: '미해결 (opened)', color: 'border-rose-500/40 text-rose-300' },
           { key: 'resolved', label: '해결 (resolved)', color: 'border-emerald-500/40 text-emerald-300' },

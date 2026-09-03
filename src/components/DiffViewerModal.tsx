@@ -325,7 +325,7 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
   const renderSideBySide = () => {
     if (alignedRows.length === 0) {
       return (
-        <div className="p-12 text-center text-slate-500 font-mono text-xs space-y-2">
+        <div className="p-12 text-center text-main0 font-mono text-xs space-y-2">
           <FileCode2 className="w-8 h-8 mx-auto text-slate-600" />
           <p>파일 내용이 비어있거나 이전/현재 버전 간의 변경점이 없습니다.</p>
         </div>
@@ -351,7 +351,7 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
           </colgroup>
           <thead>
             <tr className="bg-slate-900/95 backdrop-blur text-xs font-semibold text-slate-400 border-b border-slate-800 select-none sticky top-0 z-10 shadow-sm">
-              <th className="px-2 py-2 border-r border-slate-800 text-slate-500 text-[10px] text-right font-mono">#</th>
+              <th className="px-2 py-2 border-r border-slate-800 text-main0 text-[10px] text-right font-mono">#</th>
               <th className="px-3 py-1.5 text-left border-r border-slate-800 text-rose-400/90 font-mono">
                 <div className="flex items-center justify-between gap-2">
                   <span className="flex items-center gap-1.5 truncate">
@@ -359,7 +359,7 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
                     이전: {diffData?.prevVersion || '@@/main/0'}
                   </span>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <span className="text-[10px] text-slate-500 font-normal hidden lg:inline">인코딩:</span>
+                    <span className="text-[10px] text-main0 font-normal hidden lg:inline">인코딩:</span>
                     <select
                       value={leftEncoding}
                       onChange={e => setLeftEncoding(e.target.value as any)}
@@ -373,7 +373,7 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
                   </div>
                 </div>
               </th>
-              <th className="px-2 py-2 border-r border-slate-800 text-slate-500 text-[10px] text-right font-mono">#</th>
+              <th className="px-2 py-2 border-r border-slate-800 text-main0 text-[10px] text-right font-mono">#</th>
               <th className="px-3 py-1.5 text-left text-emerald-400/90 font-mono">
                 <div className="flex items-center justify-between gap-2">
                   <span className="flex items-center gap-1.5 truncate">
@@ -381,7 +381,7 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
                     수정: {diffData?.currVersion || '@@/main/1'}
                   </span>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <span className="text-[10px] text-slate-500 font-normal hidden lg:inline">인코딩:</span>
+                    <span className="text-[10px] text-main0 font-normal hidden lg:inline">인코딩:</span>
                     <select
                       value={rightEncoding}
                       onChange={e => setRightEncoding(e.target.value as any)}
@@ -459,7 +459,7 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
   // Render Unified Diff
   const renderUnified = () => {
     const patch = diffData?.unifiedDiff;
-    if (!patch) return <div className="p-8 text-center text-slate-500 font-mono text-xs">Diff 정보가 없습니다.</div>;
+    if (!patch) return <div className="p-8 text-center text-main0 font-mono text-xs">Diff 정보가 없습니다.</div>;
 
     const lines = patch.split('\n');
     return (
@@ -548,7 +548,7 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold font-mono transition-all ${
                 copiedVimdiff
                   ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 shadow-sm'
-                  : 'bg-slate-800/90 hover:bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
+                  : 'bg-slate-800/90 hover:bg-slate-800 border-slate-700 text-slate-300 hover:text-main'
               }`}
               title="사내 터미널 붙여넣기용 vimdiff 명령어 복사"
             >
@@ -624,7 +624,7 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
                 ~{stats.modified} 수정
               </span>
             )}
-            <span className="text-[11px] text-slate-500 font-mono hidden sm:inline">
+            <span className="text-[11px] text-main0 font-mono hidden sm:inline">
               (총 {stats.total} 라인)
             </span>
           </div>
@@ -632,7 +632,7 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
           {/* Search Box in Diff */}
           <div className="flex items-center gap-2 ml-auto">
             <div className="relative">
-              <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <Search className="w-3.5 h-3.5 text-main0 absolute left-2.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 placeholder="코드 내 검색..."
@@ -644,7 +644,7 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
 
             {/* CLI Command snippet */}
             <div className="hidden lg:flex items-center gap-1 bg-slate-900 px-2 py-0.5 rounded-lg border border-slate-800 max-w-sm overflow-hidden">
-              <Terminal className="w-3 h-3 text-slate-500 flex-shrink-0" />
+              <Terminal className="w-3 h-3 text-main0 flex-shrink-0" />
               <code className="text-[10px] text-mantis-300 font-mono truncate select-all">
                 {vimdiffCmd}
               </code>
@@ -760,7 +760,7 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="text-[11px] font-mono text-slate-500">
+            <span className="text-[11px] font-mono text-main0">
               {sshConfig?.host ? `SSH: ${sshConfig.username}@${sshConfig.host}` : 'SSH 미설정'}
             </span>
 

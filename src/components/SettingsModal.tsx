@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   X, 
   Settings, 
@@ -16,7 +16,7 @@ import {
   Zap
 } from 'lucide-react';
 import { AppSettings, SyncMeta } from '../types/cr';
-import { testSSH } from '../services/api';
+import { testSSH, saveSettingsToDisk } from '../services/api';
 import axios from 'axios';
 
 interface SettingsModalProps {
@@ -40,13 +40,107 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [sshTestStatus, setSshTestStatus] = useState<string | null>(null);
+  const [sshTesting, setSshTesting] = useState(false);
+  const [sshTestResult, setSshTestResult] = useState<{ok: boolean; message: string} | null>(null);
+
+  const DEFAULT_PROVIDER_MODELS: Record<string, string> = {
+    custom: 'aico-rag-qwen2.5-coder-7b',
+    openai: 'gpt-5.6-sol',
+    gemini: 'gemini-3.8-flash-high',
+    claude: 'claude-3-5-sonnet-latest'
+  };
+
+  const [availableModels, setAvailableModels] = useState<any[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+
+  const handleProviderChange = (newProvider: 'local' | 'custom' | 'openai' | 'gemini' | 'claude') => {
+    setForm(prev => {
+      const currentProvider = prev.ai.provider;
+      const currentModel = prev.ai.model;
+
+      const updatedProviderModels = {
+        ...DEFAULT_PROVIDER_MODELS,
+        ...(prev.ai.providerModels || {})
+      };
+      if (currentProvider !== 'local' && currentModel) {
+        updatedProviderModels[currentProvider] = currentModel;
+      }
+
+      const nextModel = updatedProviderModels[newProvider] || DEFAULT_PROVIDER_MODELS[newProvider] || '';
+
+      return {
+        ...prev,
+        ai: {
+          ...prev.ai,
+          provider: newProvider,
+          model: nextModel,
+          providerModels: updatedProviderModels
+        }
+      };
+    });
+  };
+
+  const handleModelChange = (newModel: string) => {
+    setForm(prev => ({
+      ...prev,
+      ai: {
+        ...prev.ai,
+        model: newModel,
+        providerModels: {
+          ...DEFAULT_PROVIDER_MODELS,
+          ...(prev.ai.providerModels || {}),
+          [prev.ai.provider]: newModel
+        }
+      }
+    }));
+  };
+
+  useEffect(() => {
+    if (form.ai.provider === 'openai' || form.ai.provider === 'gemini' || form.ai.provider === 'claude') {
+      setIsLoadingModels(true);
+      const targetProvider = form.ai.provider;
+
+      axios.get(`/api/ai/models?provider=${targetProvider}`)
+        .then(res => {
+          if (res.data && res.data.models && Array.isArray(res.data.models)) {
+            const list = res.data.models;
+            setAvailableModels(list);
+
+            const modelIds = list.map((m: any) => typeof m === 'string' ? m : m.id);
+
+            setForm(prev => {
+              if (prev.ai.provider !== targetProvider) return prev;
+
+              const savedModel = prev.ai.providerModels?.[targetProvider] || prev.ai.model;
+              const chosenModel = modelIds.includes(savedModel) ? savedModel : (modelIds[0] || savedModel);
+
+              return {
+                ...prev,
+                ai: {
+                  ...prev.ai,
+                  model: chosenModel,
+                  providerModels: {
+                    ...DEFAULT_PROVIDER_MODELS,
+                    ...(prev.ai.providerModels || {}),
+                    [targetProvider]: chosenModel
+                  }
+                }
+              };
+            });
+          }
+        })
+        .catch(err => console.error('Failed to fetch models:', err))
+        .finally(() => setIsLoadingModels(false));
+    }
+  }, [form.ai.provider]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     onSaveSettings(form);
+    await saveSettingsToDisk(form);
     setSaveSuccess(true);
     setTimeout(() => {
       setSaveSuccess(false);
@@ -94,7 +188,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <Settings className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">환경 설정 & 데이터베이스 이식 관리</h2>
+              <h2 className="text-base font-bold text-main">환경 설정 & 데이터베이스 이식 관리</h2>
               <p className="text-xs text-slate-400">Mantis 연동, AI 모델, 독립 DB 파일 내보내기/가져오기</p>
             </div>
           </div>
@@ -175,7 +269,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               placeholder="http://192.168.16.200"
               className="w-full px-3.5 py-2.5 bg-slate-900 text-slate-100 rounded-xl border border-slate-700 focus:border-mantis-500 outline-none font-mono"
             />
-            <p className="text-slate-500 text-[11px]">
+            <p className="text-main0 text-[11px]">
               기본값: <code className="text-slate-400">http://192.168.16.200</code> (로컬 네트워크 환경에서 접근)
             </p>
           </div>
@@ -189,17 +283,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
             <div className="space-y-2">
               <label className="block font-semibold text-slate-300">AI 공급자 (Provider)</label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                 {[
                   { key: 'local', label: '로컬 NLP (기본)' },
-                  { key: 'ollama', label: '로컬 Ollama' },
-                  { key: 'openai', label: 'OpenAI (GPT)' },
-                  { key: 'gemini', label: 'Google Gemini' }
+                  { key: 'custom', label: 'Custom LLM' },
+                  { key: 'openai', label: 'Codex' },
+                  { key: 'gemini', label: 'Antigravity' },
+                  { key: 'claude', label: 'Claude' }
                 ].map(item => (
                   <button
                     key={item.key}
                     type="button"
-                    onClick={() => setForm(f => ({ ...f, ai: { ...f.ai, provider: item.key as any } }))}
+                    onClick={() => handleProviderChange(item.key as any)}
                     className={`py-2 px-2.5 rounded-xl border text-xs font-semibold transition-all text-center ${
                       form.ai.provider === item.key
                         ? 'bg-indigo-600/20 border-indigo-500 text-indigo-300 shadow-sm'
@@ -212,52 +307,70 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             </div>
 
-            {form.ai.provider === 'ollama' && (
+            {form.ai.provider === 'custom' && (
               <div className="space-y-3 pt-2">
                 <div>
-                  <label className="block text-slate-400 mb-1">Ollama 엔드포인트 URL</label>
+                  <label className="block text-slate-400 mb-1">Custom 엔드포인트 URL</label>
                   <input
                     type="text"
-                    value={form.ai.ollamaUrl}
-                    onChange={e => setForm(f => ({ ...f, ai: { ...f.ai, ollamaUrl: e.target.value } }))}
-                    placeholder="http://localhost:11434"
-                    className="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-700 text-slate-200 font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-400 mb-1">모델 이름</label>
-                  <input
-                    type="text"
-                    value={form.ai.model}
-                    onChange={e => setForm(f => ({ ...f, ai: { ...f.ai, model: e.target.value } }))}
-                    placeholder="llama3, mistral, qwen2.5 등"
+                    value={form.ai.customUrl}
+                    onChange={e => setForm(f => ({ ...f, ai: { ...f.ai, customUrl: e.target.value } }))}
+                    placeholder="http://10.100.8.39:8502/v1"
                     className="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-700 text-slate-200 font-mono"
                   />
                 </div>
               </div>
             )}
 
-            {(form.ai.provider === 'openai' || form.ai.provider === 'gemini') && (
+            {(form.ai.provider === 'openai' || form.ai.provider === 'gemini' || form.ai.provider === 'claude' || form.ai.provider === 'custom') && (
               <div className="space-y-3 pt-2">
+                {form.ai.provider === 'custom' && (
+                  <div>
+                    <label className="block text-slate-400 mb-1">API Key</label>
+                    <input
+                      type="password"
+                      value={form.ai.apiKey}
+                      onChange={e => setForm(f => ({ ...f, ai: { ...f.ai, apiKey: e.target.value } }))}
+                      placeholder="API 키를 입력하세요"
+                      className="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-700 text-slate-200 font-mono"
+                    />
+                  </div>
+                )}
                 <div>
-                  <label className="block text-slate-400 mb-1">API Key</label>
-                  <input
-                    type="password"
-                    value={form.ai.apiKey}
-                    onChange={e => setForm(f => ({ ...f, ai: { ...f.ai, apiKey: e.target.value } }))}
-                    placeholder="sk-... 또는 AIzaSy..."
-                    className="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-700 text-slate-200 font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-400 mb-1">모델명 (선택사항)</label>
-                  <input
-                    type="text"
-                    value={form.ai.model}
-                    onChange={e => setForm(f => ({ ...f, ai: { ...f.ai, model: e.target.value } }))}
-                    placeholder={form.ai.provider === 'openai' ? 'gpt-4o-mini' : 'gemini-1.5-flash'}
-                    className="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-700 text-slate-200 font-mono"
-                  />
+                  <label className="block text-slate-400 mb-1">모델명</label>
+                  {(form.ai.provider === 'openai' || form.ai.provider === 'gemini' || form.ai.provider === 'claude') ? (
+                    isLoadingModels ? (
+                      <div className="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-700 text-slate-400 flex items-center justify-center">
+                        <span className="animate-pulse">모델 리스트 불러오는 중...</span>
+                      </div>
+                    ) : (
+                      <select
+                        value={form.ai.model}
+                        onChange={e => handleModelChange(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-700 text-slate-200 font-mono"
+                      >
+                        {availableModels.length > 0 ? (
+                          availableModels.map(m => {
+                            const id = typeof m === 'string' ? m : m.id;
+                            const label = typeof m === 'string' ? m : (m.displayName && m.displayName !== m.id ? `${m.displayName} (${m.id})` : m.id);
+                            return (
+                              <option key={id} value={id}>{label}</option>
+                            );
+                          })
+                        ) : (
+                          <option value="">모델 리스트 없음</option>
+                        )}
+                      </select>
+                    )
+                  ) : (
+                    <input
+                      type="text"
+                      value={form.ai.model}
+                      onChange={e => handleModelChange(e.target.value)}
+                      placeholder="aico-rag-qwen2.5-coder-7b 등"
+                      className="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-700 text-slate-200 font-mono"
+                    />
+                  )}
                 </div>
               </div>
             )}
@@ -270,7 +383,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <Terminal className="w-4 h-4 text-indigo-400" />
                 ClearCase VOB 서버 SSH 연동 (웹 내장 Diff 뷰어용)
               </h3>
-              <span className="text-[10px] text-slate-500 font-mono">
+              <span className="text-[10px] text-main0 font-mono">
                 {form.ssh?.host || '미설정'}
               </span>
             </div>

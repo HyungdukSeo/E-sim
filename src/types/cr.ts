@@ -76,10 +76,11 @@ export interface SyncMeta {
 }
 
 export interface AISettings {
-  provider: 'local' | 'ollama' | 'openai' | 'gemini';
+  provider: 'local' | 'custom' | 'openai' | 'gemini' | 'claude';
   apiKey: string;
-  ollamaUrl: string;
+  customUrl: string;
   model: string;
+  providerModels?: Record<string, string>;
 }
 
 export interface SSHConfig {

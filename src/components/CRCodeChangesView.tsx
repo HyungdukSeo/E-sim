@@ -156,7 +156,7 @@ export const CRCodeChangesView: React.FC<CRCodeChangesViewProps> = ({ cr, mantis
             <p className="text-xs font-semibold text-slate-300">
               Mantis 본문 추가 상세 필드를 불러오는 중이거나 기재되어 있지 않습니다.
             </p>
-            <p className="text-[11px] text-slate-500">
+            <p className="text-[11px] text-main0">
               상단 'Mantis 웹 원본 보기' 버튼을 클릭하시면 Mantis 웹페이지의 모든 코멘트와 첨부파일을 직접 확인하실 수 있습니다.
             </p>
           </div>

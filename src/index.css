@@ -1,3 +1,122 @@
+:root, .theme-dark {
+  --bg-main: #090d16;
+  --text-main: #e2e8f0;
+  --card-bg: rgba(18, 26, 43, 0.75);
+  --card-border: rgba(255, 255, 255, 0.08);
+
+  --color-slate-50: 248 250 252;
+  --color-slate-100: 241 245 249;
+  --color-slate-200: 226 232 240;
+  --color-slate-300: 203 213 225;
+  --color-slate-400: 148 163 184;
+  --color-slate-500: 100 116 139;
+  --color-slate-600: 71 85 105;
+  --color-slate-700: 51 65 85;
+  --color-slate-800: 30 41 59;
+  --color-slate-850: 21 30 46;
+  --color-slate-900: 15 23 42;
+  --color-slate-950: 2 6 23;
+  --color-mantis-50: 240 253 244;
+  --color-mantis-100: 220 252 231;
+  --color-mantis-200: 187 247 208;
+  --color-mantis-300: 52 211 153;
+  --color-mantis-400: 16 185 129;
+  --color-mantis-500: 5 150 105;
+  --color-mantis-600: 22 163 74;
+  --color-mantis-700: 21 128 61;
+  --color-mantis-800: 22 101 52;
+  --color-mantis-900: 20 83 45;
+  --color-mantis-950: 5 46 22;
+  --color-indigo-50: 238 242 255;
+  --color-indigo-100: 224 231 255;
+  --color-indigo-200: 199 210 254;
+  --color-indigo-300: 165 180 252;
+  --color-indigo-400: 129 140 248;
+  --color-indigo-500: 99 102 241;
+  --color-indigo-600: 79 70 229;
+  --color-indigo-700: 67 56 202;
+  --color-indigo-800: 55 48 163;
+  --color-indigo-900: 49 46 129;
+  --color-indigo-950: 30 27 75;
+  --color-rose-50: 255 241 242;
+  --color-rose-100: 255 228 230;
+  --color-rose-200: 254 205 211;
+  --color-rose-300: 253 164 175;
+  --color-rose-400: 251 113 133;
+  --color-rose-500: 244 63 94;
+  --color-rose-600: 225 29 72;
+  --color-rose-700: 190 18 60;
+  --color-rose-800: 159 18 57;
+  --color-rose-900: 136 19 55;
+  --color-rose-950: 76 5 25;
+  --color-amber-50: 255 251 235;
+  --color-amber-100: 254 243 199;
+  --color-amber-200: 253 230 138;
+  --color-amber-300: 252 211 77;
+  --color-amber-400: 251 191 36;
+  --color-amber-500: 245 158 11;
+  --color-amber-600: 217 119 6;
+  --color-amber-700: 180 83 9;
+  --color-amber-800: 146 64 14;
+  --color-amber-900: 120 53 15;
+  --color-amber-950: 69 26 3;
+  --color-emerald-50: 236 253 245;
+  --color-emerald-100: 209 250 229;
+  --color-emerald-200: 167 243 208;
+  --color-emerald-300: 52 211 153;
+  --color-emerald-400: 16 185 129;
+  --color-emerald-500: 5 150 105;
+  --color-emerald-600: 5 150 105;
+  --color-emerald-700: 4 120 87;
+  --color-emerald-800: 6 95 70;
+  --color-emerald-900: 6 78 59;
+  --color-emerald-950: 2 44 34;
+  --color-teal-50: 240 253 250;
+  --color-teal-100: 204 251 241;
+  --color-teal-200: 153 246 228;
+  --color-teal-300: 94 234 212;
+  --color-teal-400: 45 212 191;
+  --color-teal-500: 20 184 166;
+  --color-teal-600: 13 148 136;
+  --color-teal-700: 15 118 110;
+  --color-teal-800: 17 94 89;
+  --color-teal-900: 19 78 74;
+  --color-teal-950: 4 47 46;
+  --color-blue-50: 239 246 255;
+  --color-blue-100: 219 234 254;
+  --color-blue-200: 191 219 254;
+  --color-blue-300: 147 197 253;
+  --color-blue-400: 96 165 250;
+  --color-blue-500: 59 130 246;
+  --color-blue-600: 37 99 235;
+  --color-blue-700: 29 78 216;
+  --color-blue-800: 30 64 175;
+  --color-blue-900: 30 58 138;
+  --color-blue-950: 23 37 84;
+  --color-red-50: 254 242 242;
+  --color-red-100: 254 226 226;
+  --color-red-200: 254 202 202;
+  --color-red-300: 252 165 165;
+  --color-red-400: 248 113 113;
+  --color-red-500: 239 68 68;
+  --color-red-600: 220 38 38;
+  --color-red-700: 185 28 28;
+  --color-red-800: 153 27 27;
+  --color-red-900: 127 29 29;
+  --color-red-950: 69 10 10;
+  --color-gray-50: 249 250 251;
+  --color-gray-100: 243 244 246;
+  --color-gray-200: 229 231 235;
+  --color-gray-300: 209 213 219;
+  --color-gray-400: 156 163 175;
+  --color-gray-500: 107 114 128;
+  --color-gray-600: 75 85 99;
+  --color-gray-700: 55 65 81;
+  --color-gray-800: 31 41 55;
+  --color-gray-900: 17 24 39;
+  --color-gray-950: 3 7 18;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -11,7 +130,7 @@
 
   body {
     background-color: var(--bg-main);
-    color: #e2e8f0;
+    color: var(--text-main);
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 }
@@ -37,17 +156,17 @@
 
 /* Glassmorphism Classes */
 .glass-panel {
-  background: rgba(15, 23, 42, 0.75);
+  background: var(--card-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--card-border);
 }
 
 .glass-card {
-  background: rgba(21, 30, 49, 0.6);
+  background: var(--card-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--card-border);
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -59,10 +178,10 @@
 }
 
 .glass-header {
-  background: rgba(11, 15, 25, 0.85);
+  background: var(--card-bg);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--card-border);
 }
 
 /* Status Badges */
@@ -74,7 +193,7 @@
 
 .badge-status-resolved {
   background: rgba(34, 197, 94, 0.15);
-  color: #4ade80;
+  color: rgb(var(--color-mantis-400));
   border: 1px solid rgba(34, 197, 94, 0.35);
 }
 
@@ -111,7 +230,7 @@
 /* Search Highlight */
 .search-highlight {
   background: rgba(250, 204, 21, 0.3);
-  color: #fef08a;
+  color: var(--text-main);
   border-radius: 2px;
   padding: 0 2px;
   font-weight: 600;
@@ -129,4 +248,297 @@
 
 .mantis-glow {
   animation: mantisGlow 3s ease-in-out infinite;
+}
+
+/* Markdown Body Styles */
+.markdown-body {
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+.markdown-body h3 {
+  font-size: 1.125rem;
+  font-weight: 700;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  color: inherit;
+}
+.markdown-body p {
+  margin-bottom: 0.75rem;
+}
+.markdown-body ul {
+  list-style-type: disc;
+  padding-left: 1.25rem;
+  margin-bottom: 0.75rem;
+}
+.markdown-body ol {
+  list-style-type: decimal;
+  padding-left: 1.25rem;
+  margin-bottom: 0.75rem;
+}
+.markdown-body li {
+  margin-bottom: 0.25rem;
+}
+.markdown-body strong {
+  font-weight: 700;
+  color: inherit;
+}
+.markdown-body code {
+  background-color: rgba(30, 41, 59, 0.8);
+  padding: 0.15rem 0.3rem;
+  border-radius: 0.25rem;
+  font-family: monospace;
+  font-size: 0.8em;
+  color: #818cf8;
+}
+.markdown-body pre {
+  background-color: rgba(15, 23, 42, 0.9);
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin-bottom: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.markdown-body pre code {
+  background-color: transparent;
+  padding: 0;
+  color: #a7f3d0;
+  font-size: 0.85em;
+}
+
+.theme-light {
+  --bg-main: #fcfbf8;
+  --text-main: #2b261f;
+  --card-bg: rgba(253, 251, 247, 0.9);
+  --card-border: rgba(0, 0, 0, 0.08);
+
+  --color-slate-50: 2 6 23;
+  --color-slate-100: 43 38 31;
+  --color-slate-200: 61 55 46;
+  --color-slate-300: 84 76 64;
+  --color-slate-400: 107 98 84;
+  --color-slate-500: 100 116 139;
+  --color-slate-600: 148 163 184;
+  --color-slate-700: 201 196 186;
+  --color-slate-800: 224 220 211;
+  --color-slate-850: 236 233 224;
+  --color-slate-900: 250 248 244;
+  --color-slate-950: 243 239 230;
+  --color-mantis-50: 240 253 244;
+  --color-mantis-100: 220 252 231;
+  --color-mantis-200: 187 247 208;
+  --color-mantis-300: 21 128 61;
+  --color-mantis-400: 20 83 45;
+  --color-mantis-500: 22 101 52;
+  --color-mantis-600: 22 163 74;
+  --color-mantis-700: 21 128 61;
+  --color-mantis-800: 22 101 52;
+  --color-mantis-900: 20 83 45;
+  --color-mantis-950: 5 46 22;
+  --color-indigo-50: 238 242 255;
+  --color-indigo-100: 224 231 255;
+  --color-indigo-200: 199 210 254;
+  --color-indigo-300: 165 180 252;
+  --color-indigo-400: 129 140 248;
+  --color-indigo-500: 99 102 241;
+  --color-indigo-600: 79 70 229;
+  --color-indigo-700: 67 56 202;
+  --color-indigo-800: 55 48 163;
+  --color-indigo-900: 49 46 129;
+  --color-indigo-950: 30 27 75;
+  --color-rose-50: 255 241 242;
+  --color-rose-100: 255 228 230;
+  --color-rose-200: 254 205 211;
+  --color-rose-300: 253 164 175;
+  --color-rose-400: 251 113 133;
+  --color-rose-500: 244 63 94;
+  --color-rose-600: 225 29 72;
+  --color-rose-700: 190 18 60;
+  --color-rose-800: 159 18 57;
+  --color-rose-900: 136 19 55;
+  --color-rose-950: 76 5 25;
+  --color-amber-50: 255 251 235;
+  --color-amber-100: 254 243 199;
+  --color-amber-200: 253 230 138;
+  --color-amber-300: 252 211 77;
+  --color-amber-400: 251 191 36;
+  --color-amber-500: 245 158 11;
+  --color-amber-600: 217 119 6;
+  --color-amber-700: 180 83 9;
+  --color-amber-800: 146 64 14;
+  --color-amber-900: 120 53 15;
+  --color-amber-950: 69 26 3;
+  --color-emerald-50: 236 253 245;
+  --color-emerald-100: 209 250 229;
+  --color-emerald-200: 167 243 208;
+  --color-emerald-300: 5 150 105;
+  --color-emerald-400: 4 120 87;
+  --color-emerald-500: 6 95 70;
+  --color-emerald-600: 5 150 105;
+  --color-emerald-700: 4 120 87;
+  --color-emerald-800: 6 95 70;
+  --color-emerald-900: 6 78 59;
+  --color-emerald-950: 2 44 34;
+  --color-teal-50: 240 253 250;
+  --color-teal-100: 204 251 241;
+  --color-teal-200: 153 246 228;
+  --color-teal-300: 94 234 212;
+  --color-teal-400: 45 212 191;
+  --color-teal-500: 20 184 166;
+  --color-teal-600: 13 148 136;
+  --color-teal-700: 15 118 110;
+  --color-teal-800: 17 94 89;
+  --color-teal-900: 19 78 74;
+  --color-teal-950: 4 47 46;
+  --color-blue-50: 239 246 255;
+  --color-blue-100: 219 234 254;
+  --color-blue-200: 191 219 254;
+  --color-blue-300: 147 197 253;
+  --color-blue-400: 96 165 250;
+  --color-blue-500: 59 130 246;
+  --color-blue-600: 37 99 235;
+  --color-blue-700: 29 78 216;
+  --color-blue-800: 30 64 175;
+  --color-blue-900: 30 58 138;
+  --color-blue-950: 23 37 84;
+  --color-red-50: 254 242 242;
+  --color-red-100: 254 226 226;
+  --color-red-200: 254 202 202;
+  --color-red-300: 252 165 165;
+  --color-red-400: 248 113 113;
+  --color-red-500: 239 68 68;
+  --color-red-600: 220 38 38;
+  --color-red-700: 185 28 28;
+  --color-red-800: 153 27 27;
+  --color-red-900: 127 29 29;
+  --color-red-950: 69 10 10;
+  --color-gray-50: 249 250 251;
+  --color-gray-100: 243 244 246;
+  --color-gray-200: 229 231 235;
+  --color-gray-300: 209 213 219;
+  --color-gray-400: 156 163 175;
+  --color-gray-500: 107 114 128;
+  --color-gray-600: 75 85 99;
+  --color-gray-700: 55 65 81;
+  --color-gray-800: 31 41 55;
+  --color-gray-900: 17 24 39;
+  --color-gray-950: 3 7 18;
+}
+
+.theme-dev {
+  --bg-main: #000000;
+  --text-main: #e2e8f0;
+  --card-bg: rgba(10, 10, 10, 0.9);
+  --card-border: rgba(34, 197, 94, 0.2);
+
+  --color-slate-50: 248 250 252;
+  --color-slate-100: 241 245 249;
+  --color-slate-200: 226 232 240;
+  --color-slate-300: 203 213 225;
+  --color-slate-400: 148 163 184;
+  --color-slate-500: 100 116 139;
+  --color-slate-600: 71 85 105;
+  --color-slate-700: 17 17 17;
+  --color-slate-800: 5 5 5;
+  --color-slate-850: 5 5 5;
+  --color-slate-900: 0 0 0;
+  --color-slate-950: 0 0 0;
+  --color-mantis-50: 240 253 244;
+  --color-mantis-100: 220 252 231;
+  --color-mantis-200: 187 247 208;
+  --color-mantis-300: 134 239 172;
+  --color-mantis-400: 74 222 128;
+  --color-mantis-500: 34 197 94;
+  --color-mantis-600: 22 163 74;
+  --color-mantis-700: 21 128 61;
+  --color-mantis-800: 22 101 52;
+  --color-mantis-900: 20 83 45;
+  --color-mantis-950: 5 46 22;
+  --color-indigo-50: 240 253 244;
+  --color-indigo-100: 220 252 231;
+  --color-indigo-200: 187 247 208;
+  --color-indigo-300: 134 239 172;
+  --color-indigo-400: 74 222 128;
+  --color-indigo-500: 34 197 94;
+  --color-indigo-600: 22 163 74;
+  --color-indigo-700: 21 128 61;
+  --color-indigo-800: 22 101 52;
+  --color-indigo-900: 20 83 45;
+  --color-indigo-950: 5 46 22;
+  --color-rose-50: 255 241 242;
+  --color-rose-100: 255 228 230;
+  --color-rose-200: 254 205 211;
+  --color-rose-300: 253 164 175;
+  --color-rose-400: 251 113 133;
+  --color-rose-500: 244 63 94;
+  --color-rose-600: 225 29 72;
+  --color-rose-700: 190 18 60;
+  --color-rose-800: 159 18 57;
+  --color-rose-900: 136 19 55;
+  --color-rose-950: 76 5 25;
+  --color-amber-50: 255 251 235;
+  --color-amber-100: 254 243 199;
+  --color-amber-200: 253 230 138;
+  --color-amber-300: 252 211 77;
+  --color-amber-400: 251 191 36;
+  --color-amber-500: 245 158 11;
+  --color-amber-600: 217 119 6;
+  --color-amber-700: 180 83 9;
+  --color-amber-800: 146 64 14;
+  --color-amber-900: 120 53 15;
+  --color-amber-950: 69 26 3;
+  --color-emerald-50: 236 253 245;
+  --color-emerald-100: 209 250 229;
+  --color-emerald-200: 167 243 208;
+  --color-emerald-300: 110 231 183;
+  --color-emerald-400: 52 211 153;
+  --color-emerald-500: 16 185 129;
+  --color-emerald-600: 5 150 105;
+  --color-emerald-700: 4 120 87;
+  --color-emerald-800: 6 95 70;
+  --color-emerald-900: 6 78 59;
+  --color-emerald-950: 2 44 34;
+  --color-teal-50: 240 253 250;
+  --color-teal-100: 204 251 241;
+  --color-teal-200: 153 246 228;
+  --color-teal-300: 94 234 212;
+  --color-teal-400: 45 212 191;
+  --color-teal-500: 20 184 166;
+  --color-teal-600: 13 148 136;
+  --color-teal-700: 15 118 110;
+  --color-teal-800: 17 94 89;
+  --color-teal-900: 19 78 74;
+  --color-teal-950: 4 47 46;
+  --color-blue-50: 239 246 255;
+  --color-blue-100: 219 234 254;
+  --color-blue-200: 191 219 254;
+  --color-blue-300: 147 197 253;
+  --color-blue-400: 96 165 250;
+  --color-blue-500: 59 130 246;
+  --color-blue-600: 37 99 235;
+  --color-blue-700: 29 78 216;
+  --color-blue-800: 30 64 175;
+  --color-blue-900: 30 58 138;
+  --color-blue-950: 23 37 84;
+  --color-red-50: 254 242 242;
+  --color-red-100: 254 226 226;
+  --color-red-200: 254 202 202;
+  --color-red-300: 252 165 165;
+  --color-red-400: 248 113 113;
+  --color-red-500: 239 68 68;
+  --color-red-600: 220 38 38;
+  --color-red-700: 185 28 28;
+  --color-red-800: 153 27 27;
+  --color-red-900: 127 29 29;
+  --color-red-950: 69 10 10;
+  --color-gray-50: 249 250 251;
+  --color-gray-100: 243 244 246;
+  --color-gray-200: 229 231 235;
+  --color-gray-300: 209 213 219;
+  --color-gray-400: 156 163 175;
+  --color-gray-500: 107 114 128;
+  --color-gray-600: 75 85 99;
+  --color-gray-700: 55 65 81;
+  --color-gray-800: 31 41 55;
+  --color-gray-900: 17 24 39;
+  --color-gray-950: 3 7 18;
 }

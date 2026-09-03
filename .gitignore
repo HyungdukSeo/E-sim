@@ -16,8 +16,9 @@ dist-ssr/
 .DS_Store
 Thumbs.db
 
-# Large Database dumps (exceeds GitHub 100MB limit)
+# Large Database dumps & local settings
 data/cr_database.json
+data/settings.json
 server/data/cr_cache.json
 *.json.gz
 

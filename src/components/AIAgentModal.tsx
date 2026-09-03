@@ -27,6 +27,8 @@ import { SimilarCRs } from './SimilarCRs';
 import { FileTreeView } from './FileTreeView';
 import { CRCodeChangesView } from './CRCodeChangesView';
 import { DiffViewerModal } from './DiffViewerModal';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface AIAgentModalProps {
   isOpen: boolean;
@@ -78,6 +80,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
 }) => {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
+  const [useDeepAnalysis, setUseDeepAnalysis] = useState(false);
   const [messages, setMessages] = useState<Array<{
     role: 'user' | 'assistant';
     text: string;
@@ -113,7 +116,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
     setLoading(true);
 
     try {
-      const res = await queryAI(q, [], aiSettings);
+      const res = await queryAI(q, [], aiSettings, useDeepAnalysis, sshConfig);
 
       setMessages(prev => [
         ...prev,
@@ -178,12 +181,12 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
         {/* Modal Top Header */}
         <div className="p-4 px-6 border-b border-slate-800 bg-slate-900/90 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-lg shadow-indigo-500/20">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-main shadow-lg shadow-indigo-500/20">
               <Bot className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-white">Mantis CR AI 지능형 분석 & 실시간 뷰어</h2>
+                <h2 className="text-base font-bold text-main">Mantis CR AI 지능형 분석 & 실시간 뷰어</h2>
                 <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 uppercase font-semibold">
                   {aiSettings.provider === 'local' ? '고도화 로컬 NLP' : aiSettings.provider}
                 </span>
@@ -225,7 +228,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                   </div>
 
                   <div className="space-y-1">
-                    <h3 className="text-base font-bold text-white">어떤 CR을 찾고 계신가요?</h3>
+                    <h3 className="text-base font-bold text-main">어떤 CR을 찾고 계신가요?</h3>
                     <p className="text-xs text-slate-400 leading-relaxed">
                       증상, 모듈명(예: PLSM, IPCRDM), 수정 파일, 키워드를 자연어로 입력하세요.
                     </p>
@@ -283,8 +286,35 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                             </button>
                           </div>
 
-                          <div className="text-xs text-slate-200 leading-relaxed whitespace-pre-wrap">
-                            {msg.text}
+                          <div className="markdown-body">
+                            <ReactMarkdown 
+                              remarkPlugins={[remarkGfm]}
+                              components={{
+                                a: ({ node, ...props }) => {
+                                  if (props.href?.startsWith('?crid=')) {
+                                    const crid = props.href.replace('?crid=', '');
+                                    return (
+                                      <a 
+                                        href="#" 
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          const targetItem = msg.matchedCrs?.find(c => c.crid === crid || String(c.id) === crid);
+                                          if (targetItem) {
+                                            handleSelectPreview(targetItem);
+                                          }
+                                        }}
+                                        className="text-mantis-400 hover:text-mantis-300 underline font-bold cursor-pointer transition-colors"
+                                      >
+                                        {props.children}
+                                      </a>
+                                    );
+                                  }
+                                  return <a {...props} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline" />;
+                                }
+                              }}
+                            >
+                              {msg.text.replace(/#(\d{4,7})/g, '[#$1](?crid=$1)')}
+                            </ReactMarkdown>
                           </div>
 
                         </div>
@@ -336,13 +366,13 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                                         )}
                                       </div>
 
-                                      <span className="text-[10px] font-semibold text-slate-500 group-hover:text-indigo-300 flex items-center gap-1 transition-colors">
+                                      <span className="text-[10px] font-semibold text-main0 group-hover:text-indigo-300 flex items-center gap-1 transition-colors">
                                         상세보기 <ArrowRight className="w-3 h-3" />
                                       </span>
                                     </div>
 
                                     {/* Title */}
-                                    <h4 className="text-xs sm:text-sm font-bold text-slate-100 group-hover:text-white leading-snug">
+                                    <h4 className="text-xs sm:text-sm font-bold text-slate-100 group-hover:text-main leading-snug">
                                       {item.cleanSummary || item.summary}
                                     </h4>
 
@@ -371,7 +401,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                                           </code>
                                         ))}
                                         {item.files.length > 4 && (
-                                          <span className="text-slate-500 font-mono">+{item.files.length - 4}개</span>
+                                          <span className="text-main0 font-mono">+{item.files.length - 4}개</span>
                                         )}
                                       </div>
                                     )}
@@ -391,13 +421,31 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
               {loading && (
                 <div className="glass-panel p-4 rounded-2xl border border-slate-800 flex items-center gap-3 text-slate-300 text-xs">
                   <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
-                  <span>Mantis 데이터베이스와 체크인 로그를 교차 분석하는 중...</span>
+                  <span>
+                    {useDeepAnalysis 
+                      ? 'Mantis 데이터베이스 검색 및 SSH를 통한 소스 코드 Diff 수집/분석 중입니다 (최대 1분 소요)...'
+                      : 'Mantis 데이터베이스와 체크인 로그를 교차 분석하는 중...'}
+                  </span>
                 </div>
               )}
             </div>
 
             {/* Input Form Bar */}
-            <div className="p-3 sm:p-4 border-t border-slate-800 bg-slate-900/90">
+            <div className="p-3 sm:p-4 border-t border-slate-800 bg-slate-900/90 flex flex-col gap-3">
+              <div className="flex items-center gap-2 px-1">
+                <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 hover:text-main transition-colors group">
+                  <input
+                    type="checkbox"
+                    checked={useDeepAnalysis}
+                    onChange={e => setUseDeepAnalysis(e.target.checked)}
+                    className="w-3.5 h-3.5 rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-slate-900 cursor-pointer"
+                  />
+                  <span className="flex items-center gap-1.5">
+                    <Code2 className="w-3.5 h-3.5 text-indigo-400 group-hover:text-indigo-300" />
+                    코드 레벨 심층 분석 (SSH Diff 실시간 수집, 시간 소요됨)
+                  </span>
+                </label>
+              </div>
               <form
                 onSubmit={e => {
                   e.preventDefault();
@@ -415,7 +463,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                 <button
                   type="submit"
                   disabled={!query.trim() || loading}
-                  className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:hover:bg-indigo-600 text-white font-bold text-xs transition-all flex items-center gap-1.5 flex-shrink-0 shadow-lg shadow-indigo-600/20"
+                  className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:hover:bg-indigo-600 text-main font-bold text-xs transition-all flex items-center gap-1.5 flex-shrink-0 shadow-lg shadow-indigo-600/20"
                 >
                   <Send className="w-4 h-4" />
                   <span>검색/질의</span>
@@ -450,7 +498,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                       )}
                     </div>
 
-                    <h3 className="text-sm font-bold text-white leading-snug break-words">
+                    <h3 className="text-sm font-bold text-main leading-snug break-words">
                       {previewCR.cleanSummary || previewCR.summary}
                     </h3>
                   </div>
@@ -466,7 +514,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
 
                     <button
                       onClick={() => handleCopy(previewCR.crid, 'preview_crid')}
-                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-main transition-colors"
                       title="CRID 복사"
                     >
                       {copiedField === 'preview_crid' ? <Check className="w-3.5 h-3.5 text-mantis-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -560,7 +608,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                       
                       {/* Full Raw Title */}
                       <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1">
-                        <span className="text-[10px] text-slate-500 font-semibold">전체 원본 제목</span>
+                        <span className="text-[10px] text-main0 font-semibold">전체 원본 제목</span>
                         <p className="font-mono text-slate-200 select-all break-all leading-snug">
                           {previewCR.summary}
                         </p>
@@ -569,42 +617,42 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                       {/* Key Metadata Fields */}
                       <div className="grid grid-cols-2 gap-2.5">
                         <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-0.5">
-                          <span className="text-slate-500 text-[10px] flex items-center gap-1">
+                          <span className="text-main0 text-[10px] flex items-center gap-1">
                             <User className="w-3 h-3" /> 보고자
                           </span>
                           <p className="font-semibold text-slate-200">{previewCR.reporter || '-'}</p>
                         </div>
 
                         <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-0.5">
-                          <span className="text-slate-500 text-[10px] flex items-center gap-1">
+                          <span className="text-main0 text-[10px] flex items-center gap-1">
                             <User className="w-3 h-3" /> 담당자
                           </span>
                           <p className="font-semibold text-slate-200">{previewCR.assignee || '-'}</p>
                         </div>
 
                         <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-0.5">
-                          <span className="text-slate-500 text-[10px] flex items-center gap-1">
+                          <span className="text-main0 text-[10px] flex items-center gap-1">
                             <Tag className="w-3 h-3" /> 대상 모듈
                           </span>
                           <p className="font-semibold text-slate-200">{previewCR.module || '-'}</p>
                         </div>
 
                         <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-0.5">
-                          <span className="text-slate-500 text-[10px] flex items-center gap-1">
+                          <span className="text-main0 text-[10px] flex items-center gap-1">
                             <Layers className="w-3 h-3" /> 적용 VOB
                           </span>
                           <p className="font-semibold text-teal-300 font-mono">{previewCR.vob || '-'}</p>
                         </div>
 
                         <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-0.5">
-                          <span className="text-slate-500 text-[10px] flex items-center gap-1">
+                          <span className="text-main0 text-[10px] flex items-center gap-1">
                             <Calendar className="w-3 h-3" /> 보고 날짜
                           </span>
                           <p className="font-semibold text-slate-200 font-mono">{previewCR.dateSubmitted || '-'}</p>
                         </div>
 
                         <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-0.5">
-                          <span className="text-slate-500 text-[10px] flex items-center gap-1">
+                          <span className="text-main0 text-[10px] flex items-center gap-1">
                             <Clock className="w-3 h-3" /> 최종 갱신
                           </span>
                           <p className="font-semibold text-slate-200 font-mono">{previewCR.lastUpdated || '-'}</p>
@@ -647,7 +695,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                           {previewCR.checkinLog}
                         </pre>
                       ) : (
-                        <div className="p-8 text-center text-slate-500 text-xs">
+                        <div className="p-8 text-center text-main0 text-xs">
                           Check-in 로그가 비어 있습니다.
                         </div>
                       )}
@@ -657,7 +705,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
 
               </div>
             ) : (
-              <div className="h-full flex flex-col items-center justify-center p-8 text-center text-slate-500 space-y-2">
+              <div className="h-full flex flex-col items-center justify-center p-8 text-center text-main0 space-y-2">
                 <FileCode className="w-10 h-10 text-slate-600" />
                 <p className="text-sm font-semibold text-slate-400">선택된 CR이 없습니다</p>
                 <p className="text-xs max-w-xs">

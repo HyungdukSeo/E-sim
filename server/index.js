@@ -3,15 +3,21 @@ import cors from 'cors';
 import compression from 'compression';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
+import axios from 'axios';
 import { fileURLToPath } from 'url';
-import { syncMantisData, getLocalDatabase, importDatabase, fetchCRPageDetails, DB_FILE, META_FILE } from './sync.js';
+import { syncMantisData, getLocalDatabase, importDatabase, fetchCRPageDetails, DB_FILE, META_FILE, DATA_DIR } from './sync.js';
 import { processAiQuery } from './ai.js';
 import { testSSHConnection, fetchFileDiffSSH } from './ssh.js';
+import { getClaudeModels, getAntigravityModels, getCodexModels } from './cli-models.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
 const DIST_DIR = path.join(ROOT_DIR, 'dist');
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const CLI_SETTINGS_DIR = path.join(os.homedir(), '.mantis_cr_hub');
+const CLI_SETTINGS_FILE = path.join(CLI_SETTINGS_DIR, 'settings.json');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -29,6 +35,56 @@ app.get('/api/status', (req, res) => {
     totalCount: crs.length,
     dbFilePath: DB_FILE
   });
+});
+
+// 1.5 Get Settings from local disk
+app.get('/api/settings', (req, res) => {
+  try {
+    if (fs.existsSync(SETTINGS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+      return res.json({ ok: true, settings: data });
+    }
+    if (fs.existsSync(CLI_SETTINGS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(CLI_SETTINGS_FILE, 'utf8'));
+      return res.json({ ok: true, settings: data });
+    }
+    res.json({ ok: true, settings: null });
+  } catch (err) {
+    console.error('[Get Settings Error]', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// 1.6 Save Settings to local disk
+app.post('/api/settings', (req, res) => {
+  try {
+    const settings = req.body;
+    if (!settings || typeof settings !== 'object') {
+      return res.status(400).json({ ok: false, error: 'Invalid settings object' });
+    }
+
+    // 1) Save to project data/settings.json
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
+
+    // 2) Also save to ~/.mantis_cr_hub/settings.json for CLI compatibility
+    try {
+      if (!fs.existsSync(CLI_SETTINGS_DIR)) {
+        fs.mkdirSync(CLI_SETTINGS_DIR, { recursive: true });
+      }
+      fs.writeFileSync(CLI_SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
+    } catch (cliErr) {
+      console.warn('[CLI Settings Sync Warning]', cliErr.message);
+    }
+
+    console.log(`[Settings] Saved to local disk: ${SETTINGS_FILE}`);
+    res.json({ ok: true, message: 'Settings saved to local disk successfully' });
+  } catch (err) {
+    console.error('[Save Settings Error]', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 // 2. Get All CRs
@@ -215,6 +271,27 @@ app.post('/api/ai/query', async (req, res) => {
   } catch (err) {
     console.error('[AI Query Error]', err);
     res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// 8.5 AI Models Fetcher
+app.get('/api/ai/models', async (req, res) => {
+  const provider = req.query.provider;
+  try {
+    let models = [];
+
+    if (provider === 'openai') {
+      models = await getCodexModels();
+    } else if (provider === 'gemini') {
+      models = await getAntigravityModels();
+    } else if (provider === 'claude') {
+      models = await getClaudeModels();
+    }
+
+    res.json({ ok: true, models });
+  } catch (err) {
+    console.error(`[AI Models Error - ${provider}]`, err.message);
+    res.status(500).json({ ok: false, error: err.message, models: [] });
   }
 });
 

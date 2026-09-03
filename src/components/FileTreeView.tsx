@@ -149,7 +149,7 @@ const TreeNodeItem: React.FC<{
           className="py-1.5 px-2 rounded-xl hover:bg-slate-850 cursor-pointer flex items-center justify-between group transition-all text-xs"
         >
           <div className="flex items-center gap-2 truncate">
-            <span className="text-slate-500 group-hover:text-slate-300 transition-colors">
+            <span className="text-main0 group-hover:text-slate-300 transition-colors">
               {isOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
             </span>
             {isOpen ? (
@@ -159,7 +159,7 @@ const TreeNodeItem: React.FC<{
             )}
             
             {/* Highlighted Folder Path */}
-            <span className="font-semibold text-slate-200 group-hover:text-white truncate font-mono text-[12px]">
+            <span className="font-semibold text-slate-200 group-hover:text-main truncate font-mono text-[12px]">
               {node.name.includes('/') ? (
                 <>
                   <span className="text-slate-400">{node.name.substring(0, node.name.lastIndexOf('/') + 1)}</span>
@@ -180,10 +180,10 @@ const TreeNodeItem: React.FC<{
               e.stopPropagation();
               onCopyPath(node.fullPath);
             }}
-            className="opacity-0 group-hover:opacity-100 p-1 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-all text-[10px] flex items-center gap-1"
+            className="opacity-0 group-hover:opacity-100 p-1 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-main transition-all text-[10px] flex items-center gap-1"
             title="폴더 경로 복사"
           >
-            {copiedPath === node.fullPath ? <Check className="w-3 h-3 text-mantis-400" /> : <Copy className="w-3 h-3" />}
+            {copiedPath === node.fullPath ? <Check className="w-3 h-3 text-mantis-600 dark:text-mantis-400" /> : <Copy className="w-3 h-3" />}
           </button>
         </div>
 
@@ -215,7 +215,7 @@ const TreeNodeItem: React.FC<{
     >
       <div className="flex items-center gap-2 truncate">
         {getFileIcon(node.name)}
-        <span className="font-mono text-slate-200 group-hover:text-mantis-300 truncate font-medium text-[11px]">
+        <span className="font-mono text-slate-200 group-hover:text-mantis-700 dark:text-mantis-300 truncate font-medium text-[11px]">
           {node.name}
         </span>
       </div>
@@ -224,7 +224,7 @@ const TreeNodeItem: React.FC<{
         {onOpenDiff && (
           <button
             onClick={() => onOpenDiff(node.fullPath)}
-            className="opacity-0 group-hover:opacity-100 px-2 py-0.5 rounded bg-indigo-500/20 hover:bg-indigo-500/35 text-indigo-300 hover:text-white border border-indigo-500/30 text-[10px] font-semibold flex items-center gap-1 transition-all"
+            className="opacity-0 group-hover:opacity-100 px-2 py-0.5 rounded bg-indigo-500/20 hover:bg-indigo-500/35 text-indigo-300 hover:text-main border border-indigo-500/30 text-[10px] font-semibold flex items-center gap-1 transition-all"
             title="ClearCase Diff 비교 (SSH / vimdiff)"
           >
             <GitCompare className="w-3 h-3 text-indigo-400" />
@@ -234,10 +234,10 @@ const TreeNodeItem: React.FC<{
 
         <button
           onClick={() => onCopyPath(node.fullPath)}
-          className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-white transition-all"
+          className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-main transition-all"
           title="파일 전체 경로 복사"
         >
-          {copiedPath === node.fullPath ? <Check className="w-3 h-3 text-mantis-400" /> : <Copy className="w-3 h-3" />}
+          {copiedPath === node.fullPath ? <Check className="w-3 h-3 text-mantis-600 dark:text-mantis-400" /> : <Copy className="w-3 h-3" />}
         </button>
       </div>
     </div>
@@ -316,7 +316,7 @@ export const FileTreeView: React.FC<FileTreeViewProps> = ({ filePaths, onOpenDif
 
   if (!filePaths || filePaths.length === 0) {
     return (
-      <div className="p-8 text-center text-slate-500 text-xs">
+      <div className="p-8 text-center text-main0 text-xs">
         수정된 소스 파일 목록이 없습니다.
       </div>
     );
@@ -336,7 +336,7 @@ export const FileTreeView: React.FC<FileTreeViewProps> = ({ filePaths, onOpenDif
         
         {/* Filter input */}
         <div className="relative flex-1 min-w-[200px] max-w-md">
-          <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <Search className="w-3.5 h-3.5 text-main0 absolute left-2.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
             value={filterQuery}
@@ -386,9 +386,9 @@ export const FileTreeView: React.FC<FileTreeViewProps> = ({ filePaths, onOpenDif
           {/* Copy all paths */}
           <button
             onClick={handleCopyAll}
-            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-mantis-300 border border-slate-700 text-[11px] font-semibold flex items-center gap-1"
+            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-mantis-700 dark:text-mantis-300 border border-slate-700 text-[11px] font-semibold flex items-center gap-1"
           >
-            {copiedPath === 'all' ? <Check className="w-3 h-3 text-mantis-400" /> : <Copy className="w-3 h-3" />}
+            {copiedPath === 'all' ? <Check className="w-3 h-3 text-mantis-600 dark:text-mantis-400" /> : <Copy className="w-3 h-3" />}
             전체 경로 복사
           </button>
 
@@ -397,7 +397,7 @@ export const FileTreeView: React.FC<FileTreeViewProps> = ({ filePaths, onOpenDif
             <button
               onClick={() => setViewMode('tree')}
               className={`p-1 px-2 rounded flex items-center gap-1 text-[11px] font-semibold transition-all ${
-                viewMode === 'tree' ? 'bg-mantis-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
+                viewMode === 'tree' ? 'bg-mantis-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-main'
               }`}
               title="폴더 트리 구조 뷰"
             >
@@ -407,7 +407,7 @@ export const FileTreeView: React.FC<FileTreeViewProps> = ({ filePaths, onOpenDif
             <button
               onClick={() => setViewMode('flat')}
               className={`p-1 px-2 rounded flex items-center gap-1 text-[11px] font-semibold transition-all ${
-                viewMode === 'flat' ? 'bg-mantis-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
+                viewMode === 'flat' ? 'bg-mantis-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-main'
               }`}
               title="전체 평면 목록 뷰"
             >
@@ -422,7 +422,7 @@ export const FileTreeView: React.FC<FileTreeViewProps> = ({ filePaths, onOpenDif
       {/* Main Files Display Area */}
       <div className="p-3 rounded-2xl bg-slate-950/90 border border-slate-800 max-h-[520px] overflow-y-auto font-mono text-xs shadow-inner">
         {filteredPaths.length === 0 ? (
-          <div className="py-8 text-center text-slate-500 text-xs font-sans">
+          <div className="py-8 text-center text-main0 text-xs font-sans">
             필터 조건과 일치하는 파일이 없습니다.
           </div>
         ) : viewMode === 'tree' ? (
@@ -453,10 +453,10 @@ export const FileTreeView: React.FC<FileTreeViewProps> = ({ filePaths, onOpenDif
                   <div className="flex items-center gap-2 truncate">
                     {getFileIcon(fileName)}
                     <div className="truncate">
-                      <span className="font-mono font-bold text-mantis-300 text-xs">
+                      <span className="font-mono font-bold text-mantis-700 dark:text-mantis-300 text-xs">
                         {fileName}
                       </span>
-                      <span className="font-mono text-slate-500 text-[10px] ml-2 select-all">
+                      <span className="font-mono text-main0 text-[10px] ml-2 select-all">
                         {fPath}
                       </span>
                     </div>
@@ -466,7 +466,7 @@ export const FileTreeView: React.FC<FileTreeViewProps> = ({ filePaths, onOpenDif
                     {onOpenDiff && (
                       <button
                         onClick={() => onOpenDiff(fPath)}
-                        className="opacity-0 group-hover:opacity-100 px-2 py-0.5 rounded bg-indigo-500/20 hover:bg-indigo-500/35 text-indigo-300 hover:text-white border border-indigo-500/30 text-[10px] font-semibold flex items-center gap-1 transition-all"
+                        className="opacity-0 group-hover:opacity-100 px-2 py-0.5 rounded bg-indigo-500/20 hover:bg-indigo-500/35 text-indigo-300 hover:text-main border border-indigo-500/30 text-[10px] font-semibold flex items-center gap-1 transition-all"
                         title="ClearCase Diff 비교 (SSH / vimdiff)"
                       >
                         <GitCompare className="w-3 h-3 text-indigo-400" />
@@ -476,10 +476,10 @@ export const FileTreeView: React.FC<FileTreeViewProps> = ({ filePaths, onOpenDif
 
                     <button
                       onClick={() => handleCopyPath(fPath)}
-                      className="opacity-0 group-hover:opacity-100 p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-all flex-shrink-0"
+                      className="opacity-0 group-hover:opacity-100 p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-main transition-all flex-shrink-0"
                       title="경로 복사"
                     >
-                      {copiedPath === fPath ? <Check className="w-3 h-3 text-mantis-400" /> : <Copy className="w-3 h-3" />}
+                      {copiedPath === fPath ? <Check className="w-3 h-3 text-mantis-600 dark:text-mantis-400" /> : <Copy className="w-3 h-3" />}
                     </button>
                   </div>
                 </div>
@@ -489,12 +489,12 @@ export const FileTreeView: React.FC<FileTreeViewProps> = ({ filePaths, onOpenDif
         )}
       </div>
 
-      <div className="flex items-center justify-between text-[11px] text-slate-500 px-1 font-mono">
+      <div className="flex items-center justify-between text-[11px] text-main0 px-1 font-mono">
         <span>
           총 <strong className="text-slate-300">{filteredPaths.length.toLocaleString()}</strong>개 파일
           {filteredPaths.length !== filePaths.length && ` (전체 ${filePaths.length.toLocaleString()}개 중 필터됨)`}
         </span>
-        <span className="text-[10px] text-slate-500 font-sans">
+        <span className="text-[10px] text-main0 font-sans">
           💡 <strong className="text-amber-400">압축 경로</strong>: 단일 경로를 한 줄로 결합하여 분기 지점(<code className="text-slate-300">BASE</code>, <code className="text-slate-300">SSW</code>, <code className="text-slate-300">STK</code> 등)을 즉시 펼쳐볼 수 있습니다.
         </span>
       </div>

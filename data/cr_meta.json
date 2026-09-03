@@ -1,11 +1,11 @@
 {
-  "lastSyncTime": "2026-09-01T09:40:53.580Z",
-  "totalCount": 7734,
+  "lastSyncTime": "2026-09-03T14:36:27.511Z",
+  "totalCount": 7735,
   "mantisUrl": "http://192.168.16.200",
   "addedCount": 0,
   "updatedCount": 0,
-  "unchangedCount": 7734,
-  "durationMs": 48129,
+  "unchangedCount": 7735,
+  "durationMs": 53552,
   "dbFilePath": "/Volumes/WD_1TB/E-sim/E-sim/data/cr_database.json",
   "status": "success"
 }

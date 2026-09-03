@@ -188,8 +188,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <span>전체 CR 수</span>
             <FolderKanban className="w-4 h-4 text-mantis-400" />
           </div>
-          <p className="text-2xl font-black text-white">{stats.total.toLocaleString()}</p>
-          <p className="text-[11px] text-slate-500">Mantis 전체 수집 데이터</p>
+          <p className="text-2xl font-black text-main">{stats.total.toLocaleString()}</p>
+          <p className="text-[11px] text-main0">Mantis 전체 수집 데이터</p>
         </div>
 
         <div className="glass-card p-4 rounded-2xl border border-slate-800 space-y-1">
@@ -220,7 +220,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <FileCode className="w-4 h-4 text-indigo-400" />
           </div>
           <p className="text-2xl font-black text-indigo-300">{stats.withCheckinCount.toLocaleString()}</p>
-          <p className="text-[11px] text-slate-500">파일 변경 이력 포함</p>
+          <p className="text-[11px] text-main0">파일 변경 이력 포함</p>
         </div>
 
         <div className="glass-card p-4 rounded-2xl border border-slate-800 space-y-1">
@@ -229,7 +229,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <Building2 className="w-4 h-4 text-amber-400" />
           </div>
           <p className="text-2xl font-black text-amber-300">{stats.activeProjectsCount}</p>
-          <p className="text-[11px] text-slate-500">등록된 총 프로젝트</p>
+          <p className="text-[11px] text-main0">등록된 총 프로젝트</p>
         </div>
       </div>
 
@@ -363,7 +363,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <FileCode className="w-4 h-4 text-indigo-400" />
               가장 빈번하게 수정된 소스 파일 Top 12 (Check-in 기준)
             </h3>
-            <span className="text-[10px] text-slate-500">클릭 시 해당 파일 수정 CR 검색</span>
+            <span className="text-[10px] text-main0">클릭 시 해당 파일 수정 CR 검색</span>
           </div>
 
           <div className="space-y-1.5">
@@ -374,7 +374,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 className="p-2 px-3 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-indigo-500/40 cursor-pointer transition-all flex items-center justify-between gap-3 group"
               >
                 <div className="flex items-center gap-2.5 truncate">
-                  <span className="font-mono text-xs text-slate-500 w-5 text-center font-bold">
+                  <span className="font-mono text-xs text-main0 w-5 text-center font-bold">
                     #{idx + 1}
                   </span>
                   <span className="font-mono text-xs font-semibold text-slate-200 group-hover:text-indigo-300 transition-colors truncate">
@@ -416,7 +416,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 className="p-2.5 px-3 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-purple-500/40 cursor-pointer transition-all flex items-center justify-between"
               >
                 <div className="flex items-center gap-2.5">
-                  <span className="w-5 text-center text-xs font-bold text-slate-500">#{idx + 1}</span>
+                  <span className="w-5 text-center text-xs font-bold text-main0">#{idx + 1}</span>
                   <span className="text-xs font-semibold text-slate-200">{r.name}</span>
                 </div>
                 <span className="text-xs font-bold font-mono text-purple-300">{r.count}건</span>

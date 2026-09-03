@@ -24,7 +24,7 @@ export const CRCardGrid: React.FC<CRCardGridProps> = ({
 }) => {
   if (items.length === 0) {
     return (
-      <div className="glass-panel p-12 rounded-2xl text-center text-slate-500">
+      <div className="glass-panel p-12 rounded-2xl text-center text-main0">
         <p className="text-sm font-medium">검색 조건과 일치하는 CR이 없습니다.</p>
       </div>
     );
@@ -75,7 +75,7 @@ export const CRCardGrid: React.FC<CRCardGridProps> = ({
                       e.stopPropagation();
                       onToggleBookmark(cr.crid);
                     }}
-                    className="p-1 rounded-lg text-slate-500 hover:text-amber-400 transition-colors"
+                    className="p-1 rounded-lg text-main0 hover:text-amber-400 transition-colors"
                   >
                     <Bookmark className={`w-4 h-4 ${isBookmarked ? 'fill-amber-400 text-amber-400' : ''}`} />
                   </button>
@@ -85,7 +85,7 @@ export const CRCardGrid: React.FC<CRCardGridProps> = ({
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={e => e.stopPropagation()}
-                    className="p-1 rounded-lg text-slate-500 hover:text-mantis-400 transition-colors"
+                    className="p-1 rounded-lg text-main0 hover:text-mantis-400 transition-colors"
                   >
                     <ExternalLink className="w-4 h-4" />
                   </a>
@@ -129,11 +129,11 @@ export const CRCardGrid: React.FC<CRCardGridProps> = ({
             <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
               <div className="flex items-center gap-3">
                 <span className="flex items-center gap-1">
-                  <User className="w-3 h-3 text-slate-500" />
+                  <User className="w-3 h-3 text-main0" />
                   {cr.reporter || '-'}
                 </span>
                 <span className="flex items-center gap-1 font-mono text-[11px]">
-                  <Calendar className="w-3 h-3 text-slate-500" />
+                  <Calendar className="w-3 h-3 text-main0" />
                   {cr.dateSubmitted || '-'}
                 </span>
               </div>

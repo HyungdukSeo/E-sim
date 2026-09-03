@@ -227,12 +227,29 @@ export function analyzeQueryLocally(query, allCrs) {
   }
 
   if (topResults.length > 0) {
-    responseText += `질문하신 내용과 가장 밀접하게 연관된 상위 CR 목록입니다. **CR 카드를 클릭하면 오른쪽 화면에서 소스 파일 변경 내역과 원문 상세 내용을 즉시 확인**하실 수 있습니다:\n\n`;
+    // Generate statistical summary
+    const totalFiles = topResults.reduce((acc, curr) => acc + (curr.files?.length || 0), 0);
+    const modules = topResults.map(c => c.module).filter(Boolean);
+    const mostFreqModule = modules.length > 0 ? modules.sort((a,b) => 
+      modules.filter(v => v===a).length - modules.filter(v => v===b).length
+    ).pop() : '다양한 모듈';
+    
+    responseText += `**💡 핵심 요약:**\n`;
+    responseText += `검색된 상위 ${topResults.length}건의 이슈를 종합해 본 결과, 체크인 로그나 제목에서 키워드가 언급된 내역이 존재하며, **총 ${totalFiles}개의 소스 파일이 직접 수정**되었습니다. 주로 **${mostFreqModule}** 모듈과 연관되어 해결된 패턴을 보입니다. 자세한 원인이나 오류 메시지가 명시된 구체적인 내역은 아래 상세 목록을 통해 확인하실 수 있습니다.\n\n---\n\n`;
+    
+    responseText += `질문하신 내용과 밀접하게 연관된 핵심 CR 목록입니다. **CR 카드를 클릭하면 오른쪽 화면에서 소스 파일 변경 내역과 원문 상세 내용을 즉시 확인**하실 수 있습니다:\n\n`;
     topResults.slice(0, 5).forEach((item, i) => {
       responseText += `${i + 1}. **[#${item.crid}]** ${item.cleanSummary}\n`;
       responseText += `   - 🎯 **연관 이유:** ${item.matchReasons.slice(0, 2).join(' | ')}\n`;
       if (item.files && item.files.length > 0) {
         responseText += `   - 📂 **수정 파일:** \`${item.files.slice(0, 3).join('`, `')}\`${item.files.length > 3 ? ` 외 ${item.files.length - 3}개` : ''}\n`;
+      }
+      if (item.checkinLog) {
+        const lines = item.checkinLog.split('\n').map(l => l.trim()).filter(l => l.length > 0 && !l.startsWith('==='));
+        if (lines.length > 0) {
+          const snippet = lines.slice(0, 2).join(' / ').substring(0, 150).replace(/\s+/g, ' ');
+          responseText += `   - 📝 **변경 내역:** ${snippet}${snippet.length >= 150 ? '...' : ''}\n`;
+        }
       }
     });
   } else {
@@ -249,6 +266,60 @@ export function analyzeQueryLocally(query, allCrs) {
   };
 }
 
+import { fetchFileDiffSSH } from './ssh.js';
+
+const BINARY_EXTS = new Set(['.exe', '.o', '.a', '.so', '.dll', '.tar', '.gz', '.zip', '.class', '.jar', '.png', '.jpg', '.pdf']);
+
+async function collectDeepDiffs(localAnalysis, sshConfig) {
+  if (!sshConfig || !sshConfig.host) return '';
+  
+  const filesToFetch = [];
+  
+  // Extract up to 5 valid files from the top 3 matched CRs
+  for (const cr of localAnalysis.matchedCrs.slice(0, 3)) {
+    if (!cr.files) continue;
+    
+    for (let i = 0; i < cr.files.length; i++) {
+      const fileName = cr.files[i];
+      const filePath = cr.filePaths?.[i] || fileName;
+      
+      const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
+      if (BINARY_EXTS.has(ext)) continue;
+      
+      // Found a text/source file
+      filesToFetch.push({ crid: cr.crid, fileName, filePath, checkinLog: cr.checkinLog });
+      
+      if (filesToFetch.length >= 5) break;
+    }
+    if (filesToFetch.length >= 5) break;
+  }
+  
+  if (filesToFetch.length === 0) return '';
+  
+  console.log(`[AI Deep Analysis] Fetching diffs for ${filesToFetch.length} files...`);
+  
+  let diffContext = '\n\n=== [DEEP CODE DIFF ANALYSIS] ===\n';
+  diffContext += 'The following are actual code diffs (Unified Diff format) for the most relevant modified files:\n\n';
+  
+  for (const f of filesToFetch) {
+    try {
+      const diffResult = await fetchFileDiffSSH(sshConfig, f.filePath, f.checkinLog);
+      if (diffResult.ok && diffResult.hasChanges && diffResult.unifiedDiff) {
+        // Truncate massive diffs to avoid blowing up context window
+        const diffText = diffResult.unifiedDiff.length > 5000 
+          ? diffResult.unifiedDiff.substring(0, 5000) + '\n... (diff truncated due to length)'
+          : diffResult.unifiedDiff;
+          
+        diffContext += `\n--- CR #${f.crid} : ${f.fileName} ---\n\`\`\`diff\n${diffText}\n\`\`\`\n`;
+      }
+    } catch (err) {
+      console.warn(`[AI Deep Analysis] Failed to fetch diff for ${f.fileName}: ${err.message}`);
+    }
+  }
+  
+  return diffContext;
+}
+
 /**
  * Main AI Query Entrypoint
  */
@@ -258,14 +329,24 @@ export async function processAiQuery({ query, contextCrs = [], config = {} }) {
   // 1. External LLM Provider Proxy
   if (provider !== 'local') {
     try {
-      if (provider === 'ollama' && config.ollamaEndpoint) {
-        return await queryOllama(query, contextCrs, config);
+      const localAnalysis = analyzeQueryLocally(query, contextCrs);
+      let deepDiffContext = '';
+      
+      if (config.useDeepAnalysis && config.sshConfig) {
+        deepDiffContext = await collectDeepDiffs(localAnalysis, config.sshConfig);
       }
-      if (provider === 'openai' && config.openaiApiKey) {
-        return await queryOpenAI(query, contextCrs, config);
+
+      if (provider === 'custom' && config.customUrl) {
+        return await queryCustomOpenAI(query, localAnalysis, deepDiffContext, config);
       }
-      if (provider === 'gemini' && config.geminiApiKey) {
-        return await queryGemini(query, contextCrs, config);
+      if (provider === 'openai') {
+        return await queryOpenAI(query, localAnalysis, deepDiffContext, config);
+      }
+      if (provider === 'gemini') {
+        return await queryGemini(query, localAnalysis, deepDiffContext, config);
+      }
+      if (provider === 'claude') {
+        return await queryClaude(query, localAnalysis, deepDiffContext, config);
       }
     } catch (err) {
       console.warn(`[AI Proxy Error: ${provider}] Fallback to local NLP analyzer:`, err.message);
@@ -276,45 +357,52 @@ export async function processAiQuery({ query, contextCrs = [], config = {} }) {
   return analyzeQueryLocally(query, contextCrs);
 }
 
-async function queryOllama(query, contextCrs, config) {
-  const endpoint = config.ollamaEndpoint.replace(/\/$/, '') + '/api/generate';
-  const model = config.ollamaModel || 'llama3';
-  const localAnalysis = analyzeQueryLocally(query, contextCrs);
+async function queryCustomOpenAI(query, localAnalysis, deepDiffContext, config) {
+  const endpoint = config.customUrl.replace(/\/$/, '') + '/chat/completions';
+  const apiKey = config.apiKey || 'b644f37bc89d3472041218af3976fb9e';
+  const model = config.customModel || 'aico-rag-qwen2.5-coder-7b';
 
-  const prompt = `You are a telecom software engineering assistant for Mantis CR bug tracking.
-Query: "${query}"
-Context CRs:
-${localAnalysis.matchedCrs.map(c => `- CR #${c.crid}: ${c.cleanSummary} [Module: ${c.module}, Files: ${c.files?.slice(0, 3).join(', ')}]`).join('\n')}
-
-Please analyze these CRs and answer the user query in Korean concisely.`;
+  let userContent = `Query: ${query}\n\nTop Matched CRs:\n${JSON.stringify(localAnalysis.matchedCrs.slice(0, 5), null, 2)}`;
+  if (deepDiffContext) {
+    userContent += `\n${deepDiffContext}\n\nPlease perform a deep analysis on the actual code diffs provided above. Explain the changes and provide a comprehensive conclusion based on the code.`;
+  }
 
   const resp = await axios.post(endpoint, {
     model,
-    prompt,
-    stream: false
-  }, { timeout: 30000 });
+    messages: [
+      { role: 'system', content: 'You are an expert telecom SSW software engineer analyzing Mantis bug CRs. Respond in helpful Korean markdown.' },
+      { role: 'user', content: userContent }
+    ]
+  }, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    timeout: 120000
+  });
 
   return {
-    answer: resp.data.response,
+    answer: resp.data.choices[0].message.content,
     matchedCrs: localAnalysis.matchedCrs,
-    provider: `ollama (${model})`
+    provider: `custom (${model})`
   };
 }
 
-async function queryOpenAI(query, contextCrs, config) {
-  const apiKey = config.openaiApiKey;
+async function queryOpenAI(query, localAnalysis, deepDiffContext, config) {
+  const apiKey = config.openaiApiKey || 'proxy-handled-key';
   const model = config.openaiModel || 'gpt-4o-mini';
-  const localAnalysis = analyzeQueryLocally(query, contextCrs);
+
+  let userContent = `Query: ${query}\n\nTop Matched CRs:\n${JSON.stringify(localAnalysis.matchedCrs.slice(0, 5), null, 2)}`;
+  if (deepDiffContext) {
+    userContent += `\n${deepDiffContext}\n\nPlease perform a deep analysis on the actual code diffs provided above. Explain the changes and provide a comprehensive conclusion based on the code.`;
+  }
 
   const resp = await axios.post('https://api.openai.com/v1/chat/completions', {
     model,
     messages: [
       { role: 'system', content: 'You are an expert telecom SSW software engineer analyzing Mantis bug CRs. Respond in helpful Korean markdown.' },
-      { role: 'user', content: `Query: ${query}\n\nTop Matched CRs:\n${JSON.stringify(localAnalysis.matchedCrs.slice(0, 5), null, 2)}` }
+      { role: 'user', content: userContent }
     ]
   }, {
     headers: { Authorization: `Bearer ${apiKey}` },
-    timeout: 30000
+    timeout: 120000
   });
 
   return {
@@ -324,26 +412,63 @@ async function queryOpenAI(query, contextCrs, config) {
   };
 }
 
-async function queryGemini(query, contextCrs, config) {
-  const apiKey = config.geminiApiKey;
-  const localAnalysis = analyzeQueryLocally(query, contextCrs);
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+async function queryGemini(query, localAnalysis, deepDiffContext, config) {
+  const apiKey = config.geminiApiKey || 'proxy-handled-key';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel || 'gemini-1.5-flash'}:generateContent?key=${apiKey}`;
+
+  let userContent = `You are an expert telecom SSW engineer analyzing Mantis bug CRs. Respond in Korean markdown.\nQuery: ${query}\n\nContext CRs:\n${JSON.stringify(localAnalysis.matchedCrs.slice(0, 5))}`;
+  if (deepDiffContext) {
+    userContent += `\n${deepDiffContext}\n\nPlease perform a deep analysis on the actual code diffs provided above. Explain the changes and provide a comprehensive conclusion based on the code.`;
+  }
 
   const resp = await axios.post(url, {
     contents: [
       {
         parts: [
-          { text: `You are an expert telecom SSW engineer analyzing Mantis bug CRs. Respond in Korean markdown.\nQuery: ${query}\n\nContext CRs:\n${JSON.stringify(localAnalysis.matchedCrs.slice(0, 5))}` }
+          { text: userContent }
         ]
       }
     ]
-  }, { timeout: 30000 });
+  }, { timeout: 120000 });
 
   const answer = resp.data.candidates?.[0]?.content?.parts?.[0]?.text || localAnalysis.answer;
 
   return {
     answer,
     matchedCrs: localAnalysis.matchedCrs,
-    provider: 'gemini-1.5-flash'
+    provider: `gemini (${config.geminiModel || 'gemini-1.5-flash'})`
+  };
+}
+
+async function queryClaude(query, localAnalysis, deepDiffContext, config) {
+  const apiKey = config.claudeApiKey || config.apiKey || 'proxy-handled-key';
+  const model = config.claudeModel || config.model || 'claude-3-5-sonnet-latest';
+
+  let userContent = `Query: ${query}\n\nTop Matched CRs:\n${JSON.stringify(localAnalysis.matchedCrs.slice(0, 5), null, 2)}`;
+  if (deepDiffContext) {
+    userContent += `\n${deepDiffContext}\n\nPlease perform a deep analysis on the actual code diffs provided above. Explain the changes and provide a comprehensive conclusion based on the code.`;
+  }
+
+  const resp = await axios.post('https://api.anthropic.com/v1/messages', {
+    model,
+    max_tokens: 4096,
+    system: 'You are an expert telecom SSW software engineer analyzing Mantis bug CRs. Respond in helpful Korean markdown.',
+    messages: [
+      { role: 'user', content: userContent }
+    ]
+  }, {
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01'
+    },
+    timeout: 120000
+  });
+
+  const answer = resp.data.content?.[0]?.text || '';
+
+  return {
+    answer,
+    matchedCrs: localAnalysis.matchedCrs,
+    provider: `claude (${model})`
   };
 }

@@ -68,7 +68,7 @@ export const SimilarCRs: React.FC<SimilarCRsProps> = ({
           <Sparkles className="w-3.5 h-3.5 text-mantis-400" />
           연관/유사 CR 추천 ({similarItems.length}건)
         </h4>
-        <span className="text-[10px] text-slate-500">동일 모듈 및 수정 소스파일 기반</span>
+        <span className="text-[10px] text-main0">동일 모듈 및 수정 소스파일 기반</span>
       </div>
 
       <div className="space-y-1.5">
@@ -81,7 +81,7 @@ export const SimilarCRs: React.FC<SimilarCRsProps> = ({
             <div className="space-y-1 truncate">
               <div className="flex items-center gap-2 text-xs">
                 <span className="font-mono font-bold text-mantis-400">#{cr.crid}</span>
-                <span className="text-slate-400 truncate max-w-[280px] font-medium text-[11px] group-hover:text-white">
+                <span className="text-slate-400 truncate max-w-[280px] font-medium text-[11px] group-hover:text-main">
                   {cr.cleanSummary || cr.summary}
                 </span>
               </div>

@@ -124,7 +124,7 @@ export const CRListTable: React.FC<CRListTableProps> = ({
                 
                 <th 
                   onClick={() => handleSort('id')}
-                  className="py-3 px-3.5 w-24 cursor-pointer hover:text-white transition-colors"
+                  className="py-3 px-3.5 w-24 cursor-pointer hover:text-main transition-colors"
                 >
                   <div className="flex items-center gap-1">
                     CRID
@@ -134,14 +134,14 @@ export const CRListTable: React.FC<CRListTableProps> = ({
 
                 <th 
                   onClick={() => handleSort('customer')}
-                  className="py-3 px-3 w-20 cursor-pointer hover:text-white transition-colors"
+                  className="py-3 px-3 w-20 cursor-pointer hover:text-main transition-colors"
                 >
                   고객사
                 </th>
 
                 <th 
                   onClick={() => handleSort('project')}
-                  className="py-3 px-3 w-28 cursor-pointer hover:text-white transition-colors"
+                  className="py-3 px-3 w-28 cursor-pointer hover:text-main transition-colors"
                 >
                   <div className="flex items-center gap-1">
                     프로젝트
@@ -151,7 +151,7 @@ export const CRListTable: React.FC<CRListTableProps> = ({
 
                 <th 
                   onClick={() => handleSort('status')}
-                  className="py-3 px-3 w-24 cursor-pointer hover:text-white transition-colors"
+                  className="py-3 px-3 w-24 cursor-pointer hover:text-main transition-colors"
                 >
                   <div className="flex items-center gap-1">
                     상태
@@ -165,14 +165,14 @@ export const CRListTable: React.FC<CRListTableProps> = ({
 
                 <th 
                   onClick={() => handleSort('reporter')}
-                  className="py-3 px-3 w-24 cursor-pointer hover:text-white transition-colors"
+                  className="py-3 px-3 w-24 cursor-pointer hover:text-main transition-colors"
                 >
                   보고자
                 </th>
 
                 <th 
                   onClick={() => handleSort('dateSubmitted')}
-                  className="py-3 px-3 w-24 cursor-pointer hover:text-white transition-colors"
+                  className="py-3 px-3 w-24 cursor-pointer hover:text-main transition-colors"
                 >
                   <div className="flex items-center gap-1">
                     보고일
@@ -188,7 +188,7 @@ export const CRListTable: React.FC<CRListTableProps> = ({
             <tbody className="divide-y divide-slate-800/60">
               {pageItems.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-16 text-center text-slate-500">
+                  <td colSpan={9} className="py-16 text-center text-main0">
                     <p className="text-sm font-medium">검색 조건과 일치하는 CR이 없습니다.</p>
                     <p className="text-xs mt-1 text-slate-600">검색어를 줄이거나 필터 설정을 변경해 보세요.</p>
                   </td>
@@ -230,7 +230,7 @@ export const CRListTable: React.FC<CRListTableProps> = ({
                           </span>
                           <button
                             onClick={e => handleCopyId(e, cr.crid)}
-                            className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-slate-200 transition-all p-0.5"
+                            className="opacity-0 group-hover:opacity-100 text-main0 hover:text-slate-200 transition-all p-0.5"
                             title="CRID 복사"
                           >
                             {copiedId === cr.crid ? <Check className="w-3 h-3 text-mantis-400" /> : <Copy className="w-3 h-3" />}
@@ -258,7 +258,7 @@ export const CRListTable: React.FC<CRListTableProps> = ({
                       {/* Summary & Module & Modified Files */}
                       <td className="py-2.5 px-4">
                         <div className="space-y-1">
-                          <div className="font-medium leading-snug line-clamp-2 text-slate-200 group-hover:text-white">
+                          <div className="font-medium leading-snug line-clamp-2 text-slate-200 group-hover:text-main">
                             {highlightedSummary.map((part, i) =>
                               part.isMatch ? (
                                 <mark key={i} className="search-highlight">{part.text}</mark>
@@ -306,7 +306,7 @@ export const CRListTable: React.FC<CRListTableProps> = ({
                           href={mantisLink}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="p-1 rounded-lg hover:bg-slate-800 text-slate-500 hover:text-mantis-400 transition-colors inline-block"
+                          className="p-1 rounded-lg hover:bg-slate-800 text-main0 hover:text-mantis-400 transition-colors inline-block"
                           title="Mantis 원본 페이지 열기"
                         >
                           <ExternalLink className="w-3.5 h-3.5" />

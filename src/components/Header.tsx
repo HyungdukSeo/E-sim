@@ -12,6 +12,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { SyncMeta, ActiveTab } from '../types/cr';
+import { ThemeSwitcher } from './ThemeSwitcher';
 
 interface HeaderProps {
   meta: SyncMeta;
@@ -62,7 +63,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+              <h1 className="text-lg font-bold tracking-tight text-main flex items-center gap-2">
                 Mantis CR Hub
                 <span className="text-xs px-2 py-0.5 rounded-full bg-mantis-500/20 text-mantis-400 border border-mantis-500/30 font-medium">
                   Ultra Fast
@@ -94,7 +95,7 @@ export const Header: React.FC<HeaderProps> = ({
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
               activeTab === 'search'
                 ? 'bg-mantis-500 text-slate-950 shadow-md shadow-mantis-500/30'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
+                : 'text-slate-300 hover:text-main hover:bg-slate-800/60'
             }`}
           >
             <Search className="w-3.5 h-3.5" />
@@ -113,7 +114,7 @@ export const Header: React.FC<HeaderProps> = ({
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
               activeTab === 'analytics'
                 ? 'bg-mantis-500 text-slate-950 shadow-md shadow-mantis-500/30'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
+                : 'text-slate-300 hover:text-main hover:bg-slate-800/60'
             }`}
           >
             <BarChart3 className="w-3.5 h-3.5" />
@@ -125,7 +126,7 @@ export const Header: React.FC<HeaderProps> = ({
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
               activeTab === 'bookmarks'
                 ? 'bg-mantis-500 text-slate-950 shadow-md shadow-mantis-500/30'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
+                : 'text-slate-300 hover:text-main hover:bg-slate-800/60'
             }`}
           >
             <Bookmark className="w-3.5 h-3.5" />
@@ -142,13 +143,16 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right: Actions */}
         <div className="flex items-center gap-2.5">
+          {/* Theme Switcher */}
+          <ThemeSwitcher />
+
           {/* AI Assistant Button */}
           <button
             onClick={onOpenAI}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-500/20 to-purple-500/20 hover:from-indigo-500/30 hover:to-purple-500/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold transition-all shadow-sm shadow-indigo-500/10 hover:shadow-indigo-500/20 hover:scale-[1.02] active:scale-[0.98]"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-500/20 to-purple-500/20 hover:from-indigo-500/30 hover:to-purple-500/30 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30 text-xs font-semibold transition-all shadow-sm shadow-indigo-500/10 hover:shadow-indigo-500/20 hover:scale-[1.02] active:scale-[0.98]"
             title="AI 검색 및 버그 분석 에이전트"
           >
-            <Bot className="w-4 h-4 text-indigo-400 animate-pulse" />
+            <Bot className="w-4 h-4 text-indigo-600 dark:text-indigo-400 animate-pulse" />
             <span className="hidden sm:inline">AI 에이전트</span>
           </button>
 
@@ -159,11 +163,11 @@ export const Header: React.FC<HeaderProps> = ({
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
               isSyncing
                 ? 'bg-slate-800 text-slate-400 cursor-not-allowed border border-slate-700'
-                : 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/40 hover:scale-[1.02] active:scale-[0.98]'
+                : 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/40 hover:scale-[1.02] active:scale-[0.98]'
             }`}
             title="Mantis 서버(192.168.16.200)에서 최신 CR 전체 동기화"
           >
-            <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 ${isSyncing ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 ${isSyncing ? 'animate-spin' : ''}`} />
             <span className="hidden sm:inline">{isSyncing ? '동기화 중...' : '전체 동기화'}</span>
           </button>
 

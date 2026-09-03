@@ -126,7 +126,7 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
             )}
           </div>
 
-          <h2 className="text-base sm:text-lg font-bold text-white leading-snug break-words">
+          <h2 className="text-base sm:text-lg font-bold text-main leading-snug break-words">
             {crItem.cleanSummary || crItem.summary}
           </h2>
         </div>
@@ -263,7 +263,7 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
                 <span>전체 원본 제목</span>
                 <button
                   onClick={() => handleCopy(crItem.summary, 'summary')}
-                  className="text-slate-500 hover:text-slate-200 flex items-center gap-1"
+                  className="text-main0 hover:text-slate-200 flex items-center gap-1"
                 >
                   {copiedField === 'summary' ? <Check className="w-3 h-3 text-mantis-400" /> : <Copy className="w-3 h-3" />}
                   복사
@@ -277,42 +277,42 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
             {/* Metadata Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
               <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 space-y-1">
-                <span className="text-slate-500 text-[11px] flex items-center gap-1">
+                <span className="text-main0 text-[11px] flex items-center gap-1">
                   <User className="w-3 h-3" /> 보고자
                 </span>
                 <p className="font-semibold text-slate-200">{crItem.reporter || '-'}</p>
               </div>
 
               <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 space-y-1">
-                <span className="text-slate-500 text-[11px] flex items-center gap-1">
+                <span className="text-main0 text-[11px] flex items-center gap-1">
                   <User className="w-3 h-3" /> 담당자
                 </span>
                 <p className="font-semibold text-slate-200">{crItem.assignee || '-'}</p>
               </div>
 
               <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 space-y-1">
-                <span className="text-slate-500 text-[11px] flex items-center gap-1">
+                <span className="text-main0 text-[11px] flex items-center gap-1">
                   <Tag className="w-3 h-3" /> 대상 모듈
                 </span>
                 <p className="font-semibold text-slate-200">{crItem.module || '-'}</p>
               </div>
 
               <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 space-y-1">
-                <span className="text-slate-500 text-[11px] flex items-center gap-1">
+                <span className="text-main0 text-[11px] flex items-center gap-1">
                   <Layers className="w-3 h-3" /> 적용 VOB
                 </span>
                 <p className="font-semibold text-teal-300 font-mono">{crItem.vob || '-'}</p>
               </div>
 
               <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 space-y-1">
-                <span className="text-slate-500 text-[11px] flex items-center gap-1">
+                <span className="text-main0 text-[11px] flex items-center gap-1">
                   <Calendar className="w-3 h-3" /> 보고 날짜
                 </span>
                 <p className="font-semibold text-slate-200 font-mono">{crItem.dateSubmitted || '-'}</p>
               </div>
 
               <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 space-y-1">
-                <span className="text-slate-500 text-[11px] flex items-center gap-1">
+                <span className="text-main0 text-[11px] flex items-center gap-1">
                   <Clock className="w-3 h-3" /> 최종 갱신
                 </span>
                 <p className="font-semibold text-slate-200 font-mono">{crItem.lastUpdated || '-'}</p>
@@ -351,7 +351,7 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
                 {crItem.checkinLog}
               </pre>
             ) : (
-              <div className="p-8 text-center text-slate-500 text-xs">
+              <div className="p-8 text-center text-main0 text-xs">
                 Check-in 로그가 비어 있습니다.
               </div>
             )}

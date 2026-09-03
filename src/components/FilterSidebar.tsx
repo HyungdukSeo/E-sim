@@ -129,7 +129,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         <div className="pt-2 border-t border-slate-800/80">
           <button
             onClick={() => toggleSection('projects')}
-            className="w-full flex items-center justify-between text-xs font-semibold text-slate-300 py-1 hover:text-white"
+            className="w-full flex items-center justify-between text-xs font-semibold text-slate-300 py-1 hover:text-main"
           >
             <span className="flex items-center gap-1.5">
               <FolderKanban className="w-3.5 h-3.5 text-blue-400" />
@@ -166,7 +166,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                         </div>
                         <span className={`truncate ${isChecked ? 'text-mantis-300 font-semibold' : 'text-slate-300'}`}>{proj}</span>
                       </div>
-                      <span className="text-[10px] text-slate-500 font-mono">{count.toLocaleString()}</span>
+                      <span className="text-[10px] text-main0 font-mono">{count.toLocaleString()}</span>
                     </label>
                   );
                 })}
@@ -179,7 +179,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         <div className="pt-2 border-t border-slate-800/80">
           <button
             onClick={() => toggleSection('statuses')}
-            className="w-full flex items-center justify-between text-xs font-semibold text-slate-300 py-1 hover:text-white"
+            className="w-full flex items-center justify-between text-xs font-semibold text-slate-300 py-1 hover:text-main"
           >
             <span className="flex items-center gap-1.5">
               <Activity className="w-3.5 h-3.5 text-emerald-400" />
@@ -206,7 +206,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                       </div>
                       <span className={`capitalize ${isChecked ? 'text-mantis-300 font-semibold' : 'text-slate-300'}`}>{st}</span>
                     </div>
-                    <span className="text-[10px] text-slate-500 font-mono">{count.toLocaleString()}</span>
+                    <span className="text-[10px] text-main0 font-mono">{count.toLocaleString()}</span>
                   </label>
                 );
               })}
@@ -218,7 +218,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         <div className="pt-2 border-t border-slate-800/80">
           <button
             onClick={() => toggleSection('customers')}
-            className="w-full flex items-center justify-between text-xs font-semibold text-slate-300 py-1 hover:text-white"
+            className="w-full flex items-center justify-between text-xs font-semibold text-slate-300 py-1 hover:text-main"
           >
             <span className="flex items-center gap-1.5">
               <Building2 className="w-3.5 h-3.5 text-amber-400" />
@@ -245,7 +245,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                       </div>
                       <span className={`truncate ${isChecked ? 'text-mantis-300 font-semibold' : 'text-slate-300'}`}>{cust}</span>
                     </div>
-                    <span className="text-[10px] text-slate-500 font-mono">{count.toLocaleString()}</span>
+                    <span className="text-[10px] text-main0 font-mono">{count.toLocaleString()}</span>
                   </label>
                 );
               })}
@@ -257,7 +257,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         <div className="pt-2 border-t border-slate-800/80">
           <button
             onClick={() => toggleSection('reporters')}
-            className="w-full flex items-center justify-between text-xs font-semibold text-slate-300 py-1 hover:text-white"
+            className="w-full flex items-center justify-between text-xs font-semibold text-slate-300 py-1 hover:text-main"
           >
             <span className="flex items-center gap-1.5">
               <Users className="w-3.5 h-3.5 text-purple-400" />
@@ -292,7 +292,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                         </div>
                         <span className={`truncate ${isChecked ? 'text-mantis-300 font-semibold' : 'text-slate-300'}`}>{rep}</span>
                       </div>
-                      <span className="text-[10px] text-slate-500 font-mono">{count.toLocaleString()}</span>
+                      <span className="text-[10px] text-main0 font-mono">{count.toLocaleString()}</span>
                     </label>
                   );
                 })}
@@ -305,7 +305,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         <div className="pt-2 border-t border-slate-800/80">
           <button
             onClick={() => toggleSection('assignees')}
-            className="w-full flex items-center justify-between text-xs font-semibold text-slate-300 py-1 hover:text-white"
+            className="w-full flex items-center justify-between text-xs font-semibold text-slate-300 py-1 hover:text-main"
           >
             <span className="flex items-center gap-1.5">
               <UserCheck className="w-3.5 h-3.5 text-cyan-400" />
@@ -340,7 +340,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                         </div>
                         <span className={`truncate ${isChecked ? 'text-mantis-300 font-semibold' : 'text-slate-300'}`}>{asn}</span>
                       </div>
-                      <span className="text-[10px] text-slate-500 font-mono">{count.toLocaleString()}</span>
+                      <span className="text-[10px] text-main0 font-mono">{count.toLocaleString()}</span>
                     </label>
                   );
                 })}
@@ -353,7 +353,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         <div className="pt-2 border-t border-slate-800/80">
           <button
             onClick={() => toggleSection('vob')}
-            className="w-full flex items-center justify-between text-xs font-semibold text-slate-300 py-1 hover:text-white"
+            className="w-full flex items-center justify-between text-xs font-semibold text-slate-300 py-1 hover:text-main"
           >
             <span className="flex items-center gap-1.5">
               <Layers className="w-3.5 h-3.5 text-teal-400" />
@@ -393,7 +393,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         <div className="pt-2 border-t border-slate-800/80">
           <button
             onClick={() => toggleSection('date')}
-            className="w-full flex items-center justify-between text-xs font-semibold text-slate-300 py-1 hover:text-white"
+            className="w-full flex items-center justify-between text-xs font-semibold text-slate-300 py-1 hover:text-main"
           >
             <span className="flex items-center gap-1.5">
               <Calendar className="w-3.5 h-3.5 text-rose-400" />

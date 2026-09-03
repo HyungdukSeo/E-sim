@@ -12,6 +12,7 @@ import {
   triggerSync, 
   loadSettings, 
   saveSettings, 
+  fetchSettingsFromDisk,
   loadBookmarks, 
   saveBookmarks,
   DEFAULT_SETTINGS
@@ -91,6 +92,11 @@ export function App() {
 
   useEffect(() => {
     loadData(true);
+    fetchSettingsFromDisk().then(diskSettings => {
+      if (diskSettings) {
+        setSettings(diskSettings);
+      }
+    });
   }, [loadData]);
 
   // Handle Sync
