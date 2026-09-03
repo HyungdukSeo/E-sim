@@ -1,8 +1,9 @@
 # ⚡ Mantis CR Ultra Search & AI Hub
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.0-blue.svg?style=for-the-badge" alt="Version 1.0.0" />
+  <img src="https://img.shields.io/badge/version-1.0.1-blue.svg?style=for-the-badge" alt="Version 1.0.1" />
   <img src="https://img.shields.io/badge/ClearCase-Web%20Diff-brightgreen.svg?style=for-the-badge" alt="ClearCase Web Diff" />
+  <img src="https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Antigravity-6366f1.svg?style=for-the-badge" alt="Multi AI Provider" />
   <img src="https://img.shields.io/badge/Encoding-EUC--KR%20%7C%20CP949%20%7C%20UTF--8-orange.svg?style=for-the-badge" alt="Multi-Encoding" />
   <img src="https://img.shields.io/badge/Portable%20DB-7%2C700%2B%20CRs-purple.svg?style=for-the-badge" alt="Portable DB" />
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg?style=for-the-badge" alt="Cross Platform" />
@@ -52,6 +53,29 @@
 
 ---
 
+### 6. ✅ 다차원 상세 필터 (Multi-Dimensional Filter Panel)
+> 프로젝트, 상태, 고객사, 보고자, 담당자를 자유롭게 다중 체크하여 교차 필터링합니다. 하나를 선택해도 나머지 항목이 사라지지 않고, 선택 조합에 맞춰 카운트만 실시간으로 좁혀집니다.
+
+![다차원 상세 필터](docs/images/06_filter_checked.png)
+
+---
+
+### 7. 🌗 라이트 / 다크 테마 스위처 (Theme Switcher)
+> 헤더 우측의 토글로 라이트/다크/개발자 테마를 즉시 전환합니다. 다크 모드는 눈의 피로를 줄이는 딥 에메랄드·포레스트 그린 톤으로 가독성을 개선했습니다.
+
+| 라이트 테마 | 다크 테마 |
+| :---: | :---: |
+| ![라이트 테마](docs/images/07_theme_light.png) | ![다크 테마](docs/images/07_theme_dark.png) |
+
+---
+
+### 8. 🧠 멀티 AI 공급자 설정 (Multi AI Provider Settings)
+> 로컬 NLP, Custom LLM, Codex, Antigravity에 이어 **Claude(Anthropic)**를 신규 지원합니다. 공급자별로 사용 가능한 모델 목록을 실시간으로 불러오고, 선택한 모델은 공급자별로 독립적으로 저장됩니다.
+
+![AI 공급자 설정](docs/images/08_settings_ai_provider.png)
+
+---
+
 ## ✨ 핵심 기능 요약 (Key Features)
 
 | 기능 | 설명 |
@@ -62,6 +86,10 @@
 | **📦 7,700+건 독립 휴대용 포터블 DB** | 원격 Mantis 서버에 부하를 주지 않고, 로컬 메모리/파일 기반 초고속 검색 및 증분 동기화(Incremental Upsert) 지원 |
 | **🧭 스마트 경로 정규화 & Auto-Locator** | 체크인 로그로부터 VOB 절대 경로를 자동 추적하고, 경로 차이가 있더라도 백그라운드에서 파일 위치를 자동 탐색 |
 | **📊 인터랙티브 비주얼 분석 대시보드** | Recharts 기반 월별 유입량, 고객사별 점유율, 상태별 도넛 차트 제공 |
+| **✅ 다차원 상세 필터 (교차 선택)** | 프로젝트/상태/고객사/보고자/담당자를 다중 체크박스로 자유롭게 조합, 다른 항목을 체크해도 형제 옵션은 사라지지 않고 카운트만 실시간으로 좁혀짐 |
+| **🌗 라이트 / 다크 / 개발자 테마** | 헤더에서 즉시 전환 가능한 3종 테마, 다크 모드는 딥 에메랄드 톤으로 가독성 강화 |
+| **🧠 멀티 AI 공급자 (Claude 신규 지원)** | 로컬 NLP / Custom LLM / Codex / Antigravity / **Claude**(Anthropic) 중 선택, 공급자별 실시간 모델 목록 조회 및 독립 모델 저장 |
+| **💾 설정 디스크 영구 저장** | 환경설정(`data/settings.json`)이 로컬 디스크에 저장되어 앱 재시작 후에도 SSH/AI 설정이 유지됨 |
 
 ---
 
@@ -70,7 +98,7 @@
 ### 🍎 macOS 환경 (추천: 전용 설치형 DMG 또는 스크립트)
 
 #### 방법 1: macOS 전용 설치형 DMG 파일로 설치 (가장 간편)
-1. [GitHub Releases](https://github.com/HyungdukSeo/E-sim/releases)에서 **`Mantis CR Ultra Hub-1.0.0-arm64.dmg`** 를 다운로드합니다.
+1. [GitHub Releases](https://github.com/HyungdukSeo/E-sim/releases)에서 **`Mantis.CR.Ultra.Hub-1.0.0-arm64.dmg`** 를 다운로드합니다.
 2. 다운로드한 `.dmg` 파일을 열고 **`Mantis CR Ultra Hub`** 아이콘을 **`Applications`** 폴더로 드래그하여 설치합니다.
 3. 실행하면 상단 **메뉴바(시스템 트레이)에 번개 아이콘이 상주**하며 백그라운드로 작동합니다.
    * **트레이 아이콘 클릭 메뉴**:
@@ -158,6 +186,21 @@ start.bat
 * **Backend**: Node.js, Express, `ssh2`, `iconv-lite`, `compression`, `csv-parse`
 * **Build Tool**: Vite 6, TypeScript Compiler (`tsc`)
 * **Version Control / SCMS**: Rational ClearCase Dynamic MVFS, Mantis BT
+
+---
+
+## 📝 변경 이력 (Changelog)
+
+### v1.0.1
+* ✅ **다차원 상세 필터 버그 수정**: 체크박스가 클릭되지 않던 문제 및 하나를 선택하면 다른 옵션이 사라지던 문제 해결 (교차 필터링 정상화)
+* 🧠 AI 공급자에 **Claude(Anthropic)** 추가, Codex/Antigravity/Claude 3대 에이전트의 실시간 모델 목록 연동
+* 💾 환경설정 로컬 디스크(`data/settings.json`) 영구 저장/로드
+* 🌗 라이트/다크/개발자 테마 스위처 및 가독성 개선 (딥 에메랄드·포레스트 그린 톤)
+* 🔧 SSH 파일 비교 시 이전/현재 버전을 별도 SSH 커넥션으로 분리하여 좌측(이전 버전)이 항상 비어 보이던 문제 해결
+* 🔧 진단용 Diff 캐시를 실제 LRU 정책으로 교정, 포트 점유 프로세스 강제 종료 시 프로세스 이미지 검증 추가
+
+### v1.0.0
+* 🚀 최초 릴리스: ClearCase 실시간 Web vimdiff, 7,700+건 포터블 DB, AI 에이전트 허브, 통계 대시보드
 
 ---
 
