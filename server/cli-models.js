@@ -5,9 +5,10 @@ import os from 'os';
 import path from 'path';
 
 /**
+/**
  * 1. Claude — REST API 직접 호출 (Keychain / ~/.claude/.credentials.json)
  */
-export async function getClaudeModels() {
+function readClaudeToken() {
   let token = null;
 
   // 1) ~/.claude/.credentials.json 확인
@@ -39,30 +40,70 @@ export async function getClaudeModels() {
     }
   }
 
-  // 3) API 호출
+  return token;
+}
+
+export async function getClaudeModels() {
+  let token = readClaudeToken();
+
+  const fetchModelsFromApi = async (authToken) => {
+    const resp = await axios.get('https://api.anthropic.com/v1/models', {
+      headers: {
+        'Authorization': `Bearer ${authToken}`,
+        'anthropic-version': '2023-06-01'
+      },
+      timeout: 10000
+    });
+
+    if (resp.data?.data && Array.isArray(resp.data.data)) {
+      return resp.data.data.map(m => ({
+        id: m.id,
+        displayName: m.display_name || m.id
+      }));
+    }
+    return null;
+  };
+
+  // 1) API 직접 호출
   if (token) {
     try {
-      const resp = await axios.get('https://api.anthropic.com/v1/models', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'anthropic-version': '2023-06-01'
-        },
-        timeout: 10000
-      });
-
-      if (resp.data?.data && Array.isArray(resp.data.data)) {
-        return resp.data.data.map(m => ({
-          id: m.id,
-          displayName: m.display_name || m.id
-        }));
+      const apiModels = await fetchModelsFromApi(token);
+      if (apiModels && apiModels.length > 0) {
+        return apiModels;
       }
     } catch (e) {
-      console.warn('[Claude Models] API request error:', e.message);
+      console.warn('[Claude Models] API request failed (trying token refresh):', e.message);
+      
+      // 토큰 만료 등의 경우 claude cli를 통해 토큰 갱신 시도
+      try {
+        execSync('claude -p "ping" < /dev/null', { timeout: 15000, stdio: 'ignore' });
+        const refreshedToken = readClaudeToken();
+        if (refreshedToken && refreshedToken !== token) {
+          const retriedModels = await fetchModelsFromApi(refreshedToken);
+          if (retriedModels && retriedModels.length > 0) {
+            return retriedModels;
+          }
+        }
+      } catch (refreshErr) {
+        console.warn('[Claude Models] Auto token refresh failed:', refreshErr.message);
+      }
     }
   }
 
-  // Fallback
+  // Fallback (최신 5 / 4.x / 3.x 전체 라인업)
   return [
+    { id: 'claude-opus-5', displayName: 'Claude Opus 5' },
+    { id: 'claude-sonnet-5', displayName: 'Claude Sonnet 5' },
+    { id: 'claude-fable-5-1', displayName: 'Claude Fable 5.1' },
+    { id: 'claude-fable-5', displayName: 'Claude Fable 5' },
+    { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
+    { id: 'claude-opus-4-7', displayName: 'Claude Opus 4.7' },
+    { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
+    { id: 'claude-opus-4-6', displayName: 'Claude Opus 4.6' },
+    { id: 'claude-opus-4-5-20251101', displayName: 'Claude Opus 4.5' },
+    { id: 'claude-haiku-4-5-20251001', displayName: 'Claude Haiku 4.5' },
+    { id: 'claude-sonnet-4-5-20250929', displayName: 'Claude Sonnet 4.5' },
+    { id: 'claude-3-7-sonnet-latest', displayName: 'Claude 3.7 Sonnet' },
     { id: 'claude-3-5-sonnet-latest', displayName: 'Claude 3.5 Sonnet' },
     { id: 'claude-3-5-haiku-latest', displayName: 'Claude 3.5 Haiku' },
     { id: 'claude-3-opus-latest', displayName: 'Claude 3 Opus' }
