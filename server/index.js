@@ -7,9 +7,10 @@ import os from 'os';
 import axios from 'axios';
 import { fileURLToPath } from 'url';
 import { syncMantisData, getLocalDatabase, importDatabase, fetchCRPageDetails, DB_FILE, META_FILE, DATA_DIR } from './sync.js';
-import { processAiQuery } from './ai.js';
+import { processAiQuery, analyzeSingleCRDiff, compareMultipleCRDiffs } from './ai.js';
 import { testSSHConnection, fetchFileDiffSSH } from './ssh.js';
 import { getClaudeModels, getAntigravityModels, getCodexModels } from './cli-models.js';
+import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, batchIndexDiffs } from './diff-cache.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -319,6 +320,150 @@ app.post('/api/ssh/diff', async (req, res) => {
   } catch (err) {
     console.error('[SSH Diff Error]', err.message);
     res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+// 12. Local Diff Dataset & Cache APIs
+app.get('/api/diff-cache/stats', (req, res) => {
+  try {
+    const stats = getDiffCacheStats();
+    res.json({ ok: true, stats });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/api/diff-cache/:crid', (req, res) => {
+  try {
+    const { crid } = req.params;
+    const cached = getCRDiffCache(crid);
+    if (cached) {
+      return res.json({ ok: true, cached: true, data: cached });
+    }
+    return res.json({ ok: true, cached: false, data: null });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/api/diff-cache/fetch', async (req, res) => {
+  try {
+    const { cr, crid, sshConfig } = req.body;
+    const targetCrid = cr?.crid || crid;
+    if (!targetCrid) {
+      return res.status(400).json({ ok: false, error: 'CR 정보 또는 crid가 필요합니다.' });
+    }
+
+    // Check cache first
+    const cached = getCRDiffCache(targetCrid);
+    if (cached && cached.files && cached.files.length > 0) {
+      return res.json({ ok: true, cached: true, data: cached });
+    }
+
+    let targetCR = cr;
+    if (!targetCR || !targetCR.files) {
+      const { crs } = getLocalDatabase();
+      targetCR = crs.find(c => c.crid === targetCrid || String(c.id) === String(targetCrid));
+    }
+
+    if (!targetCR) {
+      return res.status(404).json({ ok: false, error: `CR #${targetCrid}를 찾을 수 없습니다.` });
+    }
+
+    const fetched = await fetchAndCacheCRDiff(targetCR, sshConfig);
+    res.json({ ok: true, cached: false, data: fetched });
+  } catch (err) {
+    console.error('[Diff Cache Fetch Error]', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/api/diff-cache/batch', async (req, res) => {
+  try {
+    const { crids = [], maxFilesPerCR = 5, sshConfig } = req.body;
+    const { crs } = getLocalDatabase();
+    const targetCRs = crids.length > 0 
+      ? crs.filter(c => crids.includes(c.crid))
+      : crs.slice(0, 50);
+
+    const result = await batchIndexDiffs(targetCRs, sshConfig, { maxFilesPerCR });
+    res.json({ ok: true, result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// 13. AI Deep Diff Analysis APIs
+app.post('/api/ai/analyze-cr-diff', async (req, res) => {
+  try {
+    const { cr, crid, sshConfig, config = {} } = req.body;
+    const targetCrid = cr?.crid || crid;
+    
+    let targetCR = cr;
+    if (!targetCR) {
+      const { crs } = getLocalDatabase();
+      targetCR = crs.find(c => c.crid === targetCrid || String(c.id) === String(targetCrid));
+    }
+    if (!targetCR) {
+      return res.status(404).json({ ok: false, error: `CR #${targetCrid}를 찾을 수 없습니다.` });
+    }
+
+    // Get diffs (from cache or SSH)
+    let diffPayload = getCRDiffCache(targetCrid);
+    if (!diffPayload && sshConfig && sshConfig.host) {
+      diffPayload = await fetchAndCacheCRDiff(targetCR, sshConfig);
+    }
+
+    const result = await analyzeSingleCRDiff({
+      cr: targetCR,
+      diffPayload,
+      config
+    });
+
+    res.json({ ok: true, ...result, cached: !!getCRDiffCache(targetCrid) });
+  } catch (err) {
+    console.error('[AI Analyze CR Diff Error]', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/api/ai/compare-crs', async (req, res) => {
+  try {
+    const { crids = [], crs: providedCRs = [], sshConfig, config = {} } = req.body;
+    const { crs: allCachedCrs } = getLocalDatabase();
+
+    const targetCRs = providedCRs.length > 0 
+      ? providedCRs 
+      : allCachedCrs.filter(c => crids.includes(c.crid));
+
+    if (targetCRs.length < 2) {
+      return res.status(400).json({ ok: false, error: '비교를 위해 최소 2개 이상의 CR이 필요합니다.' });
+    }
+
+    // Collect diffs for all selected CRs
+    const diffMap = {};
+    for (const cr of targetCRs) {
+      let diffData = getCRDiffCache(cr.crid);
+      if (!diffData && sshConfig && sshConfig.host) {
+        try {
+          diffData = await fetchAndCacheCRDiff(cr, sshConfig, 5);
+        } catch (e) {
+          console.warn(`[Compare CRs] Failed to fetch diff for ${cr.crid}:`, e.message);
+        }
+      }
+      diffMap[cr.crid] = diffData;
+    }
+
+    const result = await compareMultipleCRDiffs({
+      crs: targetCRs,
+      diffMap,
+      config
+    });
+
+    res.json({ ok: true, ...result, diffMap });
+  } catch (err) {
+    console.error('[AI Compare CRs Error]', err.message);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 

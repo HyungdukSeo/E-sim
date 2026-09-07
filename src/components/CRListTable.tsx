@@ -26,6 +26,7 @@ interface CRListTableProps {
   mantisUrl: string;
   searchQuery: string;
   itemsPerPage: number;
+  onCompareCRs?: (crs: CRItem[]) => void;
 }
 
 type SortField = 'id' | 'dateSubmitted' | 'lastUpdated' | 'project' | 'status' | 'reporter' | 'customer';
@@ -39,13 +40,32 @@ export const CRListTable: React.FC<CRListTableProps> = ({
   onToggleBookmark,
   mantisUrl,
   searchQuery,
-  itemsPerPage: defaultItemsPerPage = 50
+  itemsPerPage: defaultItemsPerPage = 50,
+  onCompareCRs
 }) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(defaultItemsPerPage);
   const [sortField, setSortField] = useState<SortField>('id');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [selectedCompareIds, setSelectedCompareIds] = useState<Set<string>>(new Set());
+
+  const handleToggleCompare = (e: React.MouseEvent | React.ChangeEvent, crid: string) => {
+    e.stopPropagation();
+    setSelectedCompareIds(prev => {
+      const next = new Set(prev);
+      if (next.has(crid)) {
+        next.delete(crid);
+      } else {
+        if (next.size >= 3) {
+          alert('비교 분석은 최대 3개 CR까지 동시에 선택할 수 있습니다.');
+          return prev;
+        }
+        next.add(crid);
+      }
+      return next;
+    });
+  };
 
   // Sorting
   const sortedItems = [...items].sort((a, b) => {
@@ -120,6 +140,7 @@ export const CRListTable: React.FC<CRListTableProps> = ({
             {/* Table Header */}
             <thead>
               <tr className="bg-slate-900/90 text-slate-400 font-semibold border-b border-slate-800 tracking-wide select-none">
+                <th className="py-3 px-2 w-8 text-center text-[11px]" title="비교 대상 선택">비교</th>
                 <th className="py-3 px-3 w-10 text-center">★</th>
                 
                 <th 
@@ -188,7 +209,7 @@ export const CRListTable: React.FC<CRListTableProps> = ({
             <tbody className="divide-y divide-slate-800/60">
               {pageItems.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-16 text-center text-main0">
+                  <td colSpan={10} className="py-16 text-center text-main0">
                     <p className="text-sm font-medium">검색 조건과 일치하는 CR이 없습니다.</p>
                     <p className="text-xs mt-1 text-slate-600">검색어를 줄이거나 필터 설정을 변경해 보세요.</p>
                   </td>
@@ -197,6 +218,7 @@ export const CRListTable: React.FC<CRListTableProps> = ({
                 pageItems.map((cr) => {
                   const isSelected = selectedCR?.crid === cr.crid;
                   const isBookmarked = bookmarks.has(cr.crid);
+                  const isCheckedForCompare = selectedCompareIds.has(cr.crid);
                   const mantisLink = `${mantisUrl.replace(/\/$/, '')}/view.php?id=${cr.id}`;
 
                   const highlightedSummary = highlightText(cr.cleanSummary || cr.summary, searchQuery);
@@ -208,9 +230,22 @@ export const CRListTable: React.FC<CRListTableProps> = ({
                       className={`cursor-pointer transition-all duration-150 group ${
                         isSelected
                           ? 'bg-mantis-500/15 text-slate-100 hover:bg-mantis-500/20'
-                          : 'hover:bg-slate-800/50 text-slate-300'
+                          : isCheckedForCompare
+                            ? 'bg-indigo-950/30 text-indigo-200'
+                            : 'hover:bg-slate-800/50 text-slate-300'
                       }`}
                     >
+                      {/* Compare Checkbox */}
+                      <td className="py-2.5 px-2 text-center" onClick={e => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={isCheckedForCompare}
+                          onChange={e => handleToggleCompare(e, cr.crid)}
+                          className="w-3.5 h-3.5 rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-indigo-500 cursor-pointer"
+                          title="비교 대상 선택 (최대 3개)"
+                        />
+                      </td>
+
                       {/* Bookmark toggle */}
                       <td className="py-2.5 px-3 text-center" onClick={e => e.stopPropagation()}>
                         <button
@@ -383,6 +418,50 @@ export const CRListTable: React.FC<CRListTableProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Floating Compare Action Bar */}
+      {selectedCompareIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 backdrop-blur-md border border-indigo-500/50 shadow-2xl rounded-2xl p-3 px-5 flex items-center gap-4 animate-in fade-in slide-in-from-bottom-3 duration-200">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-pulse" />
+            <span className="text-xs font-bold text-main">
+              비교 대상 선택: <strong className="text-indigo-400">{selectedCompareIds.size}개</strong> (최대 3개)
+            </span>
+            <div className="flex items-center gap-1.5 ml-1">
+              {Array.from(selectedCompareIds).map(id => (
+                <span key={id} className="font-mono text-[11px] px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-bold">
+                  #{id}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="h-4 w-px bg-slate-700" />
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSelectedCompareIds(new Set())}
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors"
+            >
+              선택 해제
+            </button>
+            <button
+              onClick={() => {
+                if (selectedCompareIds.size < 2) {
+                  alert('비교 분석을 위해 최소 2개 이상의 CR을 선택해 주세요.');
+                  return;
+                }
+                const selectedList = items.filter(c => selectedCompareIds.has(c.crid));
+                onCompareCRs?.(selectedList);
+              }}
+              className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold shadow-lg shadow-indigo-500/25 flex items-center gap-1.5 transition-all"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              코드 변경점 교차 비교 분석 ⚡
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -24,6 +24,7 @@ import { FilterSidebar } from './components/FilterSidebar';
 import { CRListTable } from './components/CRListTable';
 import { CRCardGrid } from './components/CRCardGrid';
 import { CRDetailModal } from './components/CRDetailModal';
+import { CRComparisonModal } from './components/CRComparisonModal';
 import { Dashboard } from './components/Dashboard';
 import { AIAgentModal } from './components/AIAgentModal';
 import { SettingsModal } from './components/SettingsModal';
@@ -46,6 +47,7 @@ export function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('search');
   const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [selectedCR, setSelectedCR] = useState<CRItem | null>(null);
+  const [compareTargetCRs, setCompareTargetCRs] = useState<CRItem[] | null>(null);
 
   // Modals
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -282,6 +284,7 @@ export function App() {
                               onToggleBookmark={handleToggleBookmark}
                               mantisUrl={settings.mantisUrl}
                               sshConfig={settings.ssh}
+                              aiSettings={settings.ai}
                               onOpenSettings={() => setIsSettingsOpen(true)}
                               onAskAI={cr => {
                                 setSelectedCR(cr);
@@ -317,6 +320,7 @@ export function App() {
                         mantisUrl={settings.mantisUrl}
                         searchQuery={filterState.searchQuery}
                         itemsPerPage={settings.itemsPerPage}
+                        onCompareCRs={crs => setCompareTargetCRs(crs)}
                       />
                     )}
                   </div>
@@ -348,12 +352,25 @@ export function App() {
           onToggleBookmark={handleToggleBookmark}
           mantisUrl={settings.mantisUrl}
           sshConfig={settings.ssh}
+          aiSettings={settings.ai}
           onOpenSettings={() => setIsSettingsOpen(true)}
           onAskAI={cr => {
             setSelectedCR(cr);
             setIsAIOpen(true);
           }}
           isSplitView={false}
+        />
+      )}
+
+      {/* 3.5 Comparison Modal */}
+      {compareTargetCRs && (
+        <CRComparisonModal
+          isOpen={!!compareTargetCRs}
+          onClose={() => setCompareTargetCRs(null)}
+          crs={compareTargetCRs}
+          aiSettings={settings.ai}
+          sshConfig={settings.ssh}
+          mantisUrl={settings.mantisUrl}
         />
       )}
 

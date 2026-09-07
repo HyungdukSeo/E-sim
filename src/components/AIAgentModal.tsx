@@ -423,7 +423,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                   <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
                   <span>
                     {useDeepAnalysis 
-                      ? 'Mantis 데이터베이스 검색 및 SSH를 통한 소스 코드 Diff 수집/분석 중입니다 (최대 1분 소요)...'
+                      ? 'Mantis 데이터베이스 검색 및 소스 코드 Diff 데이터셋을 대조하여 심층 분석 중입니다...'
                       : 'Mantis 데이터베이스와 체크인 로그를 교차 분석하는 중...'}
                   </span>
                 </div>
@@ -442,7 +442,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                   />
                   <span className="flex items-center gap-1.5">
                     <Code2 className="w-3.5 h-3.5 text-indigo-400 group-hover:text-indigo-300" />
-                    코드 레벨 심층 분석 (SSH Diff 실시간 수집, 시간 소요됨)
+                    코드 레벨 심층 분석 (로컬 Diff 데이터셋 우선 참조 / 실제 코드 변경점 AI 분석)
                   </span>
                 </label>
               </div>

@@ -188,3 +188,46 @@ export async function fetchFileDiff(sshConfig: SSHConfig, filePath: string, chec
   }
 }
 
+// Local Diff Dataset & AI Analysis
+export async function fetchCRDiffCache(crid: string): Promise<{ ok: boolean; cached: boolean; data: any }> {
+  const resp = await axios.get(`${API_BASE}/diff-cache/${crid}`);
+  return resp.data;
+}
+
+export async function fetchAndCacheCRDiffAPI(cr: CRItem, sshConfig?: SSHConfig): Promise<{ ok: boolean; cached: boolean; data: any }> {
+  const resp = await axios.post(`${API_BASE}/diff-cache/fetch`, { cr, sshConfig }, { timeout: 60000 });
+  return resp.data;
+}
+
+export async function fetchDiffCacheStats(): Promise<{ ok: boolean; stats: any }> {
+  const resp = await axios.get(`${API_BASE}/diff-cache/stats`);
+  return resp.data;
+}
+
+export async function analyzeCRDiffAPI(
+  cr: CRItem,
+  aiConfig: AppSettings['ai'],
+  sshConfig?: SSHConfig
+): Promise<{ ok: boolean; analysis: string; provider: string; fileCount: number; cached: boolean }> {
+  const resp = await axios.post(`${API_BASE}/ai/analyze-cr-diff`, {
+    cr,
+    sshConfig,
+    config: aiConfig
+  }, { timeout: 120000 });
+  return resp.data;
+}
+
+export async function compareCRsAPI(
+  crs: CRItem[],
+  aiConfig: AppSettings['ai'],
+  sshConfig?: SSHConfig
+): Promise<{ ok: boolean; analysis: string; provider: string; overlappingFiles: string[]; crCount: number; diffMap: any }> {
+  const resp = await axios.post(`${API_BASE}/ai/compare-crs`, {
+    crs,
+    sshConfig,
+    config: aiConfig
+  }, { timeout: 120000 });
+  return resp.data;
+}
+
+
