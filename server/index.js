@@ -10,7 +10,7 @@ import { syncMantisData, getLocalDatabase, importDatabase, fetchCRPageDetails, D
 import { processAiQuery, analyzeSingleCRDiff, compareMultipleCRDiffs } from './ai.js';
 import { testSSHConnection, fetchFileDiffSSH } from './ssh.js';
 import { getClaudeModels, getAntigravityModels, getCodexModels } from './cli-models.js';
-import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, batchIndexDiffs } from './diff-cache.js';
+import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, batchIndexDiffs, backgroundDiffIndexer } from './diff-cache.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -81,6 +81,9 @@ app.post('/api/settings', (req, res) => {
     }
 
     console.log(`[Settings] Saved to local disk: ${SETTINGS_FILE}`);
+    if (settings.ssh) {
+      backgroundDiffIndexer.updateSSHConfig(settings.ssh);
+    }
     res.json({ ok: true, message: 'Settings saved to local disk successfully' });
   } catch (err) {
     console.error('[Save Settings Error]', err.message);
@@ -104,6 +107,10 @@ app.post('/api/sync', async (req, res) => {
   try {
     const { mantisUrl = 'http://192.168.16.200' } = req.body || {};
     const result = await syncMantisData(mantisUrl);
+    // Queue newly synced CRs for priority diff indexing
+    if (result.crs && result.crs.length > 0) {
+      backgroundDiffIndexer.queueUpdates(result.crs.slice(0, 100));
+    }
     res.json({
       ok: true,
       message: 'Sync & Update completed successfully',
@@ -333,6 +340,29 @@ app.get('/api/diff-cache/stats', (req, res) => {
   }
 });
 
+app.get('/api/diff-cache/worker-status', (req, res) => {
+  try {
+    const status = backgroundDiffIndexer.getStatus();
+    res.json({ ok: true, status });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/api/diff-cache/worker-control', (req, res) => {
+  try {
+    const { enabled } = req.body;
+    if (enabled) {
+      backgroundDiffIndexer.resume();
+    } else {
+      backgroundDiffIndexer.pause();
+    }
+    res.json({ ok: true, status: backgroundDiffIndexer.getStatus() });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.get('/api/diff-cache/:crid', (req, res) => {
   try {
     const { crid } = req.params;
@@ -513,6 +543,20 @@ export function startServer(defaultPort = PORT) {
         } else {
           console.log(`[Backend] Loaded ${crs.length} CRs from independent DB file.`);
         }
+
+        // Initialize background diff indexer
+        let initialSSH = null;
+        if (fs.existsSync(SETTINGS_FILE)) {
+          try {
+            initialSSH = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'))?.ssh;
+          } catch(e) {}
+        } else if (fs.existsSync(CLI_SETTINGS_FILE)) {
+          try {
+            initialSSH = JSON.parse(fs.readFileSync(CLI_SETTINGS_FILE, 'utf8'))?.ssh;
+          } catch(e) {}
+        }
+        backgroundDiffIndexer.init(() => getLocalDatabase().crs, initialSSH);
+
         resolve({ server, port: p });
       });
 

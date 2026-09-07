@@ -19,6 +19,7 @@ Thumbs.db
 # Large Database dumps & local settings
 data/cr_database.json
 data/settings.json
+data/diff_cache/
 server/data/cr_cache.json
 *.json.gz
 

@@ -205,3 +205,163 @@ export async function batchIndexDiffs(crs, sshConfig, options = {}) {
     failCount
   };
 }
+
+/**
+ * Background Automatic Diff Indexer Service
+ * Safely indexes un-cached CR diffs in the background with 1.5s rate-limiting
+ */
+class BackgroundDiffIndexer {
+  constructor() {
+    this.enabled = true; // User preference (default ON)
+    this.isRunning = false;
+    this.status = 'idle'; // 'idle' | 'running' | 'completed' | 'paused' | 'waiting_ssh'
+    this.currentCrid = null;
+    this.priorityQueue = []; // CR IDs to process immediately (e.g. newly synced CRs)
+    this.sshConfig = null;
+    this.lastError = null;
+    this.lastProcessedAt = null;
+    this.processedCount = 0;
+    this.allCrsProvider = null;
+  }
+
+  init(allCrsProvider, sshConfig) {
+    this.allCrsProvider = allCrsProvider;
+    this.sshConfig = sshConfig;
+    if (this.enabled) {
+      this.start();
+    }
+  }
+
+  updateSSHConfig(sshConfig) {
+    this.sshConfig = sshConfig;
+  }
+
+  queuePriority(crid) {
+    if (!this.priorityQueue.includes(crid)) {
+      this.priorityQueue.unshift(crid);
+    }
+  }
+
+  queueUpdates(crList) {
+    if (!Array.isArray(crList)) return;
+    for (const cr of crList) {
+      const crid = cr?.crid || cr;
+      if (crid && !this.priorityQueue.includes(crid)) {
+        this.priorityQueue.push(crid);
+      }
+    }
+  }
+
+  start() {
+    if (this.isRunning) return;
+    this.isRunning = true;
+    this.enabled = true;
+    this._runLoop();
+  }
+
+  pause() {
+    this.enabled = false;
+    this.status = 'paused';
+  }
+
+  resume() {
+    this.enabled = true;
+    if (!this.isRunning) {
+      this.start();
+    }
+  }
+
+  getStatus() {
+    const stats = getDiffCacheStats();
+    const allCrs = typeof this.allCrsProvider === 'function' ? this.allCrsProvider() : [];
+    const crsWithFiles = allCrs.filter(c => c.files && c.files.length > 0);
+    const totalTargetCount = crsWithFiles.length || allCrs.length || 1;
+    const progressPercent = Math.min(100, (stats.crCount / totalTargetCount) * 100);
+
+    return {
+      enabled: this.enabled,
+      status: this.status,
+      currentCrid: this.currentCrid,
+      totalCRs: allCrs.length,
+      targetCRsWithFiles: crsWithFiles.length,
+      cachedCRs: stats.crCount,
+      totalFiles: stats.totalFiles,
+      totalSizeBytes: stats.totalSizeBytes,
+      totalSizeFormatted: stats.totalSizeFormatted,
+      percentage: Number(progressPercent.toFixed(1)),
+      lastProcessedAt: this.lastProcessedAt,
+      lastError: this.lastError
+    };
+  }
+
+  async _runLoop() {
+    const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+
+    while (this.isRunning) {
+      if (!this.enabled) {
+        this.status = 'paused';
+        await sleep(2000);
+        continue;
+      }
+
+      if (!this.sshConfig || !this.sshConfig.host || this.sshConfig.enabled === false) {
+        this.status = 'waiting_ssh';
+        await sleep(3000);
+        continue;
+      }
+
+      const allCrs = typeof this.allCrsProvider === 'function' ? this.allCrsProvider() : [];
+      if (!allCrs || allCrs.length === 0) {
+        this.status = 'idle';
+        await sleep(3000);
+        continue;
+      }
+
+      // 1. Pick next CR to process: priorityQueue first, else search from allCrs
+      let targetCR = null;
+      if (this.priorityQueue.length > 0) {
+        const priorityId = this.priorityQueue.shift();
+        targetCR = allCrs.find(c => c.crid === priorityId);
+      }
+
+      if (!targetCR) {
+        // Find first CR with files that hasn't been cached yet
+        for (const cr of allCrs) {
+          if (!cr.files || cr.files.length === 0) continue;
+          const cached = getCRDiffCache(cr.crid);
+          if (!cached || !cached.files || cached.files.length === 0) {
+            targetCR = cr;
+            break;
+          }
+        }
+      }
+
+      if (!targetCR) {
+        this.status = 'completed';
+        this.currentCrid = null;
+        await sleep(5000);
+        continue;
+      }
+
+      // 2. Fetch and Cache
+      this.status = 'running';
+      this.currentCrid = targetCR.crid;
+      try {
+        await fetchAndCacheCRDiff(targetCR, this.sshConfig, 8);
+        this.processedCount++;
+        this.lastProcessedAt = new Date().toISOString();
+        this.lastError = null;
+      } catch (err) {
+        this.lastError = `CR #${targetCR.crid}: ${err.message}`;
+        console.warn(`[BackgroundDiffIndexer] Error caching #${targetCR.crid}:`, err.message);
+      } finally {
+        this.currentCrid = null;
+      }
+
+      // Safety Throttle (1.5 seconds) to protect ClearCase SSH server
+      await sleep(1500);
+    }
+  }
+}
+
+export const backgroundDiffIndexer = new BackgroundDiffIndexer();

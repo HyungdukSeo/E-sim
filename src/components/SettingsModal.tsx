@@ -13,10 +13,17 @@ import {
   HardDrive,
   FileJson,
   Terminal,
-  Zap
+  Zap,
+  RefreshCw,
+  Play,
+  Pause,
+  Layers,
+  Cpu,
+  CheckCircle2,
+  Clock
 } from 'lucide-react';
 import { AppSettings, SyncMeta } from '../types/cr';
-import { testSSH, saveSettingsToDisk } from '../services/api';
+import { testSSH, saveSettingsToDisk, fetchDiffWorkerStatus, controlDiffWorker, DiffWorkerStatus } from '../services/api';
 import axios from 'axios';
 
 interface SettingsModalProps {
@@ -42,6 +49,44 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [sshTestStatus, setSshTestStatus] = useState<string | null>(null);
   const [sshTesting, setSshTesting] = useState(false);
   const [sshTestResult, setSshTestResult] = useState<{ok: boolean; message: string} | null>(null);
+
+  // Background Diff Worker Status & Control
+  const [workerStatus, setWorkerStatus] = useState<DiffWorkerStatus | null>(null);
+  const [workerLoading, setWorkerLoading] = useState(false);
+
+  const loadWorkerStatus = async () => {
+    try {
+      const res = await fetchDiffWorkerStatus();
+      if (res.ok && res.status) {
+        setWorkerStatus(res.status);
+      }
+    } catch {
+      // Ignore background fetch errors
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      loadWorkerStatus();
+      const timer = setInterval(loadWorkerStatus, 2500);
+      return () => clearInterval(timer);
+    }
+  }, [isOpen]);
+
+  const handleToggleWorker = async () => {
+    if (!workerStatus) return;
+    setWorkerLoading(true);
+    try {
+      const res = await controlDiffWorker(!workerStatus.enabled);
+      if (res.ok && res.status) {
+        setWorkerStatus(res.status);
+      }
+    } catch (err: any) {
+      console.error('Failed to toggle worker:', err);
+    } finally {
+      setWorkerLoading(false);
+    }
+  };
 
   const DEFAULT_PROVIDER_MODELS: Record<string, string> = {
     custom: 'aico-rag-qwen2.5-coder-7b',
@@ -462,6 +507,155 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {sshTestStatus}
                 </span>
               )}
+            </div>
+          </div>
+
+          {/* SECTION 5: Local Source Diff Dataset Auto-Indexer */}
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-900/90 via-slate-900/60 to-emerald-950/20 border border-emerald-500/20 space-y-3.5 shadow-lg shadow-black/40">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
+                  <Layers className="w-4 h-4 text-emerald-400" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                    로컬 소스코드 Diff 데이터셋 자동 구축 현황
+                  </h3>
+                  <p className="text-[10px] text-slate-400">
+                    앱 실행 중 백그라운드에서 전수 Unified Diff를 자동 수집하여 AI 코드 분석용 데이터셋을 생성합니다.
+                  </p>
+                </div>
+              </div>
+
+              {/* Status Badge & Control Button */}
+              <div className="flex items-center gap-2">
+                {workerStatus && (
+                  <div className={`px-2.5 py-1 rounded-full text-[11px] font-semibold flex items-center gap-1.5 border ${
+                    workerStatus.status === 'running'
+                      ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 animate-pulse'
+                      : workerStatus.status === 'completed'
+                      ? 'bg-blue-500/10 text-blue-300 border-blue-500/30'
+                      : workerStatus.status === 'waiting_ssh'
+                      ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                      : workerStatus.status === 'paused'
+                      ? 'bg-slate-800 text-slate-400 border-slate-700'
+                      : 'bg-slate-800 text-slate-400 border-slate-700'
+                  }`}>
+                    {workerStatus.status === 'running' && (
+                      <>
+                        <RefreshCw className="w-3 h-3 animate-spin text-emerald-400" />
+                        수집 중 ({workerStatus.currentCrid ? `CR #${workerStatus.currentCrid}` : '준비'})
+                      </>
+                    )}
+                    {workerStatus.status === 'completed' && (
+                      <>
+                        <CheckCircle2 className="w-3 h-3 text-blue-400" />
+                        데이터셋 구축 완료 (100%)
+                      </>
+                    )}
+                    {workerStatus.status === 'waiting_ssh' && (
+                      <>
+                        <AlertCircle className="w-3 h-3 text-amber-400" />
+                        SSH 설정 대기
+                      </>
+                    )}
+                    {workerStatus.status === 'paused' && (
+                      <>
+                        <Pause className="w-3 h-3 text-slate-400" />
+                        일시정지됨
+                      </>
+                    )}
+                    {workerStatus.status === 'idle' && (
+                      <>
+                        <Clock className="w-3 h-3 text-slate-400" />
+                        대기 중
+                      </>
+                    )}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleToggleWorker}
+                  disabled={workerLoading || !workerStatus}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all border ${
+                    workerStatus?.enabled
+                      ? 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/30'
+                      : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                  }`}
+                  title={workerStatus?.enabled ? '자동 수집 일시정지' : '자동 수집 시작/재개'}
+                >
+                  {workerStatus?.enabled ? (
+                    <>
+                      <Pause className="w-3 h-3" />
+                      일시정지
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-3 h-3" />
+                      자동 수집 시작
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Progress Bar & Percentage */}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-300 font-medium flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+                  전체 데이터셋 완성률
+                </span>
+                <span className="font-mono font-bold text-emerald-400 text-sm">
+                  {workerStatus?.percentage ?? 0}%
+                </span>
+              </div>
+              <div className="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden p-0.5 border border-slate-800">
+                <div
+                  className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 rounded-full transition-all duration-500 ease-out"
+                  style={{ width: `${Math.min(100, Math.max(0, workerStatus?.percentage ?? 0))}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Detailed Stats Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-center font-mono">
+              <div className="p-2 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                <div className="text-[10px] text-slate-400">인덱싱된 CR</div>
+                <div className="text-xs font-bold text-slate-200 mt-0.5">
+                  {workerStatus ? `${workerStatus.cachedCRs} / ${workerStatus.targetCRsWithFiles || workerStatus.totalCRs}` : '-'}
+                </div>
+              </div>
+
+              <div className="p-2 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                <div className="text-[10px] text-slate-400">수집된 소스 파일</div>
+                <div className="text-xs font-bold text-emerald-300 mt-0.5">
+                  {workerStatus?.totalFiles ? `${workerStatus.totalFiles.toLocaleString()}개` : '0개'}
+                </div>
+              </div>
+
+              <div className="p-2 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                <div className="text-[10px] text-slate-400">데이터셋 용량</div>
+                <div className="text-xs font-bold text-cyan-300 mt-0.5">
+                  {workerStatus?.totalSizeFormatted || '0 B'}
+                </div>
+              </div>
+
+              <div className="p-2 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                <div className="text-[10px] text-slate-400">남은 대상</div>
+                <div className="text-xs font-bold text-amber-300 mt-0.5">
+                  {workerStatus ? `${Math.max(0, (workerStatus.targetCRsWithFiles || workerStatus.totalCRs) - workerStatus.cachedCRs)}개 남음` : '-'}
+                </div>
+              </div>
+            </div>
+
+            {/* Note & Incremental Sync Info */}
+            <div className="text-[11px] text-slate-400 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/60 leading-relaxed flex items-start gap-2">
+              <span className="text-emerald-400 font-bold shrink-0">✨ 무인 자동화:</span>
+              <span>
+                ClearCase 서버 부하를 방지하기 위해 1.5초 간격으로 조용히 백그라운드 수집합니다. Mantis 동기화로 <strong>새로 추가되거나 갱신(Update)된 CR은 우선순위 큐에 자동 등록되어 즉시 데이터셋에 증분 반영</strong>됩니다.
+              </span>
             </div>
           </div>
 
