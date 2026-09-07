@@ -32,3 +32,6 @@ release/
 # Logs
 logs
 *.log
+
+# Scratch
+scratch/
