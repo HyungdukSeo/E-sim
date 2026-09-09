@@ -1,7 +1,7 @@
 # ⚡ Mantis CR Ultra Search & AI Hub
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.1.0-blue.svg?style=for-the-badge" alt="Version 1.1.0" />
+  <img src="https://img.shields.io/badge/version-1.0.2-blue.svg?style=for-the-badge" alt="Version 1.0.2" />
   <img src="https://img.shields.io/badge/ClearCase-Web%20Diff-brightgreen.svg?style=for-the-badge" alt="ClearCase Web Diff" />
   <img src="https://img.shields.io/badge/Dataset-Background%20Auto%20Indexer-emerald.svg?style=for-the-badge" alt="Background Diff Indexer" />
   <img src="https://img.shields.io/badge/Cross%20CR-Code%20Comparison-purple.svg?style=for-the-badge" alt="Cross CR Comparison" />
@@ -218,6 +218,13 @@ start.bat
   * 상위 핵심 고객사를 한눈에 확인하는 `인기순 Top 20` 탭 모드 및 선택 뱃지 모아보기 지원
 * 🤖 **CR 상세 정보 모달 내 AI 코드 Diff 종합 분석 탭 추가**:
   * 단일 CR의 소스코드 변경 사항(Unified Diff)을 AI가 즉시 종합 요약·해설
+
+### v1.0.2
+* 🤖 **OmniRoute 로컬 AI 게이트웨이 연동 지원**: 로컬 AI Gateway(`http://localhost:20128/v1`) 연결, 스마트 가상 라우팅 모델(`auto`, `auto/coding`, `auto/fast`, `auto/cheap`) 및 실시간 모델 자동 조회 지원
+* 🌐 **ClearCase VOB 서버 다중 연동 & 지능형 자동 폴백(Fallback)**: 복수 ClearCase 서버 등록 지원, 1차 서버에 VOB/소스가 없을 경우 2차/3차 서버를 백그라운드에서 순차 자동 탐색하여 Diff 표시
+* 🔄 **백그라운드 Diff 데이터셋 무인 자동 갱신**: 신규 CR 유입뿐만 아니라 Mantis에서 소스코드나 체크인 로그가 수정된 기존 CR도 스스로 감지하여 최신 소스코드로 자동 재수집 및 갱신(Auto-Refresh)
+* ⚡ **Diff 데이터셋 인덱서 10개 초초고속 병렬 워커 풀 지원**: 최대 10개 동시 수집 지원 (고성능 병렬 다운로드)
+* 🏷️ **Diff 뷰어 내 출처 서버 뱃지 표시**: 다중 서버 환경에서 어느 ClearCase 서버에서 소스를 찾아왔는지 상단에 직관적 안내
 
 ### v1.0.1
 * ✅ **다차원 상세 필터 버그 수정**: 체크박스가 클릭되지 않던 문제 및 하나를 선택하면 다른 옵션이 사라지던 문제 해결 (교차 필터링 정상화)
