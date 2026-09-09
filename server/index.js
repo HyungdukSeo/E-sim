@@ -15,7 +15,16 @@ import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const DIST_DIR = path.join(ROOT_DIR, 'dist');
+let DIST_DIR = path.join(ROOT_DIR, 'dist');
+if (process.resourcesPath && !fs.existsSync(DIST_DIR)) {
+  const unpackedDist = path.join(process.resourcesPath, 'app.asar.unpacked', 'dist');
+  const asarDist = path.join(process.resourcesPath, 'app.asar', 'dist');
+  if (fs.existsSync(unpackedDist)) {
+    DIST_DIR = unpackedDist;
+  } else if (fs.existsSync(asarDist)) {
+    DIST_DIR = asarDist;
+  }
+}
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const CLI_SETTINGS_DIR = path.join(os.homedir(), '.mantis_cr_hub');
 const CLI_SETTINGS_FILE = path.join(CLI_SETTINGS_DIR, 'settings.json');

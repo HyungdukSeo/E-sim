@@ -37,8 +37,7 @@
     ],
     "asar": true,
     "asarUnpack": [
-      "server/**",
-      "dist/**"
+      "data/**"
     ],
     "mac": {
       "target": [

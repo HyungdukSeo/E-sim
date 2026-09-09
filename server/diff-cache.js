@@ -2,14 +2,17 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { fetchFileDiffSSH } from './ssh.js';
+import { DATA_DIR } from './sync.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DIFF_CACHE_DIR = path.resolve(__dirname, '../data/diff_cache');
+export const DIFF_CACHE_DIR = path.join(DATA_DIR, 'diff_cache');
 
-// Ensure diff_cache directory exists
+// Ensure diff_cache directory exists in writable location
 if (!fs.existsSync(DIFF_CACHE_DIR)) {
-  fs.mkdirSync(DIFF_CACHE_DIR, { recursive: true });
+  try {
+    fs.mkdirSync(DIFF_CACHE_DIR, { recursive: true });
+  } catch (e) {
+    console.warn('[DiffCache] Warning creating diff cache dir:', e.message);
+  }
 }
 
 const BINARY_EXTS = new Set([

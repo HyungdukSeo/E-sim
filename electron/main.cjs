@@ -18,7 +18,12 @@ let activePort = PORT;
  */
 function logErrorToFile(msg) {
   try {
-    const logDir = process.env.APPDATA ? path.join(process.env.APPDATA, 'MantisCRHub') : __dirname;
+    let logDir;
+    try {
+      logDir = app.getPath('userData');
+    } catch {
+      logDir = process.env.APPDATA ? path.join(process.env.APPDATA, 'MantisCRHub') : os.tmpdir();
+    }
     if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
     const logFile = path.join(logDir, 'app.log');
     fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${msg}\n`);
@@ -63,6 +68,18 @@ function killOldPortProcess(port = PORT) {
           execSync(`taskkill /f /pid ${pid} >nul 2>nul`);
         }
       }
+    } else if (process.platform === 'darwin' || process.platform === 'linux') {
+      const pids = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
+      if (pids) {
+        const pidList = pids.split(/\s+/).map(p => parseInt(p, 10)).filter(p => p && p !== process.pid);
+        for (const pid of pidList) {
+          try {
+            process.kill(pid, 'SIGKILL');
+            console.log(`[Electron] Cleared lingering process PID ${pid} on port ${port}`);
+            logErrorToFile(`Cleared lingering process PID ${pid} on port ${port}`);
+          } catch (e) {}
+        }
+      }
     }
   } catch (e) {}
 }
@@ -97,7 +114,7 @@ async function startBackendServer() {
     if (!serverModule) {
       let serverScriptPath = path.join(__dirname, '..', 'server', 'index.js');
       if (app.isPackaged && !fs.existsSync(serverScriptPath)) {
-        serverScriptPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'server', 'index.js');
+        serverScriptPath = path.join(process.resourcesPath, 'app.asar', 'server', 'index.js');
       }
       const fileUrl = pathToFileURL(serverScriptPath).href;
       serverModule = await import(fileUrl);
@@ -386,8 +403,8 @@ function createTray() {
 }
 
 // App lifecycle
-app.whenReady().then(() => {
-  startBackendServer();
+app.whenReady().then(async () => {
+  await startBackendServer();
   createTray();
   openAppWindow();
 

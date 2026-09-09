@@ -8,7 +8,25 @@ import { parse } from 'csv-parse/sync';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUNDLED_DATA_DIR = path.join(ROOT_DIR, 'data');
+
+function getBundledDataDirectory() {
+  const localData = path.join(ROOT_DIR, 'data');
+  if (fs.existsSync(path.join(localData, 'cr_database.json'))) {
+    return localData;
+  }
+  if (process.resourcesPath) {
+    const unpackedData = path.join(process.resourcesPath, 'app.asar.unpacked', 'data');
+    if (fs.existsSync(path.join(unpackedData, 'cr_database.json'))) {
+      return unpackedData;
+    }
+    const asarData = path.join(process.resourcesPath, 'app.asar', 'data');
+    if (fs.existsSync(path.join(asarData, 'cr_database.json'))) {
+      return asarData;
+    }
+  }
+  return localData;
+}
+const BUNDLED_DATA_DIR = getBundledDataDirectory();
 
 // Determine writable data directory
 function getWritableDataDirectory() {
