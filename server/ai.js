@@ -404,9 +404,37 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
     return { content: resp.data.content?.[0]?.text || '', provider: `claude (${model})` };
   }
 
+  if (provider === 'omniroute') {
+    let baseUrl = (config.omnirouteUrl || config.baseUrl || 'http://localhost:20128/v1').trim().replace(/\/$/, '');
+    if (!baseUrl.endsWith('/v1') && !baseUrl.includes('/v1/')) {
+      baseUrl += '/v1';
+    }
+    const endpoint = baseUrl.endsWith('/chat/completions') ? baseUrl : `${baseUrl}/chat/completions`;
+    const apiKey = config.omnirouteApiKey || config.apiKey || 'sk-omniroute';
+    const model = config.model || config.omnirouteModel || 'auto';
+
+    const resp = await axios.post(endpoint, {
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ]
+    }, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 120000
+    });
+    return {
+      content: resp.data.choices?.[0]?.message?.content || '',
+      provider: `OmniRoute (${model})`
+    };
+  }
+
   // Local fallback explanation
   return {
-    content: `[로컬 NLP 모드]\n\n설정된 외부 AI 공급자(${provider})가 없거나 로컬 모드입니다. 상세 소스 코드 분석을 위해 상단 환경설정에서 AI 공급자(Custom LLM / Claude / OpenAI 등)를 설정해 주세요.`,
+    content: `[로컬 NLP 모드]\n\n설정된 외부 AI 공급자(${provider})가 없거나 로컬 모드입니다. 상세 소스 코드 분석을 위해 상단 환경설정에서 AI 공급자(OmniRoute / Claude / Custom LLM / OpenAI 등)를 설정해 주세요.`,
     provider: 'local-fallback'
   };
 }

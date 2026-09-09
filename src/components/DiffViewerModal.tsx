@@ -17,7 +17,8 @@ import {
   ChevronUp,
   Search,
   FileCode2,
-  CheckCircle2
+  CheckCircle2,
+  Server
 } from 'lucide-react';
 import { diffLines, diffWordsWithSpace } from 'diff';
 import { SSHConfig, DiffResult } from '../types/cr';
@@ -508,6 +509,12 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
                 {diffData && (
                   <span className="px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-[10px] font-mono text-mantis-400">
                     {diffData.prevVersion} ↔ {diffData.currVersion}
+                  </span>
+                )}
+                {diffData?.serverHost && (
+                  <span className="px-2 py-0.5 rounded-md bg-indigo-950/60 border border-indigo-500/40 text-[10px] font-mono text-indigo-300 flex items-center gap-1">
+                    <Server className="w-3 h-3 text-indigo-400" />
+                    <span>{diffData.serverName || diffData.serverHost}</span>
                   </span>
                 )}
               </div>

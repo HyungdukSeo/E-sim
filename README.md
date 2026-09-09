@@ -5,7 +5,7 @@
   <img src="https://img.shields.io/badge/ClearCase-Web%20Diff-brightgreen.svg?style=for-the-badge" alt="ClearCase Web Diff" />
   <img src="https://img.shields.io/badge/Dataset-Background%20Auto%20Indexer-emerald.svg?style=for-the-badge" alt="Background Diff Indexer" />
   <img src="https://img.shields.io/badge/Cross%20CR-Code%20Comparison-purple.svg?style=for-the-badge" alt="Cross CR Comparison" />
-  <img src="https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Antigravity-6366f1.svg?style=for-the-badge" alt="Multi AI Provider" />
+  <img src="https://img.shields.io/badge/AI-OmniRoute%20%7C%20Claude%20%7C%20Codex%20%7C%20Antigravity-6366f1.svg?style=for-the-badge" alt="Multi AI Provider" />
   <img src="https://img.shields.io/badge/Encoding-EUC--KR%20%7C%20CP949%20%7C%20UTF--8-orange.svg?style=for-the-badge" alt="Multi-Encoding" />
   <img src="https://img.shields.io/badge/Portable%20DB-7%2C700%2B%20CRs-magenta.svg?style=for-the-badge" alt="Portable DB" />
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg?style=for-the-badge" alt="Cross Platform" />
@@ -78,8 +78,8 @@
 
 ---
 
-### 9. 🧠 멀티 AI 공급자 설정 (Multi AI Provider Settings)
-> 로컬 NLP, Custom LLM, Codex, Antigravity, **Claude(Anthropic)**를 지원합니다. 공급자별 실시간 모델 목록 조회 및 독립 모델 선택이 유지됩니다.
+### 9. 🧠 멀티 AI 공급자 & OmniRoute 로컬 게이트웨이 연동 (Multi AI Provider Settings)
+> 로컬 NLP, **OmniRoute(로컬 AI Gateway)**, Custom LLM, Codex, Antigravity, **Claude(Anthropic)**를 지원합니다. 특히 오픈소스 로컬 AI 게이트웨이 [OmniRoute](https://github.com/diegosouzapw/OmniRoute)와의 원클릭 연동으로 Claude, OpenAI, Gemini, Ollama 등의 공급자를 로컬 포트(20128)에서 스마트 분기(`auto`, `auto/coding`, `auto/fast`, `auto/cheap`) 처리할 수 있습니다.
 
 ![AI 공급자 설정](docs/images/08_settings_ai_provider.png)
 
@@ -101,7 +101,7 @@
 | **📊 인터랙티브 비주얼 분석 대시보드** | Recharts 기반 월별 유입량, 고객사별 점유율, 상태별 도넛 차트 제공 |
 | **✅ 다차원 상세 필터 (교차 선택)** | 프로젝트/상태/고객사/보고자/담당자를 다중 체크박스로 자유롭게 조합, 다른 항목을 체크해도 형제 옵션은 사라지지 않고 카운트만 실시간으로 좁혀짐 |
 | **🌗 라이트 / 다크 / 개발자 테마** | 헤더에서 즉시 전환 가능한 3종 테마, 다크 모드는 딥 에메랄드 톤으로 가독성 강화 |
-| **🧠 멀티 AI 공급자 (Claude 포함)** | 로컬 NLP / Custom LLM / Codex / Antigravity / **Claude**(Anthropic) 중 선택, 공급자별 실시간 모델 목록 조회 및 독립 모델 저장 |
+| **🧠 멀티 AI 공급자 (OmniRoute / Claude 포함)** | 로컬 NLP / **OmniRoute Gateway** / Custom LLM / Codex / Antigravity / **Claude** 중 선택, 공급자별 실시간 모델 목록 조회 및 독립 모델 저장 |
 | **💾 설정 디스크 영구 저장** | 환경설정(`data/settings.json`)이 로컬 디스크에 저장되어 앱 재시작 후에도 SSH/AI 설정이 유지됨 |
 
 ---

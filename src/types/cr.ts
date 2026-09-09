@@ -76,19 +76,24 @@ export interface SyncMeta {
 }
 
 export interface AISettings {
-  provider: 'local' | 'custom' | 'openai' | 'gemini' | 'claude';
+  provider: 'local' | 'custom' | 'openai' | 'gemini' | 'claude' | 'omniroute';
   apiKey: string;
   customUrl: string;
   model: string;
+  omnirouteUrl?: string;
+  omnirouteApiKey?: string;
   providerModels?: Record<string, string>;
 }
 
 export interface SSHConfig {
+  id?: string;
+  name?: string;
   host: string;
   port: number;
   username: string;
   password?: string;
   enabled: boolean;
+  servers?: SSHConfig[];
 }
 
 export interface DiffResult {
@@ -108,6 +113,10 @@ export interface DiffResult {
   unifiedDiff?: string;
   hasChanges: boolean;
   error?: string;
+  serverHost?: string;
+  serverName?: string;
+  searchedServersCount?: number;
+  foundServerIndex?: number;
 }
 
 export interface AppSettings {
@@ -115,6 +124,7 @@ export interface AppSettings {
   autoSyncIntervalMin: number;
   ai: AISettings;
   ssh: SSHConfig;
+  sshServers?: SSHConfig[];
   theme: 'dark' | 'light';
   itemsPerPage: number;
   diffConcurrency?: number;

@@ -10,21 +10,37 @@ export const DEFAULT_SETTINGS: AppSettings = {
     provider: 'local',
     apiKey: 'b644f37bc89d3472041218af3976fb9e',
     customUrl: 'http://10.100.8.39:8502/v1',
+    omnirouteUrl: 'http://localhost:20128/v1',
+    omnirouteApiKey: 'sk-omniroute',
     model: 'aico-rag-qwen2.5-coder-7b',
     providerModels: {
       custom: 'aico-rag-qwen2.5-coder-7b',
       openai: 'gpt-5.6-sol',
       gemini: 'gemini-3.8-flash-high',
-      claude: 'claude-3-5-sonnet-latest'
+      claude: 'claude-3-5-sonnet-latest',
+      omniroute: 'auto'
     }
   },
   ssh: {
+    id: 'server-1',
+    name: '1차 ClearCase 서버 (메인)',
     host: '192.168.16.200',
     port: 22,
     username: 'dev',
     password: '',
     enabled: true
   },
+  sshServers: [
+    {
+      id: 'server-1',
+      name: '1차 ClearCase 서버 (메인)',
+      host: '192.168.16.200',
+      port: 22,
+      username: 'dev',
+      password: '',
+      enabled: true
+    }
+  ],
   theme: 'dark',
   itemsPerPage: 50
 };
@@ -38,7 +54,20 @@ const STORAGE_KEY_LOCAL_META = 'mantis_cr_offline_meta_v1';
 export function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_SETTINGS);
-    if (raw) return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const merged = { ...DEFAULT_SETTINGS, ...parsed };
+      if (!merged.sshServers || merged.sshServers.length === 0) {
+        merged.sshServers = [
+          {
+            id: 'server-1',
+            name: '1차 ClearCase 서버 (메인)',
+            ...(merged.ssh || DEFAULT_SETTINGS.ssh)
+          }
+        ];
+      }
+      return merged;
+    }
   } catch (e) {
     console.warn('Failed to load settings from storage', e);
   }
@@ -174,13 +203,19 @@ export async function testSSH(sshConfig: SSHConfig): Promise<{ ok: boolean; mess
   }
 }
 
-export async function fetchFileDiff(sshConfig: SSHConfig, filePath: string, checkinLog?: string): Promise<DiffResult> {
+export async function fetchFileDiff(
+  sshConfig: SSHConfig, 
+  filePath: string, 
+  checkinLog?: string,
+  sshServers?: SSHConfig[]
+): Promise<DiffResult> {
   try {
     const resp = await axios.post(`${API_BASE}/ssh/diff`, {
       sshConfig,
+      sshServers: sshServers || sshConfig?.servers,
       filePath,
       checkinLog
-    }, { timeout: 30000 });
+    }, { timeout: 35000 });
     return resp.data;
   } catch (err: any) {
     const msg = err.response?.data?.error || err.response?.data?.message || err.message;

@@ -188,7 +188,11 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-bold text-main">Mantis CR AI 지능형 분석 & 실시간 뷰어</h2>
                 <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 uppercase font-semibold">
-                  {aiSettings.provider === 'local' ? '고도화 로컬 NLP' : aiSettings.provider}
+                  {aiSettings.provider === 'local' 
+                    ? '고도화 로컬 NLP' 
+                    : aiSettings.provider === 'omniroute' 
+                    ? `OmniRoute (${aiSettings.model || 'auto'})` 
+                    : `${aiSettings.provider} (${aiSettings.model})`}
                 </span>
               </div>
               <p className="text-xs text-slate-400">

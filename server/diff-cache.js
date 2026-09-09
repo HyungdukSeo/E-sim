@@ -60,17 +60,41 @@ export function saveCRDiffCache(crid, diffData) {
 /**
  * Fetch and cache diffs for a CR using SSH
  */
-export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = 10) {
+export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = 10, forceRefresh = false) {
   if (!cr || !cr.crid) return null;
   const crid = cr.crid;
 
   // 1. Check existing cache
   const cached = getCRDiffCache(crid);
-  if (cached && cached.files && cached.files.length > 0) {
-    return cached;
+  if (cached && cached.files && cached.files.length > 0 && !forceRefresh) {
+    let isStale = false;
+    // Check if CR was modified in Mantis after cachedAt
+    if (cr.lastUpdated && cached.cachedAt) {
+      const crTime = new Date(cr.lastUpdated).getTime();
+      const cacheTime = new Date(cached.cachedAt).getTime();
+      if (!isNaN(crTime) && !isNaN(cacheTime) && crTime > cacheTime) {
+        isStale = true;
+      }
+    }
+    // Check if file count changed
+    const crFileCount = (cr.files || []).length;
+    const cachedFileCount = (cached.files || []).length;
+    if (crFileCount > 0 && crFileCount !== cachedFileCount) {
+      isStale = true;
+    }
+
+    if (!isStale) {
+      return cached;
+    }
+    console.log(`[DiffCache] CR #${crid} is modified or has updated files. Auto-refreshing diff cache...`);
   }
 
-  if (!sshConfig || !sshConfig.host) {
+  const servers = Array.isArray(sshConfig) 
+    ? sshConfig 
+    : (sshConfig?.servers || (sshConfig?.host ? [sshConfig] : []));
+  const validServers = servers.filter(s => s && s.host && s.enabled !== false);
+
+  if (validServers.length === 0) {
     throw new Error('SSH 설정이 구성되지 않아 ClearCase 서버에서 소스코드를 가져올 수 없습니다.');
   }
 
@@ -94,13 +118,15 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = 10) {
 
     processed++;
     try {
-      const diffRes = await fetchFileDiffSSH(sshConfig, filePath, checkinLog);
+      const diffRes = await fetchFileDiffSSH(validServers, filePath, checkinLog);
       results.push({
         fileName,
         filePath,
         status: diffRes.ok ? 'success' : 'error',
         hasChanges: diffRes.hasChanges || false,
         error: diffRes.error || null,
+        serverHost: diffRes.serverHost || null,
+        serverName: diffRes.serverName || null,
         oldVersion: diffRes.oldVersion || '',
         newVersion: diffRes.newVersion || '',
         unifiedDiff: diffRes.unifiedDiff || '',
@@ -324,12 +350,24 @@ class BackgroundDiffIndexer {
       }
     }
 
-    // 2. Find next un-cached CR with files not currently in activeCrids
+    // 2. Find next un-cached or modified/stale CR with files not currently in activeCrids
     for (const cr of allCrs) {
       if (!cr.files || cr.files.length === 0) continue;
       if (this.activeCrids.has(cr.crid)) continue;
       const cached = getCRDiffCache(cr.crid);
       if (!cached || !cached.files || cached.files.length === 0) {
+        return cr;
+      }
+
+      // Check if stale (Mantis lastUpdated > cachedAt or file count changed)
+      if (cr.lastUpdated && cached.cachedAt) {
+        const crTime = new Date(cr.lastUpdated).getTime();
+        const cacheTime = new Date(cached.cachedAt).getTime();
+        if (!isNaN(crTime) && !isNaN(cacheTime) && crTime > cacheTime) {
+          return cr;
+        }
+      }
+      if (cr.files.length !== cached.files.length) {
         return cr;
       }
     }
@@ -366,7 +404,11 @@ class BackgroundDiffIndexer {
         continue;
       }
 
-      if (!this.sshConfig || !this.sshConfig.host || this.sshConfig.enabled === false) {
+      const servers = Array.isArray(this.sshConfig) 
+        ? this.sshConfig 
+        : (this.sshConfig?.servers || (this.sshConfig?.host ? [this.sshConfig] : []));
+      const hasValidServer = servers.some(s => s && s.host && s.enabled !== false);
+      if (!hasValidServer) {
         this.status = 'waiting_ssh';
         await sleep(2500);
         continue;

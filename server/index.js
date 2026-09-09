@@ -9,7 +9,7 @@ import { fileURLToPath } from 'url';
 import { syncMantisData, getLocalDatabase, importDatabase, fetchCRPageDetails, DB_FILE, META_FILE, DATA_DIR } from './sync.js';
 import { processAiQuery, analyzeSingleCRDiff, compareMultipleCRDiffs } from './ai.js';
 import { testSSHConnection, fetchFileDiffSSH } from './ssh.js';
-import { getClaudeModels, getAntigravityModels, getCodexModels } from './cli-models.js';
+import { getClaudeModels, getAntigravityModels, getCodexModels, getOmniRouteModels } from './cli-models.js';
 import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, batchIndexDiffs, backgroundDiffIndexer } from './diff-cache.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -90,7 +90,10 @@ app.post('/api/settings', (req, res) => {
     }
 
     console.log(`[Settings] Saved to local disk: ${SETTINGS_FILE}`);
-    if (settings.ssh) {
+    const activeServers = settings.sshServers || settings.ssh?.servers || (settings.ssh ? [settings.ssh] : []);
+    if (activeServers.length > 0) {
+      backgroundDiffIndexer.updateSSHConfig(activeServers);
+    } else if (settings.ssh) {
       backgroundDiffIndexer.updateSSHConfig(settings.ssh);
     }
     if (settings.diffConcurrency) {
@@ -306,6 +309,8 @@ app.get('/api/ai/models', async (req, res) => {
       models = await getAntigravityModels();
     } else if (provider === 'claude') {
       models = await getClaudeModels();
+    } else if (provider === 'omniroute') {
+      models = await getOmniRouteModels(req.query.baseUrl, req.query.apiKey);
     }
 
     res.json({ ok: true, models });
@@ -330,11 +335,12 @@ app.post('/api/ssh/test', async (req, res) => {
 // 10. ClearCase SSH File Diff
 app.post('/api/ssh/diff', async (req, res) => {
   try {
-    const { sshConfig, filePath, checkinLog } = req.body;
+    const { sshConfig, sshServers, filePath, checkinLog } = req.body;
     if (!filePath) {
       return res.status(400).json({ ok: false, error: '파일 경로가 필요합니다.' });
     }
-    const result = await fetchFileDiffSSH(sshConfig || {}, filePath, checkinLog || '');
+    const servers = sshServers || sshConfig?.servers || (sshConfig ? [sshConfig] : []);
+    const result = await fetchFileDiffSSH(servers, filePath, checkinLog || '');
     res.json(result);
   } catch (err) {
     console.error('[SSH Diff Error]', err.message);
@@ -417,7 +423,8 @@ app.post('/api/diff-cache/fetch', async (req, res) => {
       return res.status(404).json({ ok: false, error: `CR #${targetCrid}를 찾을 수 없습니다.` });
     }
 
-    const fetched = await fetchAndCacheCRDiff(targetCR, sshConfig);
+    const servers = sshServers || sshConfig?.servers || (sshConfig ? [sshConfig] : []);
+    const fetched = await fetchAndCacheCRDiff(targetCR, servers);
     res.json({ ok: true, cached: false, data: fetched });
   } catch (err) {
     console.error('[Diff Cache Fetch Error]', err.message);
@@ -572,9 +579,10 @@ export function startServer(defaultPort = PORT) {
             initialSettings = JSON.parse(fs.readFileSync(CLI_SETTINGS_FILE, 'utf8'));
           } catch(e) {}
         }
+        const initServers = initialSettings?.sshServers || initialSettings?.ssh?.servers || (initialSettings?.ssh ? [initialSettings.ssh] : []);
         backgroundDiffIndexer.init(
           () => getLocalDatabase().crs, 
-          initialSettings?.ssh,
+          initServers.length > 0 ? initServers : initialSettings?.ssh,
           initialSettings?.diffConcurrency
         );
 

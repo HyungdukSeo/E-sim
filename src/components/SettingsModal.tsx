@@ -20,7 +20,12 @@ import {
   Layers,
   Cpu,
   CheckCircle2,
-  Clock
+  Clock,
+  Route,
+  Network,
+  Server,
+  Plus,
+  Trash2
 } from 'lucide-react';
 import { AppSettings, SyncMeta } from '../types/cr';
 import { testSSH, saveSettingsToDisk, fetchDiffWorkerStatus, controlDiffWorker, DiffWorkerStatus } from '../services/api';
@@ -53,6 +58,86 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // Background Diff Worker Status & Control
   const [workerStatus, setWorkerStatus] = useState<DiffWorkerStatus | null>(null);
   const [workerLoading, setWorkerLoading] = useState(false);
+  const [serverTestResults, setServerTestResults] = useState<Record<string, { loading: boolean; msg: string; ok?: boolean }>>({});
+
+  // Ensure form.sshServers is initialized
+  useEffect(() => {
+    if (isOpen) {
+      setForm(prev => {
+        const servers = prev.sshServers && prev.sshServers.length > 0 
+          ? prev.sshServers 
+          : [
+              {
+                id: 'server-1',
+                name: '1차 ClearCase 서버 (메인)',
+                ...(prev.ssh || { host: '192.168.16.200', port: 22, username: 'dev', password: '', enabled: true })
+              }
+            ];
+        return {
+          ...prev,
+          sshServers: servers,
+          ssh: servers[0] ? { ...servers[0], servers } : prev.ssh
+        };
+      });
+    }
+  }, [isOpen]);
+
+  const handleAddServer = () => {
+    const newId = `server-${Date.now()}`;
+    setForm(prev => {
+      const currentList = prev.sshServers || [prev.ssh || { host: '', port: 22, username: 'dev', password: '', enabled: true }];
+      const newServer = {
+        id: newId,
+        name: `${currentList.length + 1}차 ClearCase 서버 (보조)`,
+        host: '',
+        port: 22,
+        username: prev.ssh?.username || 'dev',
+        password: prev.ssh?.password || '',
+        enabled: true
+      };
+      const updated = [...currentList, newServer];
+      return {
+        ...prev,
+        sshServers: updated,
+        ssh: updated[0] ? { ...updated[0], servers: updated } : prev.ssh
+      };
+    });
+  };
+
+  const handleUpdateServer = (index: number, updates: Partial<any>) => {
+    setForm(prev => {
+      const servers = [...(prev.sshServers || [])];
+      if (servers[index]) {
+        servers[index] = { ...servers[index], ...updates };
+      }
+      return {
+        ...prev,
+        sshServers: servers,
+        ssh: servers[0] ? { ...servers[0], servers } : prev.ssh
+      };
+    });
+  };
+
+  const handleRemoveServer = (index: number) => {
+    setForm(prev => {
+      const servers = (prev.sshServers || []).filter((_, i) => i !== index);
+      return {
+        ...prev,
+        sshServers: servers,
+        ssh: servers[0] ? { ...servers[0], servers } : prev.ssh
+      };
+    });
+  };
+
+  const handleTestServer = async (server: any, idKey: string) => {
+    setServerTestResults(prev => ({ ...prev, [idKey]: { loading: true, msg: '연결 테스트 중...' } }));
+    try {
+      const res = await testSSH(server);
+      setServerTestResults(prev => ({ ...prev, [idKey]: { loading: false, msg: `✅ ${res.message}`, ok: true } }));
+    } catch (err: any) {
+      setServerTestResults(prev => ({ ...prev, [idKey]: { loading: false, msg: `❌ ${err.message}`, ok: false } }));
+    }
+  };
 
   const loadWorkerStatus = async () => {
     try {
@@ -104,13 +189,61 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     custom: 'aico-rag-qwen2.5-coder-7b',
     openai: 'gpt-5.6-sol',
     gemini: 'gemini-3.8-flash-high',
-    claude: 'claude-3-5-sonnet-latest'
+    claude: 'claude-3-5-sonnet-latest',
+    omniroute: 'auto'
   };
 
   const [availableModels, setAvailableModels] = useState<any[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
 
-  const handleProviderChange = (newProvider: 'local' | 'custom' | 'openai' | 'gemini' | 'claude') => {
+  const fetchModelsForProvider = async (provider: string, omnirouteUrl?: string, omnirouteApiKey?: string) => {
+    if (provider !== 'openai' && provider !== 'gemini' && provider !== 'claude' && provider !== 'omniroute') {
+      return;
+    }
+    setIsLoadingModels(true);
+    try {
+      let url = `/api/ai/models?provider=${provider}`;
+      if (provider === 'omniroute') {
+        const cleanBaseUrl = omnirouteUrl || form.ai.omnirouteUrl || 'http://localhost:20128/v1';
+        const cleanApiKey = omnirouteApiKey || form.ai.omnirouteApiKey || 'sk-omniroute';
+        url += `&baseUrl=${encodeURIComponent(cleanBaseUrl)}&apiKey=${encodeURIComponent(cleanApiKey)}`;
+      }
+
+      const res = await axios.get(url);
+      if (res.data && res.data.models && Array.isArray(res.data.models)) {
+        const list = res.data.models;
+        setAvailableModels(list);
+
+        const modelIds = list.map((m: any) => typeof m === 'string' ? m : m.id);
+
+        setForm(prev => {
+          if (prev.ai.provider !== provider) return prev;
+
+          const savedModel = prev.ai.providerModels?.[provider] || prev.ai.model;
+          const chosenModel = modelIds.includes(savedModel) ? savedModel : (modelIds[0] || savedModel || 'auto');
+
+          return {
+            ...prev,
+            ai: {
+              ...prev.ai,
+              model: chosenModel,
+              providerModels: {
+                ...DEFAULT_PROVIDER_MODELS,
+                ...(prev.ai.providerModels || {}),
+                [provider]: chosenModel
+              }
+            }
+          };
+        });
+      }
+    } catch (err) {
+      console.error('Failed to fetch models:', err);
+    } finally {
+      setIsLoadingModels(false);
+    }
+  };
+
+  const handleProviderChange = (newProvider: 'local' | 'custom' | 'openai' | 'gemini' | 'claude' | 'omniroute') => {
     setForm(prev => {
       const currentProvider = prev.ai.provider;
       const currentModel = prev.ai.model;
@@ -153,41 +286,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   useEffect(() => {
-    if (form.ai.provider === 'openai' || form.ai.provider === 'gemini' || form.ai.provider === 'claude') {
-      setIsLoadingModels(true);
-      const targetProvider = form.ai.provider;
-
-      axios.get(`/api/ai/models?provider=${targetProvider}`)
-        .then(res => {
-          if (res.data && res.data.models && Array.isArray(res.data.models)) {
-            const list = res.data.models;
-            setAvailableModels(list);
-
-            const modelIds = list.map((m: any) => typeof m === 'string' ? m : m.id);
-
-            setForm(prev => {
-              if (prev.ai.provider !== targetProvider) return prev;
-
-              const savedModel = prev.ai.providerModels?.[targetProvider] || prev.ai.model;
-              const chosenModel = modelIds.includes(savedModel) ? savedModel : (modelIds[0] || savedModel);
-
-              return {
-                ...prev,
-                ai: {
-                  ...prev.ai,
-                  model: chosenModel,
-                  providerModels: {
-                    ...DEFAULT_PROVIDER_MODELS,
-                    ...(prev.ai.providerModels || {}),
-                    [targetProvider]: chosenModel
-                  }
-                }
-              };
-            });
-          }
-        })
-        .catch(err => console.error('Failed to fetch models:', err))
-        .finally(() => setIsLoadingModels(false));
+    if (form.ai.provider === 'openai' || form.ai.provider === 'gemini' || form.ai.provider === 'claude' || form.ai.provider === 'omniroute') {
+      fetchModelsForProvider(form.ai.provider, form.ai.omnirouteUrl, form.ai.omnirouteApiKey);
     }
   }, [form.ai.provider]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -196,8 +296,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSaveSettings(form);
-    await saveSettingsToDisk(form);
+    const primaryServer = form.sshServers?.find(s => s.enabled) || form.sshServers?.[0] || form.ssh;
+    const finalForm = {
+      ...form,
+      ssh: {
+        ...primaryServer,
+        servers: form.sshServers
+      }
+    };
+    onSaveSettings(finalForm);
+    await saveSettingsToDisk(finalForm);
     setSaveSuccess(true);
     setTimeout(() => {
       setSaveSuccess(false);
@@ -340,9 +448,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
             <div className="space-y-2">
               <label className="block font-semibold text-slate-300">AI 공급자 (Provider)</label>
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
                 {[
                   { key: 'local', label: '로컬 NLP (기본)' },
+                  { key: 'omniroute', label: 'OmniRoute', badge: 'Gateway' },
                   { key: 'custom', label: 'Custom LLM' },
                   { key: 'openai', label: 'Codex' },
                   { key: 'gemini', label: 'Antigravity' },
@@ -352,17 +461,93 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     key={item.key}
                     type="button"
                     onClick={() => handleProviderChange(item.key as any)}
-                    className={`py-2 px-2.5 rounded-xl border text-xs font-semibold transition-all text-center ${
+                    className={`py-2 px-2 rounded-xl border text-xs font-semibold transition-all text-center flex flex-col items-center justify-center gap-0.5 ${
                       form.ai.provider === item.key
                         ? 'bg-indigo-600/20 border-indigo-500 text-indigo-300 shadow-sm'
                         : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    {item.label}
+                    <span>{item.label}</span>
+                    {item.badge && (
+                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono">
+                        {item.badge}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
             </div>
+
+            {/* OmniRoute Dedicated Configuration */}
+            {form.ai.provider === 'omniroute' && (
+              <div className="space-y-3 pt-2">
+                <div className="p-3.5 rounded-xl bg-slate-950/90 border border-indigo-500/30 space-y-3 shadow-sm">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center">
+                        <Route className="w-3.5 h-3.5 text-indigo-400" />
+                      </div>
+                      <div>
+                        <span className="text-xs font-bold text-slate-200">OmniRoute 로컬 AI 게이트웨이 연동</span>
+                        <span className="text-[10px] text-slate-400 ml-2 font-mono">http://localhost:20128/v1</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <a 
+                        href="https://github.com/diegosouzapw/OmniRoute" 
+                        target="_blank" 
+                        rel="noreferrer"
+                        className="text-[11px] text-indigo-400 hover:text-indigo-300 inline-flex items-center gap-1 hover:underline"
+                      >
+                        GitHub <ExternalLink className="w-3 h-3" />
+                      </a>
+                      <span className="text-slate-600 text-xs">•</span>
+                      <a 
+                        href="https://velog.io/@okorion/OmniRoute-%EC%97%AC%EB%9F%AC-AI-Provider%EB%A5%BC-%ED%95%98%EB%82%98%EC%9D%98-%EC%97%94%EB%93%9C%ED%8F%AC%EC%9D%B8%ED%8A%B8%EB%A1%9C-%EB%AC%B6%EB%8A%94-%EB%A1%9C%EC%BB%AC-AI-Gateway-edkx3iud" 
+                        target="_blank" 
+                        rel="noreferrer"
+                        className="text-[11px] text-indigo-400 hover:text-indigo-300 inline-flex items-center gap-1 hover:underline"
+                      >
+                        가이드 <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-slate-400 text-[11px] mb-1 font-medium">Gateway 엔드포인트 URL</label>
+                      <input
+                        type="text"
+                        value={form.ai.omnirouteUrl || 'http://localhost:20128/v1'}
+                        onChange={e => setForm(f => ({ ...f, ai: { ...f.ai, omnirouteUrl: e.target.value } }))}
+                        placeholder="http://localhost:20128/v1"
+                        className="w-full px-3 py-2 bg-slate-900 rounded-xl border border-slate-700 text-slate-200 text-xs font-mono focus:border-indigo-500 outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-400 text-[11px] mb-1 font-medium">API 토큰 (Bearer Token)</label>
+                      <input
+                        type="password"
+                        value={form.ai.omnirouteApiKey !== undefined ? form.ai.omnirouteApiKey : 'sk-omniroute'}
+                        onChange={e => setForm(f => ({ ...f, ai: { ...f.ai, omnirouteApiKey: e.target.value } }))}
+                        placeholder="sk-omniroute"
+                        className="w-full px-3 py-2 bg-slate-900 rounded-xl border border-slate-700 text-slate-200 text-xs font-mono focus:border-indigo-500 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 rounded-lg bg-indigo-950/30 border border-indigo-500/20 text-[11px] text-slate-300 space-y-1">
+                    <p className="leading-relaxed">
+                      💡 로컬 터미널에서 <code className="text-indigo-300 bg-slate-900 px-1 py-0.5 rounded font-mono">npx omniroute</code> 또는 <code className="text-indigo-300 bg-slate-900 px-1 py-0.5 rounded font-mono">omniroute start</code>를 실행하면 20128 포트에서 Anthropic Claude, OpenAI, Gemini, Ollama 등의 공급자를 하나로 묶어 자동 라우팅합니다.
+                    </p>
+                    <p className="text-slate-400 text-[10px]">
+                      추천 가상 모델: <code className="text-emerald-400 font-mono">auto</code> (스마트 분기), <code className="text-emerald-400 font-mono">auto/coding</code> (Diff 코드 분석 최적화), <code className="text-emerald-400 font-mono">auto/fast</code> (최고속 응답)
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {form.ai.provider === 'custom' && (
               <div className="space-y-3 pt-2">
@@ -379,7 +564,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             )}
 
-            {(form.ai.provider === 'openai' || form.ai.provider === 'gemini' || form.ai.provider === 'claude' || form.ai.provider === 'custom') && (
+            {(form.ai.provider === 'openai' || form.ai.provider === 'gemini' || form.ai.provider === 'claude' || form.ai.provider === 'custom' || form.ai.provider === 'omniroute') && (
               <div className="space-y-3 pt-2">
                 {form.ai.provider === 'custom' && (
                   <div>
@@ -394,30 +579,62 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 )}
                 <div>
-                  <label className="block text-slate-400 mb-1">모델명</label>
-                  {(form.ai.provider === 'openai' || form.ai.provider === 'gemini' || form.ai.provider === 'claude') ? (
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-slate-400 text-xs font-medium">선택된 모델</label>
+                    {(form.ai.provider === 'openai' || form.ai.provider === 'gemini' || form.ai.provider === 'claude' || form.ai.provider === 'omniroute') && (
+                      <button
+                        type="button"
+                        onClick={() => fetchModelsForProvider(form.ai.provider, form.ai.omnirouteUrl, form.ai.omnirouteApiKey)}
+                        disabled={isLoadingModels}
+                        className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors font-medium cursor-pointer"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${isLoadingModels ? 'animate-spin' : ''}`} />
+                        모델 새로고침
+                      </button>
+                    )}
+                  </div>
+
+                  {(form.ai.provider === 'openai' || form.ai.provider === 'gemini' || form.ai.provider === 'claude' || form.ai.provider === 'omniroute') ? (
                     isLoadingModels ? (
-                      <div className="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-700 text-slate-400 flex items-center justify-center">
-                        <span className="animate-pulse">모델 리스트 불러오는 중...</span>
+                      <div className="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-700 text-slate-400 flex items-center justify-center text-xs">
+                        <span className="animate-pulse flex items-center gap-2">
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                          모델 리스트 불러오는 중...
+                        </span>
                       </div>
                     ) : (
-                      <select
-                        value={form.ai.model}
-                        onChange={e => handleModelChange(e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-700 text-slate-200 font-mono"
-                      >
-                        {availableModels.length > 0 ? (
-                          availableModels.map(m => {
-                            const id = typeof m === 'string' ? m : m.id;
-                            const label = typeof m === 'string' ? m : (m.displayName && m.displayName !== m.id ? `${m.displayName} (${m.id})` : m.id);
-                            return (
-                              <option key={id} value={id}>{label}</option>
-                            );
-                          })
-                        ) : (
-                          <option value="">모델 리스트 없음</option>
+                      <div className="space-y-2">
+                        <select
+                          value={form.ai.model}
+                          onChange={e => handleModelChange(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-700 text-slate-200 font-mono text-xs focus:border-indigo-500 outline-none"
+                        >
+                          {availableModels.length > 0 ? (
+                            availableModels.map(m => {
+                              const id = typeof m === 'string' ? m : m.id;
+                              const label = typeof m === 'string' ? m : (m.displayName && m.displayName !== m.id ? `${m.displayName} (${m.id})` : m.id);
+                              return (
+                                <option key={id} value={id}>{label}</option>
+                              );
+                            })
+                          ) : (
+                            <option value={form.ai.model || 'auto'}>{form.ai.model || 'auto'}</option>
+                          )}
+                        </select>
+
+                        {form.ai.provider === 'omniroute' && (
+                          <div className="flex items-center gap-2 pt-0.5">
+                            <span className="text-[11px] text-slate-400 shrink-0">커스텀 모델 직접 입력:</span>
+                            <input
+                              type="text"
+                              value={form.ai.model}
+                              onChange={e => handleModelChange(e.target.value)}
+                              placeholder="auto 또는 특정 모델명 (예: auto/coding, gpt-4o, claude-3-5-sonnet)"
+                              className="flex-1 px-3 py-1.5 bg-slate-950 rounded-lg border border-slate-800 text-slate-200 font-mono text-xs focus:border-indigo-500 outline-none"
+                            />
+                          </div>
                         )}
-                      </select>
+                      </div>
                     )
                   ) : (
                     <input
@@ -433,92 +650,161 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             )}
           </div>
 
-          {/* SECTION 4: ClearCase SSH Server Connection */}
+          {/* SECTION 4: ClearCase SSH Server Connection (Multi-Server Support) */}
           <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3.5">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-200 flex items-center gap-2">
-                <Terminal className="w-4 h-4 text-indigo-400" />
-                ClearCase VOB 서버 SSH 연동 (웹 내장 Diff 뷰어용)
-              </h3>
-              <span className="text-[10px] text-main0 font-mono">
-                {form.ssh?.host || '미설정'}
-              </span>
-            </div>
-
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              사내 ClearCase VOB 서버의 SSH 접속 정보를 입력하시면, 수정 소스 파일 목록에서 <strong>[⚡ Diff]</strong> 버튼 클릭 시 이전 버전(<code>@@/main/1</code>)과 수정 버전(<code>@@/main/2</code>)의 소스를 실시간으로 읽어와 웹 화면에 바로 라인별 Diff를 보여줍니다.
-            </p>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-              <div>
-                <label className="block text-slate-400 text-[11px] mb-1">서버 IP / 호스트명</label>
-                <input
-                  type="text"
-                  value={form.ssh?.host || ''}
-                  onChange={e => setForm(f => ({ ...f, ssh: { ...(f.ssh || { port: 22, username: 'dev', password: '', enabled: true }), host: e.target.value } }))}
-                  placeholder="예: 192.168.16.200 또는 arena"
-                  className="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-700 text-slate-200 text-xs font-mono"
-                />
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center">
+                  <Server className="w-4 h-4 text-indigo-400" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                    ClearCase VOB 서버 다중 연동 (자동 Fallback 탐색)
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-mono">
+                      {(form.sshServers || []).length}대 등록됨
+                    </span>
+                  </h3>
+                  <p className="text-[10px] text-slate-400">
+                    사내에 여러 대의 ClearCase 서버가 있는 경우 순차적으로 탐색하여 VOB 소스를 자동으로 찾아옵니다.
+                  </p>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-slate-400 text-[11px] mb-1">SSH 포트</label>
-                <input
-                  type="number"
-                  value={form.ssh?.port || 22}
-                  onChange={e => setForm(f => ({ ...f, ssh: { ...(f.ssh || { host: '', username: 'dev', password: '', enabled: true }), port: parseInt(e.target.value, 10) || 22 } }))}
-                  placeholder="22"
-                  className="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-700 text-slate-200 text-xs font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-400 text-[11px] mb-1">계정 (ID / Username)</label>
-                <input
-                  type="text"
-                  value={form.ssh?.username || ''}
-                  onChange={e => setForm(f => ({ ...f, ssh: { ...(f.ssh || { host: '', port: 22, password: '', enabled: true }), username: e.target.value } }))}
-                  placeholder="예: dev 또는 hyungduk"
-                  className="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-700 text-slate-200 text-xs font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-400 text-[11px] mb-1">비밀번호 (Password)</label>
-                <input
-                  type="password"
-                  value={form.ssh?.password || ''}
-                  onChange={e => setForm(f => ({ ...f, ssh: { ...(f.ssh || { host: '', port: 22, username: 'dev', enabled: true }), password: e.target.value } }))}
-                  placeholder="서버 비밀번호"
-                  className="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-700 text-slate-200 text-xs font-mono"
-                />
-              </div>
-            </div>
-
-            {/* Test Connection Button & Status */}
-            <div className="pt-2 flex items-center justify-between gap-3">
               <button
                 type="button"
-                onClick={async () => {
-                  setSshTestStatus('연결 테스트 중...');
-                  try {
-                    const res = await testSSH(form.ssh || { host: '', port: 22, username: '', password: '', enabled: true });
-                    setSshTestStatus(`✅ ${res.message}`);
-                  } catch (err: any) {
-                    setSshTestStatus(`❌ ${err.message}`);
-                  }
-                }}
-                className="px-3 py-1.5 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 text-xs font-semibold flex items-center gap-1.5 transition-all"
+                onClick={handleAddServer}
+                className="px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
               >
-                <Zap className="w-3.5 h-3.5 text-indigo-400" />
-                SSH 연결 테스트
+                <Plus className="w-3.5 h-3.5" />
+                <span>서버 추가</span>
               </button>
+            </div>
 
-              {sshTestStatus && (
-                <span className="text-[11px] font-mono text-slate-300 truncate max-w-sm">
-                  {sshTestStatus}
-                </span>
-              )}
+            <div className="p-2.5 rounded-xl bg-indigo-950/20 border border-indigo-500/10 text-[11px] text-slate-300 leading-relaxed">
+              💡 <strong>다중 서버 자동 폴백 동작 방식:</strong> Diff 조회 시 등록된 서버들을 순서대로 탐색합니다. 1차 서버에 마운트되어 있지 않거나 찾을 수 없는 VOB/소스 파일인 경우, 등록된 2차, 3차 보조 서버를 백그라운드에서 자동으로 조회하여 소스를 찾아냅니다.
+            </div>
+
+            {/* List of ClearCase Servers */}
+            <div className="space-y-3">
+              {(form.sshServers || [form.ssh]).map((server, idx) => {
+                const sKey = server.id || `srv-${idx}`;
+                const testState = serverTestResults[sKey];
+
+                return (
+                  <div 
+                    key={sKey}
+                    className={`p-3.5 rounded-xl border transition-all space-y-3 ${
+                      server.enabled !== false 
+                        ? 'bg-slate-950/80 border-slate-700/80 shadow-sm' 
+                        : 'bg-slate-950/40 border-slate-800/60 opacity-60'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-800 pb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] px-2 py-0.5 rounded-md font-bold font-mono uppercase bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                          {idx === 0 ? '1차 (기본)' : `${idx + 1}차 (폴백)`}
+                        </span>
+                        <input
+                          type="text"
+                          value={server.name || `${idx + 1}차 ClearCase 서버`}
+                          onChange={e => handleUpdateServer(idx, { name: e.target.value })}
+                          placeholder="서버 별칭 (예: 메인 VOB 서버, 과거 레거시 서버)"
+                          className="px-2 py-1 bg-slate-900 rounded-lg border border-slate-700 text-slate-200 text-xs font-semibold w-56 focus:border-indigo-500 outline-none"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-1.5 text-[11px] text-slate-300 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={server.enabled !== false}
+                            onChange={e => handleUpdateServer(idx, { enabled: e.target.checked })}
+                            className="rounded border-slate-700 text-indigo-500 focus:ring-0"
+                          />
+                          <span>활성화</span>
+                        </label>
+
+                        {(form.sshServers || []).length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveServer(idx)}
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                            title="이 서버 삭제"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 pt-0.5">
+                      <div className="sm:col-span-2">
+                        <label className="block text-slate-400 text-[10px] mb-1 font-medium">서버 IP / 호스트명</label>
+                        <input
+                          type="text"
+                          value={server.host || ''}
+                          onChange={e => handleUpdateServer(idx, { host: e.target.value })}
+                          placeholder="예: 192.168.16.200 또는 arena"
+                          className="w-full px-2.5 py-1.5 bg-slate-900 rounded-xl border border-slate-700 text-slate-200 text-xs font-mono focus:border-indigo-500 outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-slate-400 text-[10px] mb-1 font-medium">포트</label>
+                        <input
+                          type="number"
+                          value={server.port || 22}
+                          onChange={e => handleUpdateServer(idx, { port: parseInt(e.target.value, 10) || 22 })}
+                          placeholder="22"
+                          className="w-full px-2.5 py-1.5 bg-slate-900 rounded-xl border border-slate-700 text-slate-200 text-xs font-mono focus:border-indigo-500 outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-slate-400 text-[10px] mb-1 font-medium">계정 (Username)</label>
+                        <input
+                          type="text"
+                          value={server.username || ''}
+                          onChange={e => handleUpdateServer(idx, { username: e.target.value })}
+                          placeholder="예: dev 또는 hyungduk"
+                          className="w-full px-2.5 py-1.5 bg-slate-900 rounded-xl border border-slate-700 text-slate-200 text-xs font-mono focus:border-indigo-500 outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                      <div>
+                        <label className="block text-slate-400 text-[10px] mb-1 font-medium">비밀번호 (Password)</label>
+                        <input
+                          type="password"
+                          value={server.password || ''}
+                          onChange={e => handleUpdateServer(idx, { password: e.target.value })}
+                          placeholder="서버 SSH 비밀번호"
+                          className="w-full px-2.5 py-1.5 bg-slate-900 rounded-xl border border-slate-700 text-slate-200 text-xs font-mono focus:border-indigo-500 outline-none"
+                        />
+                      </div>
+
+                      <div className="flex items-end justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleTestServer(server, sKey)}
+                          disabled={testState?.loading}
+                          className="px-3 py-1.5 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
+                        >
+                          <Zap className={`w-3.5 h-3.5 text-indigo-400 ${testState?.loading ? 'animate-spin' : ''}`} />
+                          <span>연결 테스트</span>
+                        </button>
+
+                        {testState?.msg && (
+                          <span className={`text-[11px] font-mono truncate max-w-xs ${testState.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {testState.msg}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 

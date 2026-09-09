@@ -321,14 +321,66 @@ async function fetchOneVersion(conn, vobSubPath, versionSuffix, candidateViews) 
 
 
 /**
- * Fetch Line-by-Line Diff for ClearCase Element (Parallel Dual-Fetch + LRU Cache)
+ * Fetch Line-by-Line Diff for ClearCase Element with Multi-Server Auto-Fallback
+ * (Parallel Dual-Fetch + LRU Cache + Automatic Fallback Across Registered ClearCase Servers)
  */
-export async function fetchFileDiffSSH(config, filePath, checkinLog = '') {
-  if (!config.host || !config.username) {
-    throw new Error('ClearCase SSH 서버 설정(IP/계정)이 필요합니다.');
+export async function fetchFileDiffSSH(configOrServers, filePath, checkinLog = '') {
+  let servers = [];
+  if (Array.isArray(configOrServers)) {
+    servers = configOrServers;
+  } else if (configOrServers && Array.isArray(configOrServers.servers)) {
+    servers = configOrServers.servers;
+  } else if (configOrServers && configOrServers.host) {
+    servers = [configOrServers, ...(configOrServers.fallbackServers || [])];
   }
 
-  // Hard 25s overall deadline — server never hangs indefinitely
+  // Filter valid & enabled servers
+  servers = servers.filter(s => s && s.host && s.enabled !== false);
+
+  if (servers.length === 0) {
+    throw new Error('설정된 유효한 ClearCase SSH 서버가 없습니다.');
+  }
+
+  const attemptedErrors = [];
+
+  for (let i = 0; i < servers.length; i++) {
+    const server = servers[i];
+    const serverLabel = server.name ? `${server.name} (${server.host})` : server.host;
+
+    try {
+      console.log(`[ClearCase Multi-Server] (${i + 1}/${servers.length}) Searching file ${filePath} on ${serverLabel}...`);
+      const result = await _fetchFileDiffFromSingleServer(server, filePath, checkinLog);
+      if (result && result.ok) {
+        if (i > 0) {
+          console.log(`[ClearCase Multi-Server] 🎉 Successfully found file ${filePath} on fallback server ${serverLabel}!`);
+        }
+        return {
+          ...result,
+          serverHost: server.host,
+          serverName: server.name || server.host,
+          searchedServersCount: servers.length,
+          foundServerIndex: i
+        };
+      }
+    } catch (err) {
+      console.warn(`[ClearCase Multi-Server] Server ${serverLabel} attempt failed: ${err.message}`);
+      attemptedErrors.push(`${serverLabel}: ${err.message}`);
+    }
+  }
+
+  // If no server was able to provide the file:
+  throw new Error(
+    `등록된 ${servers.length}대 ClearCase 서버에서 소스 파일(${filePath})을 찾지 못했습니다:\n` +
+    attemptedErrors.map(e => `• ${e}`).join('\n')
+  );
+}
+
+async function _fetchFileDiffFromSingleServer(config, filePath, checkinLog = '') {
+  if (!config.host || !config.username) {
+    throw new Error(`ClearCase SSH 서버 설정(IP/계정)이 필요합니다: ${config.host || 'IP미설정'}`);
+  }
+
+  // Hard 25s overall deadline per server — server never hangs indefinitely
   const HARD_TIMEOUT_MS = 25000;
   let hardTimer;
   const hardDeadline = new Promise((_, reject) => {

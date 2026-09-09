@@ -236,3 +236,51 @@ export function getCodexModels() {
     }
   });
 }
+
+/**
+ * 4. OmniRoute — 로컬 AI Gateway (http://localhost:20128/v1/models)
+ */
+export async function getOmniRouteModels(baseUrl = 'http://localhost:20128/v1', apiKey = 'sk-omniroute') {
+  const fallback = [
+    { id: 'auto', displayName: 'auto (OmniRoute 스마트 자동 라우팅)' },
+    { id: 'auto/coding', displayName: 'auto/coding (코딩 및 Diff 분석 특화)' },
+    { id: 'auto/fast', displayName: 'auto/fast (초고속 응답 라우팅)' },
+    { id: 'auto/cheap', displayName: 'auto/cheap (최저 비용 라우팅)' },
+    { id: 'claude-3-5-sonnet-latest', displayName: 'claude-3-5-sonnet-latest' },
+    { id: 'gpt-4o', displayName: 'gpt-4o' }
+  ];
+
+  try {
+    let cleanUrl = (baseUrl || 'http://localhost:20128/v1').trim().replace(/\/$/, '');
+    if (!cleanUrl.endsWith('/v1') && !cleanUrl.includes('/v1/')) {
+      cleanUrl += '/v1';
+    }
+
+    const resp = await axios.get(`${cleanUrl}/models`, {
+      headers: {
+        Authorization: `Bearer ${apiKey || 'sk-omniroute'}`
+      },
+      timeout: 4000
+    });
+
+    if (resp.data?.data && Array.isArray(resp.data.data)) {
+      const fetched = resp.data.data.map(m => ({
+        id: m.id,
+        displayName: m.id
+      }));
+
+      const existingIds = new Set(fetched.map(m => m.id));
+      const merged = [...fetched];
+      for (const fb of fallback) {
+        if (!existingIds.has(fb.id)) {
+          merged.unshift(fb);
+        }
+      }
+      return merged;
+    }
+  } catch (err) {
+    console.warn('[OmniRoute Models] Could not connect to local OmniRoute instance:', err.message);
+  }
+
+  return fallback;
+}
