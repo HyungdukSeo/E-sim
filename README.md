@@ -1,16 +1,18 @@
 # ⚡ Mantis CR Ultra Search & AI Hub
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.1-blue.svg?style=for-the-badge" alt="Version 1.0.1" />
+  <img src="https://img.shields.io/badge/version-1.1.0-blue.svg?style=for-the-badge" alt="Version 1.1.0" />
   <img src="https://img.shields.io/badge/ClearCase-Web%20Diff-brightgreen.svg?style=for-the-badge" alt="ClearCase Web Diff" />
+  <img src="https://img.shields.io/badge/Dataset-Background%20Auto%20Indexer-emerald.svg?style=for-the-badge" alt="Background Diff Indexer" />
+  <img src="https://img.shields.io/badge/Cross%20CR-Code%20Comparison-purple.svg?style=for-the-badge" alt="Cross CR Comparison" />
   <img src="https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Antigravity-6366f1.svg?style=for-the-badge" alt="Multi AI Provider" />
   <img src="https://img.shields.io/badge/Encoding-EUC--KR%20%7C%20CP949%20%7C%20UTF--8-orange.svg?style=for-the-badge" alt="Multi-Encoding" />
-  <img src="https://img.shields.io/badge/Portable%20DB-7%2C700%2B%20CRs-purple.svg?style=for-the-badge" alt="Portable DB" />
+  <img src="https://img.shields.io/badge/Portable%20DB-7%2C700%2B%20CRs-magenta.svg?style=for-the-badge" alt="Portable DB" />
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg?style=for-the-badge" alt="Cross Platform" />
 </p>
 
 <p align="center">
-  <strong>사내 Mantis CR 시스템(7,700+건)의 초고속 검색, 통계 대시보드, AI 버그 분석, 그리고 터미널 없이 브라우저에서 바로 소스 코드를 비교하는 ClearCase 실시간 Web vimdiff 올인원 플랫폼</strong>
+  <strong>사내 Mantis CR 시스템(7,700+건)의 초고속 검색, 통계 대시보드, ClearCase 실시간 Web vimdiff, 백그라운드 소스코드 Diff 데이터셋 무인 자동 구축, 복수 CR 코드 변경점 교차 비교 분석을 지원하는 올인원 엔지니어링 플랫폼</strong>
 </p>
 
 ---
@@ -24,21 +26,35 @@
 
 ---
 
-### 2. ⚡ 초고속 실시간 복합 검색 허브 (Ultra Search Hub)
-> 7,700건 이상의 대용량 CR 데이터베이스를 **0.05초** 만에 고객사(`KT`, `SKB`, `LGU+`), 프로젝트(`SSW`, `POTS`, `BASE`), 상태별로 정밀 필터링합니다.
+### 2. ⚡ 초고속 실시간 복합 검색 허브 & 고객사/사이트 스마트 아코디언 (Ultra Search Hub)
+> 7,700건 이상의 대용량 CR을 **0.05초** 만에 검색합니다. **625개 고객사/사이트**를 전용 실시간 검색창, 자모/알파벳 초성별 아코디언 접기/펼치기, 퀵 점프 칩(`A~Z`, `ㄱ~ㅎ`), 상위 핵심 고객사를 한눈에 보는 `인기순 Top 20` 탭으로 쾌적하게 필터링합니다.
 
 ![CR 검색 허브](docs/images/02_search_hub.png)
 
 ---
 
-### 3. 📁 CR 상세 정보 & 수정 소스 폴더 트리 뷰어 (CR Detail & Folder Tree)
-> CR의 문제 요약, 상세 원인, 해결 방안, 블록 내역을 확인하고, 수정된 전체 소스 파일 목록을 계층형 압축 트리(Folder Tree)로 편리하게 탐색합니다.
+### 3. 🔍 복수 CR 코드 변경점 교차 비교 분석 (Cross CR Comparison)
+> 검색 결과 테이블에서 2~3개의 CR을 체크박스로 선택 후 **`[⚡ 코드 변경점 교차 비교 분석]`**을 클릭하면, 각 CR의 수정 소스 파일 Diff를 대조하여 공통 수정 파일 및 코드 변경 흐름을 AI 엔진이 비교표와 함께 심층 분석합니다.
 
-![CR 상세 모달](docs/images/03_cr_detail.png)
+![복수 CR 교차 비교 모달](docs/images/09_cr_cross_comparison.png)
 
 ---
 
-### 4. 🔀 ClearCase 실시간 Web vimdiff & 한글 인코딩 변환기 (Web Diff Viewer)
+### 4. ⚙️ 로컬 소스코드 Diff 데이터셋 무인 자동 구축 현황 (Background Diff Indexer)
+> 앱이 실행되어 있는 동안 ClearCase 서버에 부하를 주지 않도록 **1.5초 안전 쿨다운(Throttle)**을 두고 백그라운드에서 전수 Unified Diff를 자동 수집합니다. Mantis 동기화 시 새로 추가되거나 갱신된 CR은 우선순위 큐(Priority Queue)에 자동 등록되어 즉시 증분 반영됩니다. 환경설정 창에서 **실시간 완성률(%) 프로그레스 바**와 상세 통계를 확인하고 일시정지/재개할 수 있습니다.
+
+![Diff 데이터셋 구축 현황](docs/images/10_diff_dataset_settings.png)
+
+---
+
+### 5. 📁 CR 상세 정보 & 🤖 AI 코드 Diff 종합 분석 (CR Detail & AI Analysis)
+> CR의 문제 요약, 상세 원인, 해결 방안, 계층형 압축 폴더 트리(Folder Tree)뿐만 아니라, **`[🤖 AI 코드 Diff 종합 분석]`** 탭에서 해당 CR의 핵심 소스 변경점을 AI가 전문 엔지니어 관점에서 요약·해설합니다.
+
+![CR 상세 모달 및 AI 코드 Diff 분석](docs/images/03_cr_detail_ai_diff.png)
+
+---
+
+### 6. 🔀 ClearCase 실시간 Web vimdiff & 한글 인코딩 변환기 (Web Diff Viewer)
 > 원격 ClearCase 서버의 이전 버전(`@@/main/N-1`)과 수정 버전(`@@/main/N`)을 실시간으로 가져와 **수백~수천 줄의 원본 소스를 Side-by-Side로 정렬 및 단어 단위 변경점(Token Diff)**을 비교합니다.  
 > 좌/우 화면별로 **EUC-KR, CP949, UTF-8** 인코딩을 실시간 선택하여 한글 주석 깨짐 없이 즉시 확인할 수 있습니다.
 
@@ -46,21 +62,14 @@
 
 ---
 
-### 5. 🤖 AI 에이전트 버그 원인 분석 및 유사 CR 탐색 (AI Agent Hub)
+### 7. 🤖 AI 에이전트 버그 원인 분석 및 유사 CR 탐색 (AI Agent Hub)
 > 자연어 검색을 통해 유사한 과거 장애/수정 이력을 빠르게 찾고, 문제 원인 및 패치 가이드를 제공합니다.
 
 ![AI 에이전트](docs/images/05_ai_agent.png)
 
 ---
 
-### 6. ✅ 다차원 상세 필터 (Multi-Dimensional Filter Panel)
-> 프로젝트, 상태, 고객사, 보고자, 담당자를 자유롭게 다중 체크하여 교차 필터링합니다. 하나를 선택해도 나머지 항목이 사라지지 않고, 선택 조합에 맞춰 카운트만 실시간으로 좁혀집니다.
-
-![다차원 상세 필터](docs/images/06_filter_checked.png)
-
----
-
-### 7. 🌗 라이트 / 다크 테마 스위처 (Theme Switcher)
+### 8. 🌗 라이트 / 다크 테마 스위처 (Theme Switcher)
 > 헤더 우측의 토글로 라이트/다크/개발자 테마를 즉시 전환합니다. 다크 모드는 눈의 피로를 줄이는 딥 에메랄드·포레스트 그린 톤으로 가독성을 개선했습니다.
 
 | 라이트 테마 | 다크 테마 |
@@ -69,8 +78,8 @@
 
 ---
 
-### 8. 🧠 멀티 AI 공급자 설정 (Multi AI Provider Settings)
-> 로컬 NLP, Custom LLM, Codex, Antigravity에 이어 **Claude(Anthropic)**를 신규 지원합니다. 공급자별로 사용 가능한 모델 목록을 실시간으로 불러오고, 선택한 모델은 공급자별로 독립적으로 저장됩니다.
+### 9. 🧠 멀티 AI 공급자 설정 (Multi AI Provider Settings)
+> 로컬 NLP, Custom LLM, Codex, Antigravity, **Claude(Anthropic)**를 지원합니다. 공급자별 실시간 모델 목록 조회 및 독립 모델 선택이 유지됩니다.
 
 ![AI 공급자 설정](docs/images/08_settings_ai_provider.png)
 
@@ -80,6 +89,10 @@
 
 | 기능 | 설명 |
 | :--- | :--- |
+| **🤖 로컬 Diff 데이터셋 무인 자동 구축** | 앱이 실행되어 있는 동안 1.5초 안전 간격으로 ClearCase 서버 부하 없이 백그라운드 전수 수집. Mantis 동기화 시 갱신/신규 CR 우선순위 큐(Priority Queue) 자동 증분 반영 |
+| **📊 데이터셋 실시간 완성률(%) 모니터링** | 환경설정 창에서 실시간 프로그레스 바(0~100%), 인덱싱된 CR/파일 수/디스크 용량(MB) 실시간 집계 및 원클릭 일시정지/재개 토글 제공 |
+| **🔀 복수 CR 코드 변경점 교차 비교** | 검색 테이블에서 2~3개 CR 선택 후 `[⚡ 코드 변경점 교차 비교 분석]` 원클릭 실행. 공통 수정 파일 및 변경 흐름 AI 종합 비교 보고서 제공 |
+| **🏢 고객사/사이트(625개) 스마트 필터** | 전용 실시간 검색창, 알파벳(A~Z) & 한글 초성(ㄱ~ㅎ)별 접기/펼치기 아코디언 그룹, 퀵 점프 칩 바, 상위 20대 `인기순 Top` 탭 및 선택 뱃지 모아보기 지원 |
 | **🚀 ClearCase 실시간 Web vimdiff** | 터미널 SSH에 접속하여 일일이 `vimdiff` 명령을 입력할 필요 없이, 브라우저에서 **`[⚡ Diff]`** 버튼 하나로 이전 버전과 현재 버전의 소스 코드 변경점을 직관적인 Side-by-Side 테이블로 즉시 비교 |
 | **🔤 무손실 한글 인코딩 실시간 스위처** | 레거시 교환기/통신 C/C++ 소스 및 스크립트의 **EUC-KR (한국어 기본)**, **CP949**, **UTF-8**, **ISO-8859-1** 인코딩을 좌/우 독립 드롭다운으로 0ms 즉각 전환 |
 | **🛡️ 엔터프라이즈급 SSH 세션 안전 관리** | 요청 시점에만 안전하게 통신하고 완료 즉시 소켓을 완전 파괴(`conn.destroy()`)하여 서버 측 좀비 프로세스 및 SSH 동시 접속 한도 초과(`MaxStartups`)를 100% 방지 |
@@ -88,7 +101,7 @@
 | **📊 인터랙티브 비주얼 분석 대시보드** | Recharts 기반 월별 유입량, 고객사별 점유율, 상태별 도넛 차트 제공 |
 | **✅ 다차원 상세 필터 (교차 선택)** | 프로젝트/상태/고객사/보고자/담당자를 다중 체크박스로 자유롭게 조합, 다른 항목을 체크해도 형제 옵션은 사라지지 않고 카운트만 실시간으로 좁혀짐 |
 | **🌗 라이트 / 다크 / 개발자 테마** | 헤더에서 즉시 전환 가능한 3종 테마, 다크 모드는 딥 에메랄드 톤으로 가독성 강화 |
-| **🧠 멀티 AI 공급자 (Claude 신규 지원)** | 로컬 NLP / Custom LLM / Codex / Antigravity / **Claude**(Anthropic) 중 선택, 공급자별 실시간 모델 목록 조회 및 독립 모델 저장 |
+| **🧠 멀티 AI 공급자 (Claude 포함)** | 로컬 NLP / Custom LLM / Codex / Antigravity / **Claude**(Anthropic) 중 선택, 공급자별 실시간 모델 목록 조회 및 독립 모델 저장 |
 | **💾 설정 디스크 영구 저장** | 환경설정(`data/settings.json`)이 로컬 디스크에 저장되어 앱 재시작 후에도 SSH/AI 설정이 유지됨 |
 
 ---
@@ -190,6 +203,21 @@ start.bat
 ---
 
 ## 📝 변경 이력 (Changelog)
+
+### v1.1.0
+* 🤖 **로컬 소스코드 Diff 데이터셋 무인 자동 구축 시스템**:
+  * ClearCase 서버 부하 방지를 위한 1.5초 안전 쓰로틀링(Throttle) 백그라운드 인덱서 탑재
+  * Mantis 동기화 시 갱신/신규 등록된 CR 우선순위 큐(Priority Queue) 자동 증분 반영
+  * 환경설정 모달 내 실시간 완성률(%) 프로그레스 바 및 4분할 상세 통계 대시보드 제공
+* 🔀 **복수 CR 코드 변경점 교차 비교 분석 (Cross CR Comparison)**:
+  * 검색 테이블에서 2~3개 CR 다중 선택 및 하단 플로팅 바를 통한 교차 비교 분석 원클릭 지원
+  * 공통 수정 파일 및 소스코드 변경 흐름 AI 심층 비교 보고서 생성
+* 🏢 **고객사 / 사이트(625개) 스마트 필터링 시스템 구축**:
+  * 625개 고객사 전용 실시간 검색창 (`customerSearch`) 지원
+  * 알파벳(A~Z) & 한글 초성(ㄱ~ㅎ)별 접기/펼치기 아코디언 그룹화 및 퀵 이니셜 점프 바
+  * 상위 핵심 고객사를 한눈에 확인하는 `인기순 Top 20` 탭 모드 및 선택 뱃지 모아보기 지원
+* 🤖 **CR 상세 정보 모달 내 AI 코드 Diff 종합 분석 탭 추가**:
+  * 단일 CR의 소스코드 변경 사항(Unified Diff)을 AI가 즉시 종합 요약·해설
 
 ### v1.0.1
 * ✅ **다차원 상세 필터 버그 수정**: 체크박스가 클릭되지 않던 문제 및 하나를 선택하면 다른 옵션이 사라지던 문제 해결 (교차 필터링 정상화)
