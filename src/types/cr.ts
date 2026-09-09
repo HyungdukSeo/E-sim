@@ -117,6 +117,7 @@ export interface AppSettings {
   ssh: SSHConfig;
   theme: 'dark' | 'light';
   itemsPerPage: number;
+  diffConcurrency?: number;
 }
 
 export interface StatsData {

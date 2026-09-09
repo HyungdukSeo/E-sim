@@ -232,6 +232,9 @@ export async function compareCRsAPI(
 export interface DiffWorkerStatus {
   enabled: boolean;
   status: 'idle' | 'running' | 'paused' | 'waiting_ssh' | 'completed';
+  concurrency?: number;
+  activeWorkers?: number;
+  activeCrids?: string[];
   currentCrid: string | null;
   totalCRs: number;
   targetCRsWithFiles: number;
@@ -249,7 +252,7 @@ export async function fetchDiffWorkerStatus(): Promise<{ ok: boolean; status: Di
   return resp.data;
 }
 
-export async function controlDiffWorker(enabled: boolean): Promise<{ ok: boolean; status: DiffWorkerStatus }> {
-  const resp = await axios.post(`${API_BASE}/diff-cache/worker-control`, { enabled });
+export async function controlDiffWorker(enabled?: boolean, concurrency?: number): Promise<{ ok: boolean; status: DiffWorkerStatus }> {
+  const resp = await axios.post(`${API_BASE}/diff-cache/worker-control`, { enabled, concurrency });
   return resp.data;
 }

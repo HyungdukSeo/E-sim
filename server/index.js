@@ -93,6 +93,9 @@ app.post('/api/settings', (req, res) => {
     if (settings.ssh) {
       backgroundDiffIndexer.updateSSHConfig(settings.ssh);
     }
+    if (settings.diffConcurrency) {
+      backgroundDiffIndexer.setConcurrency(settings.diffConcurrency);
+    }
     res.json({ ok: true, message: 'Settings saved to local disk successfully' });
   } catch (err) {
     console.error('[Save Settings Error]', err.message);
@@ -360,11 +363,16 @@ app.get('/api/diff-cache/worker-status', (req, res) => {
 
 app.post('/api/diff-cache/worker-control', (req, res) => {
   try {
-    const { enabled } = req.body;
-    if (enabled) {
-      backgroundDiffIndexer.resume();
-    } else {
-      backgroundDiffIndexer.pause();
+    const { enabled, concurrency } = req.body;
+    if (typeof concurrency === 'number') {
+      backgroundDiffIndexer.setConcurrency(concurrency);
+    }
+    if (typeof enabled === 'boolean') {
+      if (enabled) {
+        backgroundDiffIndexer.resume();
+      } else {
+        backgroundDiffIndexer.pause();
+      }
     }
     res.json({ ok: true, status: backgroundDiffIndexer.getStatus() });
   } catch (err) {
@@ -554,17 +562,21 @@ export function startServer(defaultPort = PORT) {
         }
 
         // Initialize background diff indexer
-        let initialSSH = null;
+        let initialSettings = null;
         if (fs.existsSync(SETTINGS_FILE)) {
           try {
-            initialSSH = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'))?.ssh;
+            initialSettings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
           } catch(e) {}
         } else if (fs.existsSync(CLI_SETTINGS_FILE)) {
           try {
-            initialSSH = JSON.parse(fs.readFileSync(CLI_SETTINGS_FILE, 'utf8'))?.ssh;
+            initialSettings = JSON.parse(fs.readFileSync(CLI_SETTINGS_FILE, 'utf8'));
           } catch(e) {}
         }
-        backgroundDiffIndexer.init(() => getLocalDatabase().crs, initialSSH);
+        backgroundDiffIndexer.init(
+          () => getLocalDatabase().crs, 
+          initialSettings?.ssh,
+          initialSettings?.diffConcurrency
+        );
 
         resolve({ server, port: p });
       });

@@ -88,6 +88,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
+  const handleConcurrencyChange = async (newConcurrency: number) => {
+    setForm(prev => ({ ...prev, diffConcurrency: newConcurrency }));
+    try {
+      const res = await controlDiffWorker(undefined, newConcurrency);
+      if (res.ok && res.status) {
+        setWorkerStatus(res.status);
+      }
+    } catch (err: any) {
+      console.error('Failed to change concurrency:', err);
+    }
+  };
+
   const DEFAULT_PROVIDER_MODELS: Record<string, string> = {
     custom: 'aico-rag-qwen2.5-coder-7b',
     openai: 'gpt-5.6-sol',
@@ -543,8 +555,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   }`}>
                     {workerStatus.status === 'running' && (
                       <>
-                        <RefreshCw className="w-3 h-3 animate-spin text-emerald-400" />
-                        수집 중 ({workerStatus.currentCrid ? `CR #${workerStatus.currentCrid}` : '준비'})
+                        <RefreshCw className="w-3 h-3 animate-spin text-emerald-400 shrink-0" />
+                        <span>
+                          {workerStatus.activeCrids && workerStatus.activeCrids.length > 0 ? (
+                            <>
+                              <span className="font-bold text-emerald-300">
+                                {workerStatus.activeCrids.length}개 동시 수집 중
+                              </span>
+                              <span className="text-[10px] text-emerald-400/80 ml-1 font-mono">
+                                ({workerStatus.activeCrids.slice(0, 3).map(id => `#${id}`).join(', ')}
+                                {workerStatus.activeCrids.length > 3 ? ` 외 ${workerStatus.activeCrids.length - 3}건` : ''})
+                              </span>
+                            </>
+                          ) : (
+                            `수집 준비 (${workerStatus.concurrency || form.diffConcurrency || 3}워커)`
+                          )}
+                        </span>
                       </>
                     )}
                     {workerStatus.status === 'completed' && (
@@ -597,6 +623,55 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </>
                   )}
                 </button>
+              </div>
+            </div>
+
+            {/* Parallel Worker Concurrency Control */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 bg-slate-950/80 p-3 rounded-xl border border-slate-800/90">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                  <Zap className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-xs font-semibold text-slate-200 flex items-center gap-2">
+                    동시 수집 속도 (Concurrency)
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono font-bold border border-amber-500/30">
+                      {workerStatus?.concurrency || form.diffConcurrency || 3}개 동시 병렬
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">
+                    동시에 SSH로 소스코드를 수집할 CR 개수를 설정합니다 (최대 10개 초초고속 병렬 수집 지원).
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 self-end sm:self-auto bg-slate-900/90 p-1 rounded-xl border border-slate-800">
+                {[
+                  { value: 1, label: '1개', desc: '안전' },
+                  { value: 3, label: '3개', desc: '권장' },
+                  { value: 5, label: '5개', desc: '고속' },
+                  { value: 8, label: '8개', desc: '초고속' },
+                  { value: 10, label: '10개', desc: '초초고속 🚀' }
+                ].map(opt => {
+                  const currentVal = workerStatus?.concurrency || form.diffConcurrency || 3;
+                  const isSelected = currentVal === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => handleConcurrencyChange(opt.value)}
+                      className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all ${
+                        isSelected
+                          ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/20 scale-[1.03]'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/80'
+                      }`}
+                      title={`${opt.label} (${opt.desc})`}
+                    >
+                      <span>{opt.label}</span>
+                      {opt.value === 10 && <span className="ml-1 text-[10px]">🚀</span>}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -654,7 +729,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="text-[11px] text-slate-400 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/60 leading-relaxed flex items-start gap-2">
               <span className="text-emerald-400 font-bold shrink-0">✨ 무인 자동화:</span>
               <span>
-                ClearCase 서버 부하를 방지하기 위해 1.5초 간격으로 조용히 백그라운드 수집합니다. Mantis 동기화로 <strong>새로 추가되거나 갱신(Update)된 CR은 우선순위 큐에 자동 등록되어 즉시 데이터셋에 증분 반영</strong>됩니다.
+                백그라운드에서 최대 10개 병렬 워커로 빠르게 수집합니다. Mantis 동기화로 <strong>새로 추가되거나 갱신(Update)된 CR은 우선순위 큐에 자동 등록되어 즉시 데이터셋에 증분 반영</strong>됩니다.
               </span>
             </div>
           </div>
