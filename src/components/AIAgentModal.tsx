@@ -39,6 +39,7 @@ interface AIAgentModalProps {
   onSelectCR: (cr: CRItem) => void;
   aiSettings: AppSettings['ai'];
   sshConfig?: SSHConfig;
+  sshServers?: SSHConfig[];
   onOpenSettings: () => void;
   mantisUrl: string;
   bookmarks: Set<string>;
@@ -73,6 +74,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
   onSelectCR,
   aiSettings,
   sshConfig,
+  sshServers,
   onOpenSettings,
   mantisUrl,
   bookmarks,
@@ -729,6 +731,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
         filePath={diffTargetFile || ''}
         checkinLog={previewCR?.checkinLog}
         sshConfig={sshConfig}
+        sshServers={sshServers}
         onOpenSettings={onOpenSettings}
       />
     </div>

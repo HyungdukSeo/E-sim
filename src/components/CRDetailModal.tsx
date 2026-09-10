@@ -43,6 +43,7 @@ interface CRDetailModalProps {
   onAskAI: (cr: CRItem) => void;
   isSplitView?: boolean;
   sshConfig?: SSHConfig;
+  sshServers?: SSHConfig[];
   aiSettings?: AppSettings['ai'];
   onOpenSettings?: () => void;
 }
@@ -59,6 +60,7 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
   onAskAI,
   isSplitView = false,
   sshConfig,
+  sshServers,
   aiSettings,
   onOpenSettings
 }) => {
@@ -572,6 +574,7 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
         filePath={diffTargetFile || ''}
         checkinLog={crItem.checkinLog}
         sshConfig={sshConfig}
+        sshServers={sshServers}
         onOpenSettings={onOpenSettings}
       />
     </div>

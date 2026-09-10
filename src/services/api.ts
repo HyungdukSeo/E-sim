@@ -219,9 +219,10 @@ export async function fetchFileDiff(
   sshServers?: SSHConfig[]
 ): Promise<DiffResult> {
   try {
+    const localServers = loadSettings()?.sshServers;
     const resp = await axios.post(`${API_BASE}/ssh/diff`, {
       sshConfig,
-      sshServers: sshServers || sshConfig?.servers,
+      sshServers: sshServers || sshConfig?.servers || localServers,
       filePath,
       checkinLog
     }, { timeout: 35000 });
@@ -238,8 +239,17 @@ export async function fetchCRDiffCache(crid: string): Promise<{ ok: boolean; cac
   return resp.data;
 }
 
-export async function fetchAndCacheCRDiffAPI(cr: CRItem, sshConfig?: SSHConfig): Promise<{ ok: boolean; cached: boolean; data: any }> {
-  const resp = await axios.post(`${API_BASE}/diff-cache/fetch`, { cr, sshConfig }, { timeout: 60000 });
+export async function fetchAndCacheCRDiffAPI(
+  cr: CRItem, 
+  sshConfig?: SSHConfig,
+  sshServers?: SSHConfig[]
+): Promise<{ ok: boolean; cached: boolean; data: any }> {
+  const localServers = loadSettings()?.sshServers;
+  const resp = await axios.post(`${API_BASE}/diff-cache/fetch`, { 
+    cr, 
+    sshConfig,
+    sshServers: sshServers || sshConfig?.servers || localServers
+  }, { timeout: 60000 });
   return resp.data;
 }
 
@@ -251,11 +261,14 @@ export async function fetchDiffCacheStats(): Promise<{ ok: boolean; stats: any }
 export async function analyzeCRDiffAPI(
   cr: CRItem,
   aiConfig: AppSettings['ai'],
-  sshConfig?: SSHConfig
+  sshConfig?: SSHConfig,
+  sshServers?: SSHConfig[]
 ): Promise<{ ok: boolean; analysis: string; provider: string; fileCount: number; cached: boolean }> {
+  const localServers = loadSettings()?.sshServers;
   const resp = await axios.post(`${API_BASE}/ai/analyze-cr-diff`, {
     cr,
     sshConfig,
+    sshServers: sshServers || sshConfig?.servers || localServers,
     config: aiConfig
   }, { timeout: 120000 });
   return resp.data;
@@ -264,11 +277,14 @@ export async function analyzeCRDiffAPI(
 export async function compareCRsAPI(
   crs: CRItem[],
   aiConfig: AppSettings['ai'],
-  sshConfig?: SSHConfig
+  sshConfig?: SSHConfig,
+  sshServers?: SSHConfig[]
 ): Promise<{ ok: boolean; analysis: string; provider: string; overlappingFiles: string[]; crCount: number; diffMap: any }> {
+  const localServers = loadSettings()?.sshServers;
   const resp = await axios.post(`${API_BASE}/ai/compare-crs`, {
     crs,
     sshConfig,
+    sshServers: sshServers || sshConfig?.servers || localServers,
     config: aiConfig
   }, { timeout: 120000 });
   return resp.data;

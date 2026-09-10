@@ -29,6 +29,7 @@ interface CRComparisonModalProps {
   crs: CRItem[];
   aiSettings?: AppSettings['ai'];
   sshConfig?: SSHConfig;
+  sshServers?: SSHConfig[];
   mantisUrl: string;
 }
 
@@ -38,6 +39,7 @@ export const CRComparisonModal: React.FC<CRComparisonModalProps> = ({
   crs,
   aiSettings,
   sshConfig,
+  sshServers,
   mantisUrl
 }) => {
   const [analyzing, setAnalyzing] = useState(false);
@@ -343,6 +345,7 @@ export const CRComparisonModal: React.FC<CRComparisonModalProps> = ({
           filePath={diffTargetFile}
           checkinLog={activeDiffCR.checkinLog}
           sshConfig={sshConfig || { host: '', port: 22, username: '', password: '', enabled: false }}
+          sshServers={sshServers}
         />
       )}
     </div>

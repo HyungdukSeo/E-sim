@@ -284,6 +284,7 @@ export function App() {
                               onToggleBookmark={handleToggleBookmark}
                               mantisUrl={settings.mantisUrl}
                               sshConfig={settings.ssh}
+                              sshServers={settings.sshServers}
                               aiSettings={settings.ai}
                               onOpenSettings={() => setIsSettingsOpen(true)}
                               onAskAI={cr => {
@@ -352,6 +353,7 @@ export function App() {
           onToggleBookmark={handleToggleBookmark}
           mantisUrl={settings.mantisUrl}
           sshConfig={settings.ssh}
+          sshServers={settings.sshServers}
           aiSettings={settings.ai}
           onOpenSettings={() => setIsSettingsOpen(true)}
           onAskAI={cr => {
@@ -370,6 +372,7 @@ export function App() {
           crs={compareTargetCRs}
           aiSettings={settings.ai}
           sshConfig={settings.ssh}
+          sshServers={settings.sshServers}
           mantisUrl={settings.mantisUrl}
         />
       )}
@@ -386,6 +389,7 @@ export function App() {
         }}
         aiSettings={settings.ai}
         sshConfig={settings.ssh}
+        sshServers={settings.sshServers}
         onOpenSettings={() => {
           setIsAIOpen(false);
           setIsSettingsOpen(true);

@@ -96,10 +96,31 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = 10, forceRef
     console.log(`[DiffCache] CR #${crid} is modified or has updated files. Auto-refreshing diff cache...`);
   }
 
-  const servers = Array.isArray(sshConfig) 
+  let servers = Array.isArray(sshConfig) 
     ? sshConfig 
     : (sshConfig?.servers || (sshConfig?.host ? [sshConfig] : []));
-  const validServers = servers.filter(s => s && s.host && s.enabled !== false);
+
+  // Also include backgroundDiffIndexer servers if available to guarantee multi-server coverage
+  if (backgroundDiffIndexer?.sshConfig) {
+    const bgServers = Array.isArray(backgroundDiffIndexer.sshConfig)
+      ? backgroundDiffIndexer.sshConfig
+      : (backgroundDiffIndexer.sshConfig?.servers || (backgroundDiffIndexer.sshConfig?.host ? [backgroundDiffIndexer.sshConfig] : []));
+    servers = [...servers, ...bgServers];
+  }
+
+  // Deduplicate servers by host:port:username
+  const serverMap = new Map();
+  for (const s of servers) {
+    if (!s || !s.host || s.enabled === false) continue;
+    const key = `${s.host}:${s.port || 22}:${s.username || ''}`;
+    if (!serverMap.has(key)) {
+      serverMap.set(key, { ...s });
+    } else {
+      const ex = serverMap.get(key);
+      if (!ex.password && s.password) serverMap.set(key, { ...ex, ...s });
+    }
+  }
+  const validServers = Array.from(serverMap.values());
 
   if (validServers.length === 0) {
     throw new Error('SSH 설정이 구성되지 않아 ClearCase 서버에서 소스코드를 가져올 수 없습니다.');

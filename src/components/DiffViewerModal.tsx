@@ -30,6 +30,7 @@ interface DiffViewerModalProps {
   filePath: string;
   checkinLog?: string;
   sshConfig?: SSHConfig;
+  sshServers?: SSHConfig[];
   onOpenSettings?: () => void;
 }
 
@@ -49,6 +50,7 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
   filePath,
   checkinLog,
   sshConfig,
+  sshServers,
   onOpenSettings
 }) => {
   const [loading, setLoading] = useState(false);
@@ -88,7 +90,7 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
   };
 
   // Compute default fallback vimdiff command
-  let fallbackVimdiff = `vimdiff ${cleanFilePath}@@/main/1 ${cleanFilePath}@@/main/2`;
+  let fallbackVimdiff = `vimdiff ${cleanFilePath}@@/main/0 ${cleanFilePath}@@/main/1`;
   if (checkinLog) {
     const lines = checkinLog.split(/\r?\n/);
     for (const l of lines) {
@@ -117,7 +119,7 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
     const config = sshConfig || { host: '', port: 22, username: '', password: '', enabled: true };
 
     try {
-      const res = await fetchFileDiff(config, filePath, checkinLog);
+      const res = await fetchFileDiff(config, filePath, checkinLog, sshServers);
       if (requestTokenRef.current !== myToken) return;
       setDiffData(res);
     } catch (err: any) {

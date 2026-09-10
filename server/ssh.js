@@ -28,6 +28,46 @@ function getCacheKey(host, filePath, prevVer, currVer) {
 }
 
 /**
+ * VOB-to-Server Affinity Cache (0ms Instant Routing for Known VOBs)
+ * Remembers which server hosts which VOB to bypass probing non-existent servers
+ */
+const vobServerAffinity = new Map(); // vobKey -> host
+const serverMissingVobCache = new Map(); // `${host}:${vobKey}` -> timestamp (TTL: 10 mins)
+const MISSING_VOB_TTL_MS = 10 * 60 * 1000;
+
+export function extractVobKey(filePath) {
+  if (!filePath) return '';
+  const clean = filePath.replace(/(_|@@)\/.*$/, '');
+  const match = clean.match(/\/vobs\/([^\/]+(?:\/[^\/]+)?)/);
+  if (match) return match[1];
+  return '';
+}
+
+export function getVobTag(filePath) {
+  if (!filePath) return '/vobs';
+  const clean = filePath.replace(/(_|@@)\/.*$/, '');
+  const parts = clean.split('/').filter(Boolean);
+  const vobIdx = parts.indexOf('vobs');
+  if (vobIdx !== -1 && parts[vobIdx + 1]) {
+    return `/vobs/${parts[vobIdx + 1]}`;
+  }
+  return '/vobs';
+}
+
+function markVobServerAffinity(vobKey, host) {
+  if (vobKey && host) {
+    vobServerAffinity.set(vobKey, host);
+    serverMissingVobCache.delete(`${host}:${vobKey}`);
+  }
+}
+
+function markServerMissingVob(host, vobKey) {
+  if (vobKey && host) {
+    serverMissingVobCache.set(`${host}:${vobKey}`, Date.now());
+  }
+}
+
+/**
  * Smart decode buffer with EUC-KR / UTF-8 fallback
  */
 function smartDecode(buf) {
@@ -49,40 +89,47 @@ function smartDecode(buf) {
 /**
  * Execute command over SSH and capture raw Binary Buffer
  */
-/**
- * @param {object} [onStream] - optional out-param; if provided, its `.stream` is set
- *   to the live ssh2 stream once opened, so a caller racing several of these can
- *   close the losers' channels instead of leaving them running server-side.
- */
-function execSSHBuffer(conn, command, timeoutMs = 8000, onStream) {
+export function execSSHBuffer(conn, command, timeoutMs = 6000, streamRef) {
   return new Promise((resolve, reject) => {
-    let timer = setTimeout(() => {
-      reject(new Error(`명령어 실행 시간 초과 (${timeoutMs / 1000}초)`));
+    let timer;
+    let stream;
+    let isSettled = false;
+
+    function cleanup() {
+      if (timer) clearTimeout(timer);
+      if (stream) {
+        stream.removeAllListeners();
+        if (!stream.destroyed) {
+          try { stream.close(); } catch (e) {}
+        }
+      }
+    }
+
+    function settle(fn) {
+      if (!isSettled) {
+        isSettled = true;
+        cleanup();
+        fn();
+      }
+    }
+
+    timer = setTimeout(() => {
+      settle(() => reject(new Error(`명령어 실행 시간 초과 (${timeoutMs / 1000}초)`)));
     }, timeoutMs);
 
-    conn.exec(command, (err, stream) => {
-      if (err) {
-        clearTimeout(timer);
-        return reject(err);
-      }
-
-      if (onStream) onStream.stream = stream;
+    conn.exec(command, (err, s) => {
+      if (err) return settle(() => reject(err));
+      stream = s;
+      if (streamRef) streamRef.stream = s;
 
       const chunks = [];
-      let stderr = '';
-
-      stream
-        .on('close', (code) => {
-          clearTimeout(timer);
-          const buf = Buffer.concat(chunks);
-          resolve({ code, buffer: buf, stderr });
-        })
-        .on('data', (data) => {
-          chunks.push(typeof data === 'string' ? Buffer.from(data, 'binary') : data);
-        })
-        .stderr.on('data', (data) => {
-          stderr += data.toString('utf-8');
-        });
+      stream.on('data', (data) => chunks.push(data));
+      stream.stderr.on('data', () => {}); // Ignore stderr
+      stream.on('close', () => {
+        const buffer = Buffer.concat(chunks);
+        settle(() => resolve({ buffer }));
+      });
+      stream.on('error', (e) => settle(() => reject(e)));
     });
   });
 }
@@ -99,7 +146,7 @@ function createSSHClient(config) {
     const host = sanitizeHost(config.host);
     const port = parseInt(config.port, 10) || 22;
     const username = (config.username || 'dev').trim();
-    const TCP_TIMEOUT = 8000;
+    const TCP_TIMEOUT = 5000;
 
     function settle(fn) {
       if (!isSettled) {
@@ -120,9 +167,6 @@ function createSSHClient(config) {
     }
 
     // ── Pre-create a raw TCP socket with explicit connect timeout ──
-    // ssh2's readyTimeout only covers the SSH handshake phase.
-    // On Windows, a TCP SYN to an unreachable host can hang 20-30s
-    // without this socket-level guard.
     const socket = new net.Socket();
     let tcpTimer = setTimeout(() => {
       socket.destroy();
@@ -144,7 +188,6 @@ function createSSHClient(config) {
     });
 
     socket.connect(port, host, () => {
-      // TCP connected — clear TCP timer, let ssh2 take over
       clearTimeout(tcpTimer);
       tcpTimer = null;
     });
@@ -171,7 +214,7 @@ function createSSHClient(config) {
         password: config.password,
         privateKey: privateKey,
         tryKeyboard: true,
-        readyTimeout: 8000, // SSH handshake timeout (after TCP is up)
+        readyTimeout: 6000, // SSH handshake timeout (after TCP is up)
         keepaliveInterval: 5000,
         keepaliveCountMax: 2,
         algorithms: {
@@ -222,14 +265,13 @@ function createSSHClient(config) {
 
 /**
  * Test SSH Connection (Lightweight, pure connection verification)
- * Hard 12s outer deadline covers any edge-case where ssh2 internals hang
  */
 export async function testSSHConnection(config) {
   if (!config.host || !config.username) {
     throw new Error('서버 IP와 계정(Username)을 입력해주세요.');
   }
 
-  const HARD_TIMEOUT_MS = 12000;
+  const HARD_TIMEOUT_MS = 10000;
   let hardTimer;
   const deadline = new Promise((_, reject) => {
     hardTimer = setTimeout(() =>
@@ -258,46 +300,33 @@ export async function testSSHConnection(config) {
 
 /**
  * Helper to fetch a single version of a file directly as raw Buffer
- * All candidate views are tried in PARALLEL - first success wins
+ * Phase 1: Fast direct path check (/view/v/... and /vobs/...)
+ * Phase 2: Fallback cleartool setview -exec on primary view only
  */
 async function fetchOneVersion(conn, vobSubPath, versionSuffix, candidateViews) {
   const filePath = `${vobSubPath}${versionSuffix}`;
   const envPrefix = 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:/usr/local/bin:/usr/bin:/bin:$PATH;';
 
-  // Build all candidate commands (view paths + setview + direct)
-  const attempts = [];
-
-  // 1. /view/<tag>/... paths for each candidate view (fastest)
+  // Phase 1: Fast direct /view paths and direct /vobs path (instant)
+  const directAttempts = [];
   for (const v of candidateViews) {
     if (v) {
-      const cmd = `/bin/sh -c '${envPrefix} cat "/view/${v}${filePath}" 2>/dev/null || cleartool cat "/view/${v}${filePath}" 2>/dev/null || /usr/atria/bin/cleartool cat "/view/${v}${filePath}" 2>/dev/null'`;
-      attempts.push({ cmd, view: v });
+      directAttempts.push({
+        cmd: `/bin/sh -c '${envPrefix} cat "/view/${v}${filePath}" 2>/dev/null || cleartool cat "/view/${v}${filePath}" 2>/dev/null'`,
+        view: v
+      });
     }
   }
-
-  // 2. cleartool setview -exec for each candidate view
-  for (const v of candidateViews) {
-    if (v) {
-      const cmd = `/bin/sh -c '${envPrefix} cleartool setview -exec "cat \\"${filePath}\\"" "${v}" 2>/dev/null || /usr/atria/bin/cleartool setview -exec "cat \\"${filePath}\\"" "${v}" 2>/dev/null'`;
-      attempts.push({ cmd, view: v });
-    }
-  }
-
-  // 3. Direct /vobs path (no view)
-  attempts.push({
-    cmd: `/bin/sh -c '${envPrefix} cat "${filePath}" 2>/dev/null || cleartool cat "${filePath}" 2>/dev/null || /usr/atria/bin/cleartool cat "${filePath}" 2>/dev/null'`,
+  directAttempts.push({
+    cmd: `/bin/sh -c '${envPrefix} cat "${filePath}" 2>/dev/null || cleartool cat "${filePath}" 2>/dev/null'`,
     view: candidateViews[0] || 'default'
   });
 
-  // Run ALL attempts in PARALLEL — first non-empty buffer wins.
-  // Track each attempt's live stream so the losers' channels can be closed
-  // as soon as we have a winner, instead of left running server-side for
-  // up to their own 6s timeout.
-  const streamRefs = attempts.map(() => ({ stream: undefined }));
+  const streamRefs1 = directAttempts.map(() => ({ stream: undefined }));
   try {
     const result = await Promise.any(
-      attempts.map(({ cmd, view }, i) =>
-        execSSHBuffer(conn, cmd, 6000, streamRefs[i]).then((res) => {
+      directAttempts.map(({ cmd, view }, i) =>
+        execSSHBuffer(conn, cmd, 3500, streamRefs1[i]).then((res) => {
           if (res.buffer && res.buffer.length > 0) {
             console.log(`[SSH Diff] Read ${res.buffer.length} bytes via view=${view} path=${filePath}`);
             return { buffer: res.buffer, view };
@@ -308,10 +337,40 @@ async function fetchOneVersion(conn, vobSubPath, versionSuffix, candidateViews) 
     );
     return result;
   } catch {
-    // All attempts returned empty or timed out
+    // Phase 1 failed to find file, try fallback Phase 2
+  } finally {
+    for (const ref of streamRefs1) {
+      if (ref.stream && !ref.stream.destroyed) {
+        try { ref.stream.close(); } catch (e) {}
+      }
+    }
+  }
+
+  // Phase 2: cleartool setview -exec only on the top 2 candidate views
+  const fallbackViews = candidateViews.slice(0, 2);
+  const fallbackAttempts = fallbackViews.map(v => ({
+    cmd: `/bin/sh -c '${envPrefix} cleartool setview -exec "cat \\"${filePath}\\"" "${v}" 2>/dev/null'`,
+    view: v
+  }));
+
+  const streamRefs2 = fallbackAttempts.map(() => ({ stream: undefined }));
+  try {
+    const result = await Promise.any(
+      fallbackAttempts.map(({ cmd, view }, i) =>
+        execSSHBuffer(conn, cmd, 4000, streamRefs2[i]).then((res) => {
+          if (res.buffer && res.buffer.length > 0) {
+            console.log(`[SSH Diff] Read ${res.buffer.length} bytes via setview=${view} path=${filePath}`);
+            return { buffer: res.buffer, view };
+          }
+          throw new Error('empty');
+        })
+      )
+    );
+    return result;
+  } catch {
     return { buffer: Buffer.alloc(0), view: candidateViews[0] || 'default' };
   } finally {
-    for (const ref of streamRefs) {
+    for (const ref of streamRefs2) {
       if (ref.stream && !ref.stream.destroyed) {
         try { ref.stream.close(); } catch (e) {}
       }
@@ -319,10 +378,9 @@ async function fetchOneVersion(conn, vobSubPath, versionSuffix, candidateViews) 
   }
 }
 
-
 /**
  * Fetch Line-by-Line Diff for ClearCase Element with Multi-Server Auto-Fallback
- * (Parallel Dual-Fetch + LRU Cache + Automatic Fallback Across Registered ClearCase Servers)
+ * (VOB Affinity Learning + Fast Shell Pre-Flight Probe + Dynamic Fast Failover Across Servers)
  */
 export async function fetchFileDiffSSH(configOrServers, filePath, checkinLog = '') {
   let servers = [];
@@ -341,6 +399,26 @@ export async function fetchFileDiffSSH(configOrServers, filePath, checkinLog = '
     throw new Error('설정된 유효한 ClearCase SSH 서버가 없습니다.');
   }
 
+  // Extract VOB key and reorder servers so affinity server is probed first
+  const vobKey = extractVobKey(filePath);
+  if (vobKey && servers.length > 1) {
+    const preferredHost = vobServerAffinity.get(vobKey);
+    const now = Date.now();
+    servers.sort((a, b) => {
+      // 1. Preferred affinity host comes first
+      if (preferredHost) {
+        if (a.host === preferredHost) return -1;
+        if (b.host === preferredHost) return 1;
+      }
+      // 2. Servers known NOT to have this VOB are pushed to the end
+      const aMissing = serverMissingVobCache.has(`${a.host}:${vobKey}`) && (now - serverMissingVobCache.get(`${a.host}:${vobKey}`) < MISSING_VOB_TTL_MS);
+      const bMissing = serverMissingVobCache.has(`${b.host}:${vobKey}`) && (now - serverMissingVobCache.get(`${b.host}:${vobKey}`) < MISSING_VOB_TTL_MS);
+      if (aMissing && !bMissing) return 1;
+      if (!aMissing && bMissing) return -1;
+      return 0;
+    });
+  }
+
   const attemptedErrors = [];
 
   for (let i = 0; i < servers.length; i++) {
@@ -349,8 +427,12 @@ export async function fetchFileDiffSSH(configOrServers, filePath, checkinLog = '
 
     try {
       console.log(`[ClearCase Multi-Server] (${i + 1}/${servers.length}) Searching file ${filePath} on ${serverLabel}...`);
-      const result = await _fetchFileDiffFromSingleServer(server, filePath, checkinLog);
+      const isSingle = servers.length === 1;
+      const result = await _fetchFileDiffFromSingleServer(server, filePath, checkinLog, isSingle);
       if (result && result.ok) {
+        if (vobKey) {
+          markVobServerAffinity(vobKey, server.host);
+        }
         if (i > 0) {
           console.log(`[ClearCase Multi-Server] 🎉 Successfully found file ${filePath} on fallback server ${serverLabel}!`);
         }
@@ -365,6 +447,9 @@ export async function fetchFileDiffSSH(configOrServers, filePath, checkinLog = '
     } catch (err) {
       console.warn(`[ClearCase Multi-Server] Server ${serverLabel} attempt failed: ${err.message}`);
       attemptedErrors.push(`${serverLabel}: ${err.message}`);
+      if (vobKey) {
+        markServerMissingVob(server.host, vobKey);
+      }
     }
   }
 
@@ -375,13 +460,13 @@ export async function fetchFileDiffSSH(configOrServers, filePath, checkinLog = '
   );
 }
 
-async function _fetchFileDiffFromSingleServer(config, filePath, checkinLog = '') {
+async function _fetchFileDiffFromSingleServer(config, filePath, checkinLog = '', isSingleServer = false) {
   if (!config.host || !config.username) {
     throw new Error(`ClearCase SSH 서버 설정(IP/계정)이 필요합니다: ${config.host || 'IP미설정'}`);
   }
 
-  // Hard 25s overall deadline per server — server never hangs indefinitely
-  const HARD_TIMEOUT_MS = 25000;
+  // Dynamic deadline: single server gets 15s; multi-server probe gets 7s for fast fallback
+  const HARD_TIMEOUT_MS = isSingleServer ? 15000 : 7000;
   let hardTimer;
   const hardDeadline = new Promise((_, reject) => {
     hardTimer = setTimeout(() => {
@@ -485,10 +570,60 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '') {
     const t0 = Date.now();
     conn = await createSSHClient(config);
 
-    console.log(`[SSH Diff] Fetching ${vobSubPath} (${prevSuffix} <-> ${currSuffix}) for views:`, uniqueViews);
+    // Fast Pre-Flight Check (< 1.5s): Verify if file, directory or VOB is present on this server
+    const vobTag = getVobTag(vobSubPath);
+    const parentDir = path.posix.dirname(vobSubPath);
+    const probeViews = uniqueViews.join(' ');
+    const probeCmd = `/bin/sh -c '
+for v in ${probeViews}; do
+  if [ -e "/view/$v${vobSubPath}" ] || [ -f "/view/$v${vobSubPath}" ]; then
+    echo "FOUND_VIEW:$v"
+    exit 0
+  fi
+  if [ -d "/view/$v${parentDir}" ]; then
+    echo "FOUND_VIEW_DIR:$v"
+    exit 0
+  fi
+done
+if [ -e "${vobSubPath}" ] || [ -f "${vobSubPath}" ]; then
+  echo "FOUND_DIRECT"
+  exit 0
+fi
+if [ -d "${parentDir}" ] || [ -d "${vobTag}" ]; then
+  echo "VOB_DIR_EXISTS"
+  exit 0
+fi
+export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH
+if cleartool lsvob "${vobTag}" 2>/dev/null | grep -q "${vobTag.replace('/vobs/', '')}"; then
+  echo "LSVOB_EXISTS"
+  exit 0
+fi
+echo "NOT_FOUND_ON_SERVER"
+exit 2
+'`;
+
+    let probeOutput = '';
+    try {
+      const { buffer } = await execSSHBuffer(conn, probeCmd, 2200);
+      probeOutput = buffer.toString('utf8').trim();
+    } catch (e) {}
+
+    if (probeOutput.includes('NOT_FOUND_ON_SERVER')) {
+      throw new Error(`VOB(${vobTag}) 또는 파일이 서버(${config.host})에 존재하지 않습니다.`);
+    }
+
+    // Prioritize discovered view if found
+    let effectiveViews = [...uniqueViews];
+    const matchFoundView = probeOutput.match(/FOUND_VIEW(?:_DIR)?:([a-zA-Z0-9_\-\.]+)/);
+    if (matchFoundView && matchFoundView[1]) {
+      const preferred = matchFoundView[1];
+      effectiveViews = [preferred, ...uniqueViews.filter(v => v !== preferred)];
+    }
+
+    console.log(`[SSH Diff] Fetching ${vobSubPath} (${prevSuffix} <-> ${currSuffix}) for views:`, effectiveViews);
 
     // 1. Ensure target view is started in /bin/sh (parallel start)
-    await execSSHBuffer(conn, `/bin/sh -c 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH; cleartool startview "${uniqueViews[0]}" 2>/dev/null || true'`, 3000);
+    await execSSHBuffer(conn, `/bin/sh -c 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH; cleartool startview "${effectiveViews[0]}" 2>/dev/null || true'`, 2500);
 
     // 2. Fetch current and previous versions in parallel.
     // Each fetchOneVersion() races many exec() channels at once (per-view x per-strategy),
@@ -500,15 +635,15 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '') {
       oldConn = await createSSHClient(config);
     }
     const [newRes, oldRes] = await Promise.all([
-      fetchOneVersion(conn, vobSubPath, currSuffix, uniqueViews),
+      fetchOneVersion(conn, vobSubPath, currSuffix, effectiveViews),
       needOld
-        ? fetchOneVersion(oldConn, vobSubPath, prevSuffix, uniqueViews)
-        : Promise.resolve({ buffer: Buffer.alloc(0), view: uniqueViews[0] })
+        ? fetchOneVersion(oldConn, vobSubPath, prevSuffix, effectiveViews)
+        : Promise.resolve({ buffer: Buffer.alloc(0), view: effectiveViews[0] })
     ]);
 
     const newBuf = newRes.buffer;
     const oldBuf = oldRes.buffer;
-    const foundView = newRes.view || uniqueViews[0] || 'hyungduk_view';
+    const foundView = newRes.view || effectiveViews[0] || 'hyungduk_view';
 
     // 3. Base64 encode raw bytes for frontend
     const oldBase64 = oldBuf.toString('base64');
