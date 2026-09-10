@@ -155,13 +155,27 @@ export function createRawSSHClient(config) {
 class SSHConnectionPool {
   constructor() {
     this.pools = new Map(); // hostKey -> Array of { id, conn, inUse, lastUsed, config }
-    this.queues = new Map(); // hostKey -> Array of { resolve, reject, priority, timer }
+    this.queues = new Map(); // hostKey -> Array of { resolve, reject, priority, timer, config }
+    this.connectingCounts = new Map(); // hostKey -> number of in-flight connection handshakes
     this.maxPerHost = MAX_CONNECTIONS_PER_HOST;
     this.vipActiveUntil = 0; // Timestamp when VIP priority burst is active
+    this.lastUserActivity = 0; // Timestamp when user last interacted with UI
 
-    // Periodic idle reaper
+    // Periodic idle reaper (closes connections unused for > 60s)
     this.reaperInterval = setInterval(() => this._reapIdle(), 15000);
     if (this.reaperInterval.unref) this.reaperInterval.unref();
+  }
+
+  notifyUserActive() {
+    this.lastUserActivity = Date.now();
+  }
+
+  isUserActive() {
+    return (Date.now() - this.lastUserActivity < 1500) || (Date.now() < this.vipActiveUntil);
+  }
+
+  isVIPActive() {
+    return Date.now() < this.vipActiveUntil;
   }
 
   /**
@@ -178,7 +192,8 @@ class SSHConnectionPool {
     const timeout = options.timeout || 18000;
 
     if (priority === 'vip') {
-      this.vipActiveUntil = Date.now() + 3000; // Flag VIP activity to throttle background workers
+      this.vipActiveUntil = Date.now() + 3500;
+      this.notifyUserActive();
     }
 
     if (!this.pools.has(hostKey)) {
@@ -186,6 +201,9 @@ class SSHConnectionPool {
     }
     if (!this.queues.has(hostKey)) {
       this.queues.set(hostKey, []);
+    }
+    if (!this.connectingCounts.has(hostKey)) {
+      this.connectingCounts.set(hostKey, 0);
     }
 
     const hostPool = this.pools.get(hostKey);
@@ -198,23 +216,31 @@ class SSHConnectionPool {
       return this._makeHandle(idleHandle, hostKey);
     }
 
-    // 2. If below max connections per host, spawn a new connection immediately
-    if (hostPool.length < this.maxPerHost) {
-      const conn = await createRawSSHClient(config);
-      const handleObj = {
-        id: `${hostKey}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        conn,
-        inUse: true,
-        lastUsed: Date.now(),
-        config
-      };
+    // 2. Check if (connected + in-flight connecting) < maxPerHost
+    const inFlight = this.connectingCounts.get(hostKey) || 0;
+    if (hostPool.length + inFlight < this.maxPerHost) {
+      this.connectingCounts.set(hostKey, inFlight + 1);
+      try {
+        const conn = await createRawSSHClient(config);
+        const handleObj = {
+          id: `${hostKey}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          conn,
+          inUse: true,
+          lastUsed: Date.now(),
+          config
+        };
 
-      // Clean removal if connection closes or errors
-      conn.once('close', () => this._removeHandle(hostKey, handleObj));
-      conn.once('error', () => this._removeHandle(hostKey, handleObj));
+        // Clean removal if connection closes or errors
+        conn.once('close', () => this._removeHandle(hostKey, handleObj));
+        conn.once('error', () => this._removeHandle(hostKey, handleObj));
 
-      hostPool.push(handleObj);
-      return this._makeHandle(handleObj, hostKey);
+        hostPool.push(handleObj);
+        return this._makeHandle(handleObj, hostKey);
+      } finally {
+        const cur = this.connectingCounts.get(hostKey) || 1;
+        this.connectingCounts.set(hostKey, Math.max(0, cur - 1));
+        this._drainQueue(hostKey, config);
+      }
     }
 
     // 3. Queue request if capacity reached
@@ -237,7 +263,8 @@ class SSHConnectionPool {
           reject(err);
         },
         priority,
-        timer
+        timer,
+        config
       };
 
       if (priority === 'vip') {
@@ -269,17 +296,61 @@ class SSHConnectionPool {
   _release(hostKey, handleObj) {
     handleObj.inUse = false;
     handleObj.lastUsed = Date.now();
+    this._drainQueue(hostKey, handleObj.config);
+  }
 
-    // Check if there are waiters
+  _drainQueue(hostKey, fallbackConfig) {
     const queue = this.queues.get(hostKey);
-    if (queue && queue.length > 0) {
-      // Prioritize VIP waiters if any
+    if (!queue || queue.length === 0) return;
+
+    const hostPool = this.pools.get(hostKey) || [];
+
+    // 1. Check if there's an idle connection ready
+    const idleHandle = hostPool.find(h => !h.inUse && h.conn && !h.conn._sock?.destroyed);
+    if (idleHandle) {
       const vipIdx = queue.findIndex(q => q.priority === 'vip');
       const next = vipIdx !== -1 ? queue.splice(vipIdx, 1)[0] : queue.shift();
       if (next) {
-        handleObj.inUse = true;
-        next.resolve(handleObj);
+        idleHandle.inUse = true;
+        idleHandle.lastUsed = Date.now();
+        next.resolve(idleHandle);
+        return;
       }
+    }
+
+    // 2. If under limit and queue has waiters, spawn a new connection for the next waiter
+    const inFlight = this.connectingCounts.get(hostKey) || 0;
+    if (hostPool.length + inFlight < this.maxPerHost && queue.length > 0) {
+      const vipIdx = queue.findIndex(q => q.priority === 'vip');
+      const next = vipIdx !== -1 ? queue.splice(vipIdx, 1)[0] : queue.shift();
+      if (!next) return;
+
+      const targetConfig = next.config || fallbackConfig;
+      if (!targetConfig) return;
+
+      this.connectingCounts.set(hostKey, inFlight + 1);
+      createRawSSHClient(targetConfig)
+        .then(conn => {
+          const handleObj = {
+            id: `${hostKey}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            conn,
+            inUse: true,
+            lastUsed: Date.now(),
+            config: targetConfig
+          };
+          conn.once('close', () => this._removeHandle(hostKey, handleObj));
+          conn.once('error', () => this._removeHandle(hostKey, handleObj));
+          hostPool.push(handleObj);
+          next.resolve(handleObj);
+        })
+        .catch(err => {
+          next.reject(err);
+        })
+        .finally(() => {
+          const cur = this.connectingCounts.get(hostKey) || 1;
+          this.connectingCounts.set(hostKey, Math.max(0, cur - 1));
+          this._drainQueue(hostKey, targetConfig);
+        });
     }
   }
 
@@ -297,6 +368,7 @@ class SSHConnectionPool {
         hostPool.splice(idx, 1);
       }
     }
+    this._drainQueue(hostKey, handleObj.config);
   }
 
   _reapIdle() {
@@ -313,10 +385,6 @@ class SSHConnectionPool {
     }
   }
 
-  isVIPActive() {
-    return Date.now() < this.vipActiveUntil;
-  }
-
   destroyAll() {
     if (this.reaperInterval) clearInterval(this.reaperInterval);
     for (const [_, hostPool] of this.pools.entries()) {
@@ -327,6 +395,7 @@ class SSHConnectionPool {
     }
     this.pools.clear();
     this.queues.clear();
+    this.connectingCounts.clear();
   }
 }
 

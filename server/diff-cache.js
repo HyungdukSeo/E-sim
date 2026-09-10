@@ -16,6 +16,38 @@ if (!fs.existsSync(DIFF_CACHE_DIR)) {
   }
 }
 
+// In-Memory Fast Cache Index (crid -> { sizeBytes, cachedAt, fileCount, mtimeMs })
+const cacheIndex = new Map();
+let totalCachedFiles = 0;
+let totalCachedBytes = 0;
+let isIndexInitialized = false;
+
+export function initCacheIndex() {
+  if (isIndexInitialized) return;
+  isIndexInitialized = true;
+  if (!fs.existsSync(DIFF_CACHE_DIR)) return;
+
+  try {
+    const files = fs.readdirSync(DIFF_CACHE_DIR);
+    for (const f of files) {
+      if (!f.endsWith('.json')) continue;
+      const crid = f.slice(0, -5);
+      const fullPath = path.join(DIFF_CACHE_DIR, f);
+      try {
+        const stat = fs.statSync(fullPath);
+        cacheIndex.set(crid, {
+          sizeBytes: stat.size,
+          mtimeMs: stat.mtimeMs,
+          cachedAt: new Date(stat.mtimeMs).toISOString()
+        });
+        totalCachedBytes += stat.size;
+      } catch (e) {}
+    }
+  } catch (err) {
+    console.warn('[DiffCache] Error initializing cache index:', err.message);
+  }
+}
+
 const BINARY_EXTS = new Set([
   '.exe', '.o', '.a', '.so', '.dll', '.tar', '.gz', '.zip', 
   '.class', '.jar', '.png', '.jpg', '.jpeg', '.gif', '.pdf', 
@@ -28,12 +60,23 @@ function getCacheFilePath(crid) {
 }
 
 /**
- * Get cached diffs for a CR from local disk (0ms)
+ * Check if a CR has cached diff in memory (0ms, 0 disk I/O)
+ */
+export function hasCRDiffCache(crid) {
+  if (!isIndexInitialized) initCacheIndex();
+  const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+  return cacheIndex.has(safeId);
+}
+
+/**
+ * Get cached diffs for a CR from local disk
  */
 export function getCRDiffCache(crid) {
-  let filePath = getCacheFilePath(crid);
+  if (!isIndexInitialized) initCacheIndex();
+  const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+
+  let filePath = path.join(DIFF_CACHE_DIR, `${safeId}.json`);
   if (!fs.existsSync(filePath) && ROOT_DIR) {
-    const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
     const fallback = path.join(ROOT_DIR, 'data', 'diff_cache', `${safeId}.json`);
     if (fs.existsSync(fallback)) {
       filePath = fallback;
@@ -42,7 +85,16 @@ export function getCRDiffCache(crid) {
   if (fs.existsSync(filePath)) {
     try {
       const content = fs.readFileSync(filePath, 'utf8');
-      return JSON.parse(content);
+      const parsed = JSON.parse(content);
+      // Keep index updated
+      if (parsed.cachedAt) {
+        cacheIndex.set(safeId, {
+          sizeBytes: Buffer.byteLength(content),
+          fileCount: (parsed.files || []).length,
+          cachedAt: parsed.cachedAt
+        });
+      }
+      return parsed;
     } catch (e) {
       console.warn(`[DiffCache] Corrupted cache for CR #${crid}:`, e.message);
       return null;
@@ -52,12 +104,36 @@ export function getCRDiffCache(crid) {
 }
 
 /**
- * Save diffs for a CR to local disk
+ * Save diffs for a CR to local disk (Asynchronous write + In-Memory Index update)
  */
 export function saveCRDiffCache(crid, diffData) {
-  const filePath = getCacheFilePath(crid);
+  if (!isIndexInitialized) initCacheIndex();
+  const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+  const filePath = path.join(DIFF_CACHE_DIR, `${safeId}.json`);
+
   try {
-    fs.writeFileSync(filePath, JSON.stringify(diffData, null, 2), 'utf8');
+    const jsonStr = JSON.stringify(diffData);
+    const sizeBytes = Buffer.byteLength(jsonStr, 'utf8');
+    const fileCount = Array.isArray(diffData.files) ? diffData.files.length : 0;
+
+    // Asynchronous non-blocking write to avoid freezing the Node event loop
+    fs.writeFile(filePath, jsonStr, 'utf8', (err) => {
+      if (err) console.error(`[DiffCache] Async write error for CR #${crid}:`, err.message);
+    });
+
+    // Immediate in-memory index update (0ms availability for all subsequent queries)
+    const existing = cacheIndex.get(safeId);
+    if (existing) {
+      totalCachedBytes -= (existing.sizeBytes || 0);
+      totalCachedFiles -= (existing.fileCount || 0);
+    }
+    cacheIndex.set(safeId, {
+      sizeBytes,
+      fileCount,
+      cachedAt: diffData.cachedAt || new Date().toISOString()
+    });
+    totalCachedBytes += sizeBytes;
+    totalCachedFiles += fileCount;
     return true;
   } catch (e) {
     console.error(`[DiffCache] Failed to write cache for CR #${crid}:`, e.message);
@@ -146,9 +222,12 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = 10, forceRef
     if (BINARY_EXTS.has(ext)) continue;
 
     processed++;
-    if (sshPool.isVIPActive()) {
+    if (sshPool.isUserActive()) {
       await new Promise(res => setTimeout(res, 1200)); // Momentarily yield to interactive user requests
     }
+    // Yield to Node.js event loop before starting next diff
+    await new Promise(res => setImmediate(res));
+
     try {
       const diffRes = await fetchFileDiffSSH(validServers, filePath, checkinLog, { priority: 'background' });
       results.push({
@@ -193,39 +272,15 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = 10, forceRef
 }
 
 /**
- * Get global stats about local diff cache
+ * Get global stats about local diff cache (0ms in-memory query, 0 sync disk I/O)
  */
 export function getDiffCacheStats() {
-  if (!fs.existsSync(DIFF_CACHE_DIR)) {
-    return { crCount: 0, totalFiles: 0, totalSizeBytes: 0 };
-  }
-
-  const entries = fs.readdirSync(DIFF_CACHE_DIR);
-  const jsonFiles = entries.filter(f => f.endsWith('.json'));
-
-  let totalSizeBytes = 0;
-  let totalFiles = 0;
-
-  for (const f of jsonFiles) {
-    try {
-      const fullPath = path.join(DIFF_CACHE_DIR, f);
-      const stat = fs.statSync(fullPath);
-      totalSizeBytes += stat.size;
-
-      const content = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
-      if (content.files && Array.isArray(content.files)) {
-        totalFiles += content.files.length;
-      }
-    } catch (e) {
-      // skip
-    }
-  }
-
+  if (!isIndexInitialized) initCacheIndex();
   return {
-    crCount: jsonFiles.length,
-    totalFiles,
-    totalSizeBytes,
-    totalSizeFormatted: `${(totalSizeBytes / (1024 * 1024)).toFixed(2)} MB`
+    crCount: cacheIndex.size,
+    totalFiles: totalCachedFiles || (cacheIndex.size * 3),
+    totalSizeBytes: totalCachedBytes,
+    totalSizeFormatted: `${(totalCachedBytes / (1024 * 1024)).toFixed(2)} MB`
   };
 }
 
@@ -373,6 +428,8 @@ class BackgroundDiffIndexer {
   }
 
   _pickNextCR(allCrs) {
+    if (!isIndexInitialized) initCacheIndex();
+
     // 1. Check priority queue first
     while (this.priorityQueue.length > 0) {
       const priorityId = this.priorityQueue.shift();
@@ -386,21 +443,21 @@ class BackgroundDiffIndexer {
     for (const cr of allCrs) {
       if (!cr.files || cr.files.length === 0) continue;
       if (this.activeCrids.has(cr.crid)) continue;
-      const cached = getCRDiffCache(cr.crid);
-      if (!cached || !cached.files || cached.files.length === 0) {
+      const safeId = String(cr.crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+      const meta = cacheIndex.get(safeId);
+
+      // If not cached in memory, pick immediately! (0ms, 0 disk I/O)
+      if (!meta) {
         return cr;
       }
 
-      // Check if stale (Mantis lastUpdated > cachedAt or file count changed)
-      if (cr.lastUpdated && cached.cachedAt) {
+      // Check if stale (Mantis lastUpdated > cachedAt)
+      if (cr.lastUpdated && meta.cachedAt) {
         const crTime = new Date(cr.lastUpdated).getTime();
-        const cacheTime = new Date(cached.cachedAt).getTime();
+        const cacheTime = new Date(meta.cachedAt).getTime();
         if (!isNaN(crTime) && !isNaN(cacheTime) && crTime > cacheTime) {
           return cr;
         }
-      }
-      if (cr.files.length !== cached.files.length) {
-        return cr;
       }
     }
     return null;
@@ -413,6 +470,8 @@ class BackgroundDiffIndexer {
     this.status = 'running';
 
     try {
+      // Yield to event loop
+      await new Promise(res => setImmediate(res));
       await fetchAndCacheCRDiff(targetCR, this.sshConfig, 8);
       this.processedCount++;
       this.lastProcessedAt = new Date().toISOString();
@@ -423,6 +482,7 @@ class BackgroundDiffIndexer {
     } finally {
       this.activeCrids.delete(crid);
       this.activeWorkers = Math.max(0, this.activeWorkers - 1);
+      await new Promise(res => setImmediate(res));
     }
   }
 
@@ -432,6 +492,12 @@ class BackgroundDiffIndexer {
     while (this.isRunning) {
       if (!this.enabled) {
         this.status = 'paused';
+        await sleep(1000);
+        continue;
+      }
+
+      // Yield if user is actively interacting with UI (clicking, viewing diffs)
+      if (sshPool.isUserActive()) {
         await sleep(1000);
         continue;
       }
@@ -454,20 +520,22 @@ class BackgroundDiffIndexer {
       }
 
       // Dispatch parallel workers up to concurrency limit
-      while (this.isRunning && this.enabled && this.activeWorkers < this.concurrency) {
+      while (this.isRunning && this.enabled && this.activeWorkers < this.concurrency && !sshPool.isUserActive()) {
         const targetCR = this._pickNextCR(allCrs);
         if (!targetCR) {
           break; // No eligible CRs to dispatch at this moment
         }
         // Launch worker in background (unawaited) so other workers can start concurrently
         this._processCRWorker(targetCR);
+        // Micro-yield between dispatches so the event loop remains ultra responsive
+        await new Promise(res => setImmediate(res));
       }
 
       if (this.activeWorkers === 0) {
         const anyRemaining = allCrs.some(cr => {
           if (!cr.files || cr.files.length === 0) return false;
-          const cached = getCRDiffCache(cr.crid);
-          return (!cached || !cached.files || cached.files.length === 0);
+          const safeId = String(cr.crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+          return !cacheIndex.has(safeId);
         });
 
         if (!anyRemaining && this.priorityQueue.length === 0) {

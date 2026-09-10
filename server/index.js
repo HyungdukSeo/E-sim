@@ -38,6 +38,14 @@ app.use(compression());
 app.use(cors());
 app.use(express.json({ limit: '100mb' }));
 
+// Prioritize UI requests: flag user activity on any user API call (excluding background worker-status polling)
+app.use((req, res, next) => {
+  if (!req.path.includes('/worker-status')) {
+    sshPool.notifyUserActive();
+  }
+  next();
+});
+
 // 1. Status endpoint
 app.get('/api/status', (req, res) => {
   const { meta, crs } = getLocalDatabase();

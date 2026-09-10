@@ -5,6 +5,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import net from 'net';
+import { sshPool, createRawSSHClient } from './ssh-pool.js';
 
 /**
  * Clean and sanitize host string
@@ -143,8 +144,6 @@ export function execSSHBuffer(conn, command, timeoutMs = 6000, streamRef) {
     });
   });
 }
-
-import { sshPool, createRawSSHClient } from './ssh-pool.js';
 
 /**
  * Connect to SSH server with guaranteed timeout & legacy algorithm support
