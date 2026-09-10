@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { fetchFileDiffSSH } from './ssh.js';
-import { DATA_DIR } from './sync.js';
+import { DATA_DIR, ROOT_DIR } from './sync.js';
 
 export const DIFF_CACHE_DIR = path.join(DATA_DIR, 'diff_cache');
 
@@ -30,7 +30,14 @@ function getCacheFilePath(crid) {
  * Get cached diffs for a CR from local disk (0ms)
  */
 export function getCRDiffCache(crid) {
-  const filePath = getCacheFilePath(crid);
+  let filePath = getCacheFilePath(crid);
+  if (!fs.existsSync(filePath) && ROOT_DIR) {
+    const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+    const fallback = path.join(ROOT_DIR, 'data', 'diff_cache', `${safeId}.json`);
+    if (fs.existsSync(fallback)) {
+      filePath = fallback;
+    }
+  }
   if (fs.existsSync(filePath)) {
     try {
       const content = fs.readFileSync(filePath, 'utf8');

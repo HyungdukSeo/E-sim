@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import axios from 'axios';
+import { exec } from 'child_process';
 import { fileURLToPath } from 'url';
 import { syncMantisData, getLocalDatabase, importDatabase, fetchCRPageDetails, DB_FILE, META_FILE, DATA_DIR } from './sync.js';
 import { processAiQuery, analyzeSingleCRDiff, compareMultipleCRDiffs } from './ai.js';
@@ -43,8 +44,25 @@ app.get('/api/status', (req, res) => {
     ok: true,
     meta,
     totalCount: crs.length,
+    dataDir: DATA_DIR,
     dbFilePath: DB_FILE
   });
+});
+
+// 1.1 Open persistent data directory in Finder / File Explorer
+app.post('/api/open-data-dir', (req, res) => {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    const cmd = process.platform === 'darwin' 
+      ? `open "${DATA_DIR}"` 
+      : (process.platform === 'win32' ? `explorer "${DATA_DIR}"` : `xdg-open "${DATA_DIR}"`);
+    exec(cmd);
+    res.json({ ok: true, dataDir: DATA_DIR });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 // 1.5 Get Settings from local disk

@@ -7,7 +7,7 @@ import { parse } from 'csv-parse/sync';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const ROOT_DIR = path.resolve(__dirname, '..');
+export const ROOT_DIR = path.resolve(__dirname, '..');
 
 function getBundledDataDirectory() {
   const localData = path.join(ROOT_DIR, 'data');
@@ -54,14 +54,19 @@ export const DATA_DIR = getWritableDataDirectory();
 export const DB_FILE = path.join(DATA_DIR, 'cr_database.json');
 export const META_FILE = path.join(DATA_DIR, 'cr_meta.json');
 
-// Auto-seed bundled database if user data directory is empty
+// Auto-seed database only if user data directory is empty and external/bundled source exists
 function autoSeedBundledDatabase() {
   try {
+    if (fs.existsSync(DB_FILE)) {
+      console.log(`[DB] Preserved existing database: ${DB_FILE} (${fs.statSync(DB_FILE).size} bytes)`);
+      return;
+    }
+
     const bundledDb = path.join(BUNDLED_DATA_DIR, 'cr_database.json');
     const bundledMeta = path.join(BUNDLED_DATA_DIR, 'cr_meta.json');
 
-    if (!fs.existsSync(DB_FILE) && fs.existsSync(bundledDb)) {
-      console.log(`[DB] Seeding writable database from bundled data: ${bundledDb} -> ${DB_FILE}`);
+    if (fs.existsSync(bundledDb)) {
+      console.log(`[DB] Seeding writable database from local/bundled data: ${bundledDb} -> ${DB_FILE}`);
       fs.copyFileSync(bundledDb, DB_FILE);
     }
     if (!fs.existsSync(META_FILE) && fs.existsSync(bundledMeta)) {

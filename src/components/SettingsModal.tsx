@@ -25,10 +25,11 @@ import {
   Network,
   Server,
   Plus,
-  Trash2
+  Trash2,
+  FolderOpen
 } from 'lucide-react';
 import { AppSettings, SyncMeta } from '../types/cr';
-import { testSSH, saveSettingsToDisk, fetchDiffWorkerStatus, controlDiffWorker, DiffWorkerStatus } from '../services/api';
+import { testSSH, saveSettingsToDisk, fetchDiffWorkerStatus, controlDiffWorker, DiffWorkerStatus, openDataDirectory } from '../services/api';
 import axios from 'axios';
 
 interface SettingsModalProps {
@@ -313,6 +314,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }, 1200);
   };
 
+  const [dataFolderStatus, setDataFolderStatus] = useState<string | null>(null);
+
+  const handleOpenDataFolder = async () => {
+    try {
+      setDataFolderStatus('데이터 폴더 여는 중...');
+      const res = await openDataDirectory();
+      if (res.ok) {
+        setDataFolderStatus('📂 데이터 저장 폴더를 열었습니다.');
+      } else {
+        setDataFolderStatus('⚠️ 폴더 열기 요청 실패');
+      }
+      setTimeout(() => setDataFolderStatus(null), 4000);
+    } catch (e: any) {
+      setDataFolderStatus(`❌ 오류: ${e.message}`);
+      setTimeout(() => setDataFolderStatus(null), 4000);
+    }
+  };
+
   const handleExportDB = () => {
     window.location.href = '/api/database/export';
   };
@@ -374,7 +393,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
                 <HardDrive className="w-4 h-4 text-mantis-400" />
-                독립 단일 DB 파일 관리 (Portability & Update)
+                영구 데이터베이스 & Diff 캐시 보존 관리
               </h3>
               <span className="text-[11px] font-mono text-mantis-300">
                 {meta.totalCount.toLocaleString()}건 저장됨
@@ -382,11 +401,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
 
             <p className="text-slate-400 text-[11px] leading-relaxed">
-              모든 CR 데이터는 프로젝트 디렉토리 내 <code className="text-emerald-300 bg-slate-950 px-1.5 py-0.5 rounded font-mono">data/cr_database.json</code> 독립 단일 파일로 저장됩니다.
-              이 파일 하나만 다른 PC나 맥북/윈도우로 복사해도 즉시 동작하며, 새로운 CR이 추가되어도 증분 업데이트(Merge)를 지원합니다.
+              모든 Mantis CR 메타데이터 DB와 Diff 캐시는 시스템 표준 영구 데이터 디렉토리에 보존되어, <strong className="text-emerald-300 font-semibold">앱을 업데이트하거나 재설치(덮어쓰기)해도 데이터가 절대 삭제되지 않습니다.</strong>
+              새로운 CR이 추가되어도 실시간 증분 업데이트를 지원하며, 독립적인 외부 백업 및 복원이 가능합니다.
             </p>
 
             <div className="flex flex-wrap items-center gap-2.5 pt-1">
+              {/* Open Data Directory Button */}
+              <button
+                type="button"
+                onClick={handleOpenDataFolder}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-200 border border-emerald-700/60 font-semibold transition-all"
+                title="앱 재설치 시에도 보존되는 OS 영구 데이터 폴더를 엽니다"
+              >
+                <FolderOpen className="w-3.5 h-3.5 text-emerald-400" />
+                <span>데이터 저장 폴더 열기 (영구 보존)</span>
+              </button>
+
               {/* Export Button */}
               <button
                 type="button"
@@ -415,9 +445,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </button>
             </div>
 
-            {importStatus && (
+            {(dataFolderStatus || importStatus) && (
               <div className="p-2.5 rounded-xl bg-slate-950 text-mantis-300 border border-mantis-500/30 text-xs font-mono">
-                {importStatus}
+                {dataFolderStatus || importStatus}
               </div>
             )}
           </div>

@@ -129,9 +129,18 @@ export function saveBookmarks(bookmarks: Set<string>): void {
   }
 }
 
-export async function fetchStatus(): Promise<{ meta: SyncMeta; totalCount: number }> {
+export async function fetchStatus(): Promise<{ meta: SyncMeta; totalCount: number; dataDir?: string; dbFilePath?: string }> {
   const resp = await axios.get(`${API_BASE}/status`);
   return resp.data;
+}
+
+export async function openDataDirectory(): Promise<{ ok: boolean; dataDir?: string }> {
+  try {
+    const resp = await axios.post(`${API_BASE}/open-data-dir`);
+    return resp.data;
+  } catch (e: any) {
+    return { ok: false };
+  }
 }
 
 export async function fetchAllCRs(): Promise<{ meta: SyncMeta; crs: CRItem[] }> {
