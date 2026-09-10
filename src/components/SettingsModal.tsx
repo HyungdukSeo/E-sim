@@ -29,7 +29,7 @@ import {
   FolderOpen
 } from 'lucide-react';
 import { AppSettings, SyncMeta } from '../types/cr';
-import { testSSH, saveSettingsToDisk, fetchDiffWorkerStatus, controlDiffWorker, DiffWorkerStatus, openDataDirectory } from '../services/api';
+import { testSSH, saveSettingsToDisk, fetchSettingsFromDisk, fetchDiffWorkerStatus, controlDiffWorker, DiffWorkerStatus, openDataDirectory } from '../services/api';
 import axios from 'axios';
 
 interface SettingsModalProps {
@@ -153,6 +153,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      fetchSettingsFromDisk().then(diskSettings => {
+        if (diskSettings) {
+          setForm(prev => {
+            const merged = { ...prev, ...diskSettings };
+            if (!merged.sshServers || merged.sshServers.length === 0) {
+              if (diskSettings.ssh) {
+                merged.sshServers = [{ id: 'server-1', name: '1차 ClearCase 서버 (메인)', ...diskSettings.ssh }];
+              }
+            }
+            return merged;
+          });
+        }
+      });
       loadWorkerStatus();
       const timer = setInterval(loadWorkerStatus, 2500);
       return () => clearInterval(timer);

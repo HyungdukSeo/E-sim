@@ -65,16 +65,58 @@ app.post('/api/open-data-dir', (req, res) => {
   }
 });
 
+// Helper to discover and read settings from all known persistent disk locations
+function loadDiskSettings() {
+  const candidates = [
+    SETTINGS_FILE,
+    CLI_SETTINGS_FILE,
+    path.join(ROOT_DIR, 'data', 'settings.json')
+  ];
+  for (const file of candidates) {
+    if (fs.existsSync(file)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+        if (parsed && typeof parsed === 'object') {
+          return { settings: parsed, source: file };
+        }
+      } catch (e) {}
+    }
+  }
+  return null;
+}
+
+// Auto-seed persistent settings on server startup so server info is never lost
+function ensurePersistentSettings() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (!fs.existsSync(SETTINGS_FILE)) {
+      const found = loadDiskSettings();
+      if (found && found.source !== SETTINGS_FILE) {
+        console.log(`[Settings] Restoring saved server settings: ${found.source} -> ${SETTINGS_FILE}`);
+        fs.writeFileSync(SETTINGS_FILE, JSON.stringify(found.settings, null, 2), 'utf8');
+      }
+    }
+  } catch (e) {
+    console.warn('[Settings] ensurePersistentSettings error:', e.message);
+  }
+}
+
+ensurePersistentSettings();
+
 // 1.5 Get Settings from local disk
 app.get('/api/settings', (req, res) => {
   try {
-    if (fs.existsSync(SETTINGS_FILE)) {
-      const data = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
-      return res.json({ ok: true, settings: data });
-    }
-    if (fs.existsSync(CLI_SETTINGS_FILE)) {
-      const data = JSON.parse(fs.readFileSync(CLI_SETTINGS_FILE, 'utf8'));
-      return res.json({ ok: true, settings: data });
+    const found = loadDiskSettings();
+    if (found) {
+      // Ensure DATA_DIR copy stays in sync
+      if (!fs.existsSync(SETTINGS_FILE)) {
+        try {
+          fs.writeFileSync(SETTINGS_FILE, JSON.stringify(found.settings, null, 2), 'utf8');
+        } catch (e) {}
+      }
+      return res.json({ ok: true, settings: found.settings });
     }
     res.json({ ok: true, settings: null });
   } catch (err) {
@@ -83,41 +125,87 @@ app.get('/api/settings', (req, res) => {
   }
 });
 
-// 1.6 Save Settings to local disk
+// 1.6 Save Settings to local disk (multi-location persistent backup)
 app.post('/api/settings', (req, res) => {
   try {
-    const settings = req.body;
-    if (!settings || typeof settings !== 'object') {
+    const newSettings = req.body;
+    if (!newSettings || typeof newSettings !== 'object') {
       return res.status(400).json({ ok: false, error: 'Invalid settings object' });
     }
 
-    // 1) Save to project data/settings.json
+    // Load existing settings on disk to avoid accidental credential or server erasure
+    const existing = loadDiskSettings()?.settings || {};
+
+    // Deep merge ssh and ai configurations
+    const mergedSettings = {
+      ...existing,
+      ...newSettings,
+      ssh: {
+        ...(existing.ssh || {}),
+        ...(newSettings.ssh || {})
+      },
+      ai: {
+        ...(existing.ai || {}),
+        ...(newSettings.ai || {})
+      }
+    };
+
+    // If newSettings has valid sshServers, update them; otherwise preserve existing sshServers
+    if (Array.isArray(newSettings.sshServers) && newSettings.sshServers.length > 0) {
+      mergedSettings.sshServers = newSettings.sshServers;
+    } else if (Array.isArray(existing.sshServers) && existing.sshServers.length > 0) {
+      mergedSettings.sshServers = existing.sshServers;
+    }
+
+    // Never erase saved SSH passwords if incoming payload omits or sends empty password
+    if (!newSettings.ssh?.password && existing.ssh?.password) {
+      mergedSettings.ssh.password = existing.ssh.password;
+    }
+    if (mergedSettings.sshServers && Array.isArray(mergedSettings.sshServers)) {
+      mergedSettings.sshServers = mergedSettings.sshServers.map(srv => {
+        const prev = existing.sshServers?.find(e => e.id === srv.id || (e.host === srv.host && e.username === srv.username));
+        if (!srv.password && prev?.password) {
+          return { ...srv, password: prev.password };
+        }
+        return srv;
+      });
+    }
+
+    // 1) Save to persistent user Application Support / AppData directory
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(mergedSettings, null, 2), 'utf8');
 
-    // 2) Also save to ~/.mantis_cr_hub/settings.json for CLI compatibility
+    // 2) Save to ~/.mantis_cr_hub/settings.json (User home directory permanent backup)
     try {
       if (!fs.existsSync(CLI_SETTINGS_DIR)) {
         fs.mkdirSync(CLI_SETTINGS_DIR, { recursive: true });
       }
-      fs.writeFileSync(CLI_SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
+      fs.writeFileSync(CLI_SETTINGS_FILE, JSON.stringify(mergedSettings, null, 2), 'utf8');
     } catch (cliErr) {
       console.warn('[CLI Settings Sync Warning]', cliErr.message);
     }
 
-    console.log(`[Settings] Saved to local disk: ${SETTINGS_FILE}`);
-    const activeServers = settings.sshServers || settings.ssh?.servers || (settings.ssh ? [settings.ssh] : []);
+    // 3) Save to project data/settings.json if writable
+    try {
+      const projSettingsDir = path.join(ROOT_DIR, 'data');
+      if (fs.existsSync(projSettingsDir)) {
+        fs.writeFileSync(path.join(projSettingsDir, 'settings.json'), JSON.stringify(mergedSettings, null, 2), 'utf8');
+      }
+    } catch (projErr) {}
+
+    console.log(`[Settings] Successfully persisted server settings to: ${SETTINGS_FILE}`);
+    const activeServers = mergedSettings.sshServers || mergedSettings.ssh?.servers || (mergedSettings.ssh ? [mergedSettings.ssh] : []);
     if (activeServers.length > 0) {
       backgroundDiffIndexer.updateSSHConfig(activeServers);
-    } else if (settings.ssh) {
-      backgroundDiffIndexer.updateSSHConfig(settings.ssh);
+    } else if (mergedSettings.ssh) {
+      backgroundDiffIndexer.updateSSHConfig(mergedSettings.ssh);
     }
-    if (settings.diffConcurrency) {
-      backgroundDiffIndexer.setConcurrency(settings.diffConcurrency);
+    if (mergedSettings.diffConcurrency) {
+      backgroundDiffIndexer.setConcurrency(mergedSettings.diffConcurrency);
     }
-    res.json({ ok: true, message: 'Settings saved to local disk successfully' });
+    res.json({ ok: true, message: 'Settings saved and persisted successfully', settings: mergedSettings });
   } catch (err) {
     console.error('[Save Settings Error]', err.message);
     res.status(500).json({ ok: false, error: err.message });
