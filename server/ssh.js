@@ -224,7 +224,7 @@ function createSSHClient(config) {
         password: config.password,
         privateKey: privateKey,
         tryKeyboard: true,
-        readyTimeout: 6000, // SSH handshake timeout (after TCP is up)
+        readyTimeout: 15000, // SSH handshake timeout (after TCP is up)
         keepaliveInterval: 5000,
         keepaliveCountMax: 2,
         algorithms: {
@@ -234,11 +234,11 @@ function createSSHClient(config) {
             'ecdh-sha2-nistp256',
             'ecdh-sha2-nistp384',
             'ecdh-sha2-nistp521',
-            'diffie-hellman-group-exchange-sha256',
             'diffie-hellman-group14-sha256',
             'diffie-hellman-group14-sha1',
-            'diffie-hellman-group-exchange-sha1',
-            'diffie-hellman-group1-sha1'
+            'diffie-hellman-group1-sha1',
+            'diffie-hellman-group-exchange-sha256',
+            'diffie-hellman-group-exchange-sha1'
           ],
           cipher: [
             'aes128-ctr',
