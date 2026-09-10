@@ -554,7 +554,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
                 {[
-                  { key: 'local', label: '로컬 NLP (기본)' },
+                  { key: 'local', label: '로컬 NLP', badge: '기본' },
                   { key: 'omniroute', label: 'OmniRoute', badge: 'Gateway' },
                   { key: 'custom', label: 'Custom LLM' },
                   { key: 'openai', label: 'Codex' },
@@ -571,31 +571,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       type="button"
                       onClick={() => handleProviderChange(item.key as any)}
                       title={status?.reason || (isReady ? '정상 사용 가능' : '미구동/설정 필요')}
-                      className={`relative py-2 px-2 rounded-xl border text-xs font-semibold transition-all text-center flex flex-col items-center justify-center gap-1 cursor-pointer ${
+                      className={`relative py-2.5 px-1.5 sm:px-2 rounded-xl border text-xs font-semibold transition-all text-center flex flex-col items-center justify-between min-h-[66px] cursor-pointer select-none ${
                         isSelected
-                          ? 'bg-indigo-600/20 border-indigo-500 text-indigo-200 shadow-sm ring-1 ring-indigo-500/40'
+                          ? 'bg-indigo-100/90 dark:bg-indigo-600/30 border-2 border-indigo-600 dark:border-indigo-400 text-indigo-950 dark:text-indigo-100 shadow-md ring-1 ring-indigo-500/40 font-bold'
                           : isReady
-                          ? 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-slate-100'
-                          : 'bg-slate-950/60 border-slate-800/60 text-slate-500 hover:text-slate-400 hover:border-slate-700'
+                          ? 'bg-white/80 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-slate-800 dark:text-slate-200 hover:border-indigo-400 dark:hover:border-slate-700'
+                          : 'bg-slate-100/70 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 text-slate-500 dark:text-slate-400 hover:border-slate-400'
                       }`}
                     >
-                      <div className="flex items-center gap-1.5">
+                      {/* Top row: Status Dot + Label */}
+                      <div className="flex items-center justify-center gap-1.5 w-full">
                         <span 
                           className={`w-2 h-2 rounded-full shrink-0 ${
                             isReady 
-                              ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50' 
-                              : 'bg-slate-600'
+                              ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' 
+                              : 'bg-slate-400 dark:bg-slate-600'
                           }`} 
                         />
-                        <span className="truncate max-w-[85px]">{item.label}</span>
+                        <span className="font-bold truncate text-[11px] sm:text-xs">
+                          {item.label}
+                        </span>
                       </div>
-                      <div className="flex items-center gap-1">
+
+                      {/* Bottom row: Badge + Status Text */}
+                      <div className="flex items-center justify-center gap-1 w-full mt-1">
                         {item.badge && (
-                          <span className="text-[9px] px-1 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono">
+                          <span className="text-[9px] px-1 py-0.2 rounded bg-indigo-500/15 dark:bg-indigo-500/25 text-indigo-800 dark:text-indigo-200 font-mono font-bold whitespace-nowrap">
                             {item.badge}
                           </span>
                         )}
-                        <span className={`text-[9px] font-mono ${isReady ? 'text-emerald-400' : 'text-slate-500'}`}>
+                        <span className={`text-[10px] font-mono whitespace-nowrap font-bold ${
+                          isReady 
+                            ? 'text-emerald-700 dark:text-emerald-400' 
+                            : 'text-amber-700 dark:text-amber-400'
+                        }`}>
                           {isReady ? '준비됨' : '미구동'}
                         </span>
                       </div>
@@ -606,13 +615,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
               {/* Provider Unready / Fallback Explanatory Notice */}
               {form.ai.provider !== 'local' && providersStatus[form.ai.provider] && !providersStatus[form.ai.provider].ready && (
-                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-start gap-2.5 text-xs text-amber-200">
-                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-start gap-2.5 text-xs text-amber-900 dark:text-amber-200">
+                  <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                   <div className="space-y-0.5">
-                    <div className="font-semibold text-amber-300">
+                    <div className="font-bold text-amber-950 dark:text-amber-300">
                       선택하신 [{providersStatus[form.ai.provider]?.label}] 공급자가 현재 미구동/미설정 상태입니다.
                     </div>
-                    <div className="text-[11px] text-amber-300/80 leading-relaxed">
+                    <div className="text-[11px] text-amber-800 dark:text-amber-300/80 leading-relaxed font-medium">
                       {providersStatus[form.ai.provider]?.reason}. 질의 시 오류 없이 <strong>[로컬 NLP (기본)]</strong> 엔진으로 자동 전환되어 정상 동작합니다.
                     </div>
                   </div>

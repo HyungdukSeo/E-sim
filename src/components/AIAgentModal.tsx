@@ -234,16 +234,16 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                   const currentStatus = providersStatus[aiSettings.provider];
                   const isCurrentReady = aiSettings.provider === 'local' ? true : (currentStatus ? currentStatus.ready : false);
                   return (
-                    <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-950/80 border border-slate-700/70 text-xs">
+                    <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-950/80 border border-slate-300 dark:border-slate-700/70 text-xs">
                       <span 
                         className={`w-2 h-2 rounded-full shrink-0 ${
                           isCurrentReady 
-                            ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50' 
-                            : 'bg-amber-400 animate-pulse'
+                            ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' 
+                            : 'bg-amber-500 animate-pulse'
                         }`} 
                         title={isCurrentReady ? '실시간 정상 구동 중' : '미구동 / 미설정 (로컬 NLP로 자동 대체)'}
                       />
-                      <span className="text-[11px] font-semibold text-slate-200">
+                      <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200">
                         {aiSettings.provider === 'local' 
                           ? '고도화 로컬 NLP' 
                           : aiSettings.provider === 'omniroute' 
@@ -251,7 +251,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                           : `${aiSettings.provider} (${aiSettings.model})`}
                       </span>
                       {!isCurrentReady && (
-                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-mono">
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/15 dark:bg-amber-500/25 text-amber-800 dark:text-amber-300 font-mono font-bold">
                           미구동 → 로컬 NLP 대체
                         </span>
                       )}
@@ -259,9 +259,9 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                         type="button"
                         onClick={checkHealth}
                         title="실시간 공급자 구동 상태 즉시 새로고침"
-                        className="ml-0.5 text-slate-400 hover:text-indigo-300 cursor-pointer p-0.5"
+                        className="ml-0.5 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-300 cursor-pointer p-0.5"
                       >
-                        <RefreshCw className={`w-3 h-3 ${isCheckingHealth ? 'animate-spin text-indigo-400' : ''}`} />
+                        <RefreshCw className={`w-3 h-3 ${isCheckingHealth ? 'animate-spin text-indigo-500' : ''}`} />
                       </button>
                     </div>
                   );
@@ -552,9 +552,9 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                 if (isCurrentReady || aiSettings.provider === 'local') return null;
 
                 return (
-                  <div className="p-2.5 px-3 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between text-xs text-amber-200">
+                  <div className="p-2.5 px-3 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between text-xs text-amber-900 dark:text-amber-200">
                     <div className="flex items-center gap-2 min-w-0">
-                      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
                       <span className="truncate">
                         현재 선택된 <strong>[{currentStatus?.label || aiSettings.provider}]</strong> 공급자가 미구동 상태입니다 ({currentStatus?.reason || '연결 대기'}). 질의 시 <strong>[로컬 NLP (기본)]</strong> 엔진으로 자동 전환됩니다.
                       </span>
@@ -563,7 +563,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                       <button
                         type="button"
                         onClick={checkHealth}
-                        className="text-[10px] text-amber-300 hover:text-amber-100 flex items-center gap-1 cursor-pointer bg-amber-500/20 px-2 py-0.5 rounded-md border border-amber-500/30"
+                        className="text-[10px] text-amber-800 dark:text-amber-300 hover:text-amber-950 dark:hover:text-amber-100 flex items-center gap-1 cursor-pointer bg-amber-500/15 dark:bg-amber-500/20 px-2 py-0.5 rounded-md border border-amber-500/30 font-medium"
                         title="실시간 상태 다시 확인"
                       >
                         <RefreshCw className={`w-2.5 h-2.5 ${isCheckingHealth ? 'animate-spin' : ''}`} />
@@ -572,7 +572,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                       <button
                         type="button"
                         onClick={onOpenSettings}
-                        className="text-[11px] text-amber-300 hover:text-amber-100 underline cursor-pointer"
+                        className="text-[11px] text-amber-800 dark:text-amber-300 hover:text-amber-950 dark:hover:text-amber-100 underline cursor-pointer font-semibold"
                       >
                         설정
                       </button>
