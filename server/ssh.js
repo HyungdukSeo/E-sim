@@ -38,20 +38,30 @@ const MISSING_VOB_TTL_MS = 10 * 60 * 1000;
 export function extractVobKey(filePath) {
   if (!filePath) return '';
   const clean = filePath.replace(/(_|@@)\/.*$/, '');
-  const match = clean.match(/\/vobs\/([^\/]+(?:\/[^\/]+)?)/);
-  if (match) return match[1];
+  const match2 = clean.match(/\/vobs\/([^\/]+\/[^\/]+)/);
+  if (match2) return match2[1];
+  const match1 = clean.match(/\/vobs\/([^\/]+)/);
+  if (match1) return match1[1];
   return '';
 }
 
-export function getVobTag(filePath) {
-  if (!filePath) return '/vobs';
+export function getVobTags(filePath) {
+  if (!filePath) return ['/vobs'];
   const clean = filePath.replace(/(_|@@)\/.*$/, '');
   const parts = clean.split('/').filter(Boolean);
   const vobIdx = parts.indexOf('vobs');
-  if (vobIdx !== -1 && parts[vobIdx + 1]) {
-    return `/vobs/${parts[vobIdx + 1]}`;
+  if (vobIdx === -1) return ['/vobs'];
+
+  const tags = [];
+  // 2-level VOB tag: e.g. /vobs/REL/SSW_SKBC4_70A
+  if (parts[vobIdx + 1] && parts[vobIdx + 2]) {
+    tags.push(`/vobs/${parts[vobIdx + 1]}/${parts[vobIdx + 2]}`);
   }
-  return '/vobs';
+  // 1-level VOB tag: e.g. /vobs/REL or /vobs/esm_kt
+  if (parts[vobIdx + 1]) {
+    tags.push(`/vobs/${parts[vobIdx + 1]}`);
+  }
+  return tags;
 }
 
 function markVobServerAffinity(vobKey, host) {
@@ -346,12 +356,19 @@ async function fetchOneVersion(conn, vobSubPath, versionSuffix, candidateViews) 
     }
   }
 
-  // Phase 2: cleartool setview -exec only on the top 2 candidate views
+  // Phase 2: cleartool setview -exec and csh environment on candidate views
   const fallbackViews = candidateViews.slice(0, 2);
-  const fallbackAttempts = fallbackViews.map(v => ({
-    cmd: `/bin/sh -c '${envPrefix} cleartool setview -exec "cat \\"${filePath}\\"" "${v}" 2>/dev/null'`,
-    view: v
-  }));
+  const fallbackAttempts = [];
+  for (const v of fallbackViews) {
+    fallbackAttempts.push({
+      cmd: `/bin/sh -c '${envPrefix} cleartool setview -exec "cat \\"${filePath}\\"" "${v}" 2>/dev/null'`,
+      view: v
+    });
+    fallbackAttempts.push({
+      cmd: `csh -c "setenv DEVCSHRC ~/.cshrc.hyungduk; [ -f ~/.cshrc.hyungduk ] && source ~/.cshrc.hyungduk 2>/dev/null; cat \\"/view/${v}${filePath}\\" 2>/dev/null || cat \\"${filePath}\\" 2>/dev/null"`,
+      view: v
+    });
+  }
 
   const streamRefs2 = fallbackAttempts.map(() => ({ stream: undefined }));
   try {
@@ -570,11 +587,31 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '') {
     const t0 = Date.now();
     conn = await createSSHClient(config);
 
-    // Fast Pre-Flight Check (< 1.5s): Verify if file, directory or VOB is present on this server
-    const vobTag = getVobTag(vobSubPath);
+    // Fast Pre-Flight Check (< 2s): Verify if file, directory or VOB is present on this server
+    const vobTags = getVobTags(vobSubPath);
+    const primaryVobTag = vobTags[0] || '/vobs';
     const parentDir = path.posix.dirname(vobSubPath);
     const probeViews = uniqueViews.join(' ');
     const probeCmd = `/bin/sh -c '
+export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH
+
+# 1. Start views first so /view/<tag>/... is activated
+for v in ${probeViews}; do
+  cleartool startview "$v" 2>/dev/null || true
+done
+
+# 2. Check if VOB is registered on this server and auto-mount if needed
+HAS_VOB=0
+for tag in "${vobTags.join('" "')}"; do
+  if cleartool lsvob "$tag" 2>/dev/null | grep -q "$tag"; then
+    HAS_VOB=1
+    cleartool mount "$tag" 2>/dev/null || true
+    echo "LSVOB_FOUND:$tag"
+    break
+  fi
+done
+
+# 3. Check if file or parent dir exists in any candidate view
 for v in ${probeViews}; do
   if [ -e "/view/$v${vobSubPath}" ] || [ -f "/view/$v${vobSubPath}" ]; then
     echo "FOUND_VIEW:$v"
@@ -585,31 +622,31 @@ for v in ${probeViews}; do
     exit 0
   fi
 done
+
+# 4. Check direct /vobs path (if view is already set in shell)
 if [ -e "${vobSubPath}" ] || [ -f "${vobSubPath}" ]; then
   echo "FOUND_DIRECT"
   exit 0
 fi
-if [ -d "${parentDir}" ] || [ -d "${vobTag}" ]; then
-  echo "VOB_DIR_EXISTS"
+
+# 5. If VOB was verified by cleartool lsvob, server DOES host this VOB!
+if [ "$HAS_VOB" = "1" ]; then
+  echo "VOB_VERIFIED"
   exit 0
 fi
-export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH
-if cleartool lsvob "${vobTag}" 2>/dev/null | grep -q "${vobTag.replace('/vobs/', '')}"; then
-  echo "LSVOB_EXISTS"
-  exit 0
-fi
+
 echo "NOT_FOUND_ON_SERVER"
 exit 2
 '`;
 
     let probeOutput = '';
     try {
-      const { buffer } = await execSSHBuffer(conn, probeCmd, 2200);
+      const { buffer } = await execSSHBuffer(conn, probeCmd, 2500);
       probeOutput = buffer.toString('utf8').trim();
     } catch (e) {}
 
     if (probeOutput.includes('NOT_FOUND_ON_SERVER')) {
-      throw new Error(`VOB(${vobTag}) 또는 파일이 서버(${config.host})에 존재하지 않습니다.`);
+      throw new Error(`VOB(${primaryVobTag}) 또는 파일이 서버(${config.host})에 존재하지 않습니다.`);
     }
 
     // Prioritize discovered view if found
@@ -622,7 +659,7 @@ exit 2
 
     console.log(`[SSH Diff] Fetching ${vobSubPath} (${prevSuffix} <-> ${currSuffix}) for views:`, effectiveViews);
 
-    // 1. Ensure target view is started in /bin/sh (parallel start)
+    // Ensure primary view is started in /bin/sh
     await execSSHBuffer(conn, `/bin/sh -c 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH; cleartool startview "${effectiveViews[0]}" 2>/dev/null || true'`, 2500);
 
     // 2. Fetch current and previous versions in parallel.
