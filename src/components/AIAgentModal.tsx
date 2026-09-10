@@ -539,10 +539,10 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                 </div>
 
                 {/* Right Panel Tabs */}
-                <div className="px-4 border-b border-slate-800 bg-slate-900/60 flex items-center gap-4 text-xs font-semibold overflow-x-auto">
+                <div className="px-4 border-b border-slate-800 bg-slate-900/60 flex items-center gap-4 text-xs font-semibold overflow-x-auto flex-shrink-0 h-[44px] min-h-[44px]">
                   <button
                     onClick={() => setActiveRightTab('details')}
-                    className={`py-2.5 border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
+                    className={`h-full border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
                       activeRightTab === 'details'
                         ? 'border-mantis-400 text-mantis-300'
                         : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -559,7 +559,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
 
                   <button
                     onClick={() => setActiveRightTab('overview')}
-                    className={`py-2.5 border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
+                    className={`h-full border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
                       activeRightTab === 'overview'
                         ? 'border-mantis-400 text-mantis-300'
                         : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -571,7 +571,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
 
                   <button
                     onClick={() => setActiveRightTab('checkin')}
-                    className={`py-2.5 border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
+                    className={`h-full border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
                       activeRightTab === 'checkin'
                         ? 'border-mantis-400 text-mantis-300'
                         : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -588,7 +588,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
 
                   <button
                     onClick={() => setActiveRightTab('raw')}
-                    className={`py-2.5 border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
+                    className={`h-full border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
                       activeRightTab === 'raw'
                         ? 'border-mantis-400 text-mantis-300'
                         : 'border-transparent text-slate-400 hover:text-slate-200'

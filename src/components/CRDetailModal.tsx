@@ -151,7 +151,7 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
   const content = (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="p-4 sm:p-5 border-b border-slate-800 bg-slate-900/90 flex items-start justify-between gap-3">
+      <div className="p-4 sm:p-5 border-b border-slate-800 bg-slate-900/90 flex items-start justify-between gap-3 flex-shrink-0">
         <div className="space-y-1.5 min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-lg font-extrabold text-mantis-400">
@@ -247,10 +247,10 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
       </div>
 
       {/* Tabs */}
-      <div className="px-5 border-b border-slate-800 bg-slate-900/60 flex items-center gap-4 text-xs font-semibold overflow-x-auto">
+      <div className="px-5 border-b border-slate-800 bg-slate-900/60 flex items-center gap-4 text-xs font-semibold overflow-x-auto flex-shrink-0 h-[46px] min-h-[46px]">
         <button
           onClick={() => setActiveTab('details')}
-          className={`py-3 border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
+          className={`h-full border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
             activeTab === 'details'
               ? 'border-mantis-400 text-mantis-300'
               : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -267,7 +267,7 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
 
         <button
           onClick={() => setActiveTab('aiDiff')}
-          className={`py-3 border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
+          className={`h-full border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
             activeTab === 'aiDiff'
               ? 'border-indigo-400 text-indigo-300 font-bold'
               : 'border-transparent text-slate-400 hover:text-indigo-300'
@@ -288,7 +288,7 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
 
         <button
           onClick={() => setActiveTab('overview')}
-          className={`py-3 border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
+          className={`h-full border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
             activeTab === 'overview'
               ? 'border-mantis-400 text-mantis-300'
               : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -300,7 +300,7 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
 
         <button
           onClick={() => setActiveTab('checkin')}
-          className={`py-3 border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
+          className={`h-full border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
             activeTab === 'checkin'
               ? 'border-mantis-400 text-mantis-300'
               : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -317,7 +317,7 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
 
         <button
           onClick={() => setActiveTab('raw')}
-          className={`py-3 border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
+          className={`h-full border-b-2 transition-all flex items-center gap-1.5 flex-shrink-0 ${
             activeTab === 'raw'
               ? 'border-mantis-400 text-mantis-300'
               : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -329,7 +329,7 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
       </div>
 
       {/* Body Content */}
-      <div className="flex-1 overflow-y-auto p-5 space-y-5">
+      <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-5">
         {activeTab === 'details' && (
           <div className="space-y-4">
             {/* AI Diff Banner */}

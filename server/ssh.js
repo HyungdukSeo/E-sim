@@ -588,56 +588,16 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '') {
     conn = await createSSHClient(config);
 
     // Fast Pre-Flight Check (< 2s): Verify if file, directory or VOB is present on this server
+    // Note: Remote user login shell may be csh/tcsh, so commands must NOT contain raw unescaped newlines.
     const vobTags = getVobTags(vobSubPath);
     const primaryVobTag = vobTags[0] || '/vobs';
     const parentDir = path.posix.dirname(vobSubPath);
-    const probeViews = uniqueViews.join(' ');
-    const probeCmd = `/bin/sh -c '
-export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH
 
-# 1. Start views first so /view/<tag>/... is activated
-for v in ${probeViews}; do
-  cleartool startview "$v" 2>/dev/null || true
-done
+    const startViewParts = uniqueViews.map(v => `cleartool startview "${v}" 2>/dev/null || true`).join('; ');
+    const checkViewParts = uniqueViews.map(v => `if [ -e "/view/${v}${vobSubPath}" ] || [ -f "/view/${v}${vobSubPath}" ]; then echo "FOUND_VIEW:${v}"; exit 0; elif [ -d "/view/${v}${parentDir}" ] || [ -d "/view/${v}${primaryVobTag}" ]; then echo "FOUND_VIEW_DIR:${v}"; exit 0; fi`).join('; ');
+    const lsvobParts = vobTags.map(tag => `if cleartool lsvob "${tag}" 2>/dev/null | grep -q "${tag}"; then cleartool mount "${tag}" 2>/dev/null || true; echo "LSVOB_FOUND:${tag}"; exit 0; fi`).join('; ');
 
-# 2. Check if VOB is registered on this server and auto-mount if needed
-HAS_VOB=0
-for tag in "${vobTags.join('" "')}"; do
-  if cleartool lsvob "$tag" 2>/dev/null | grep -q "$tag"; then
-    HAS_VOB=1
-    cleartool mount "$tag" 2>/dev/null || true
-    echo "LSVOB_FOUND:$tag"
-    break
-  fi
-done
-
-# 3. Check if file or parent dir exists in any candidate view
-for v in ${probeViews}; do
-  if [ -e "/view/$v${vobSubPath}" ] || [ -f "/view/$v${vobSubPath}" ]; then
-    echo "FOUND_VIEW:$v"
-    exit 0
-  fi
-  if [ -d "/view/$v${parentDir}" ]; then
-    echo "FOUND_VIEW_DIR:$v"
-    exit 0
-  fi
-done
-
-# 4. Check direct /vobs path (if view is already set in shell)
-if [ -e "${vobSubPath}" ] || [ -f "${vobSubPath}" ]; then
-  echo "FOUND_DIRECT"
-  exit 0
-fi
-
-# 5. If VOB was verified by cleartool lsvob, server DOES host this VOB!
-if [ "$HAS_VOB" = "1" ]; then
-  echo "VOB_VERIFIED"
-  exit 0
-fi
-
-echo "NOT_FOUND_ON_SERVER"
-exit 2
-'`;
+    const probeCmd = `/bin/sh -c 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH; ${startViewParts}; ${checkViewParts}; if [ -e "${vobSubPath}" ] || [ -f "${vobSubPath}" ]; then echo "FOUND_DIRECT"; exit 0; fi; ${lsvobParts}; echo "NOT_FOUND_ON_SERVER"; exit 2'`;
 
     let probeOutput = '';
     try {
