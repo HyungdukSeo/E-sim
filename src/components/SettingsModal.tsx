@@ -231,7 +231,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       let url = `/api/ai/models?provider=${provider}`;
       if (provider === 'omniroute') {
         const cleanBaseUrl = omnirouteUrl || form.ai.omnirouteUrl || 'http://localhost:20128/v1';
-        const cleanApiKey = omnirouteApiKey || form.ai.omnirouteApiKey || 'sk-omniroute';
+        const cleanApiKey = omnirouteApiKey || form.ai.omnirouteApiKey || providersStatus.omniroute?.detectedKey || '';
         url += `&baseUrl=${encodeURIComponent(cleanBaseUrl)}&apiKey=${encodeURIComponent(cleanApiKey)}`;
       }
 
@@ -332,6 +332,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       });
       if (res && res.status) {
         setProvidersStatus(res.status);
+        if (res.status.omniroute?.detectedKey && (!form.ai.omnirouteApiKey || form.ai.omnirouteApiKey === 'sk-omniroute')) {
+          setForm(prev => ({
+            ...prev,
+            ai: {
+              ...prev.ai,
+              omnirouteApiKey: res.status.omniroute.detectedKey || ''
+            }
+          }));
+        }
       }
     } catch {
       // ignore
@@ -677,12 +686,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
 
                     <div>
-                      <label className="block text-slate-400 text-[11px] mb-1 font-medium">API 토큰 (Bearer Token)</label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-slate-400 text-[11px] font-medium">API 토큰 (Bearer Token)</label>
+                        {providersStatus.omniroute?.detectedKey && (
+                          <span className="text-[10px] text-emerald-400 font-mono">
+                            ✓ 로컬 키 자동 감지됨
+                          </span>
+                        )}
+                      </div>
                       <input
                         type="password"
-                        value={form.ai.omnirouteApiKey !== undefined ? form.ai.omnirouteApiKey : 'sk-omniroute'}
+                        value={form.ai.omnirouteApiKey !== undefined ? form.ai.omnirouteApiKey : (providersStatus.omniroute?.detectedKey || '')}
                         onChange={e => setForm(f => ({ ...f, ai: { ...f.ai, omnirouteApiKey: e.target.value } }))}
-                        placeholder="sk-omniroute"
+                        placeholder={providersStatus.omniroute?.detectedKey ? `자동 감지됨 (${providersStatus.omniroute.detectedKey.slice(0, 10)}...)` : "sk-omniroute"}
                         className="w-full px-3 py-2 bg-slate-900 rounded-xl border border-slate-700 text-slate-200 text-xs font-mono focus:border-indigo-500 outline-none"
                       />
                     </div>

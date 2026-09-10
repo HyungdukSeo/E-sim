@@ -11,7 +11,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     apiKey: 'b644f37bc89d3472041218af3976fb9e',
     customUrl: 'http://10.100.8.39:8502/v1',
     omnirouteUrl: 'http://localhost:20128/v1',
-    omnirouteApiKey: 'sk-omniroute',
+    omnirouteApiKey: '',
     model: 'aico-rag-qwen2.5-coder-7b',
     providerModels: {
       custom: 'aico-rag-qwen2.5-coder-7b',
@@ -191,6 +191,8 @@ export interface AIProviderStatusItem {
   badge?: string;
   reason?: string;
   hint?: string;
+  detectedKey?: string | null;
+  effectiveKey?: string | null;
 }
 
 export async function fetchAIProvidersStatus(aiConfig?: any): Promise<{ ok: boolean; status: Record<string, AIProviderStatusItem> }> {

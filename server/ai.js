@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { checkOmniRouteAlive, hasCommand, runCliAI } from './cli-models.js';
+import { checkOmniRouteAlive, checkOmniRouteStatus, readOmniRouteToken, hasCommand, runCliAI } from './cli-models.js';
 
 const STOP_WORDS = new Set([
   'ssw', 'cr', 'crid', '시', '에서', '을', '를', '이', '가', '의', '에', '으로', '로', 
@@ -424,16 +424,22 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
 
   // 5. OmniRoute Gateway
   if (provider === 'omniroute') {
-    const isAlive = await checkOmniRouteAlive(config.omnirouteUrl, config.omnirouteApiKey);
-    if (!isAlive) {
+    const omniStatus = await checkOmniRouteStatus(config.omnirouteUrl, config.omnirouteApiKey);
+    if (!omniStatus.alive) {
       throw new Error('OmniRoute 서비스가 로컬(localhost:20128)에서 실행 중이지 않습니다.');
+    }
+    if (!omniStatus.ready) {
+      throw new Error('OmniRoute API 토큰 인증에 실패했습니다. 설정에서 올바른 API 키를 입력해 주세요.');
     }
     let baseUrl = (config.omnirouteUrl || config.baseUrl || 'http://localhost:20128/v1').trim().replace(/\/$/, '');
     if (!baseUrl.endsWith('/v1') && !baseUrl.includes('/v1/')) {
       baseUrl += '/v1';
     }
     const endpoint = baseUrl.endsWith('/chat/completions') ? baseUrl : `${baseUrl}/chat/completions`;
-    const apiKey = config.omnirouteApiKey || config.apiKey || 'sk-omniroute';
+    const apiKey = (config.omnirouteApiKey && config.omnirouteApiKey !== 'sk-omniroute' && config.omnirouteApiKey.trim())
+      || omniStatus.effectiveKey
+      || readOmniRouteToken()
+      || 'sk-omniroute';
     const model = config.model || config.omnirouteModel || 'auto';
 
     const resp = await axios.post(endpoint, {
@@ -607,9 +613,11 @@ export async function processAiQuery({ query, contextCrs = [], config = {} }) {
 
     // Quick availability sanity check
     if (provider === 'omniroute') {
-      const isAlive = await checkOmniRouteAlive(config.omnirouteUrl, config.omnirouteApiKey);
-      if (!isAlive) {
+      const omniStatus = await checkOmniRouteStatus(config.omnirouteUrl, config.omnirouteApiKey);
+      if (!omniStatus.alive) {
         unavailableReason = 'OmniRoute 로컬 서비스(localhost:20128)가 현재 실행 중이지 않아';
+      } else if (!omniStatus.ready) {
+        unavailableReason = 'OmniRoute API 토큰 인증 실패로 인해';
       }
     } else if (provider === 'custom') {
       if (!config.customUrl || config.customUrl.trim().length < 5) {

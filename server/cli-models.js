@@ -30,20 +30,106 @@ export function hasCommand(cmd) {
   }
 }
 
-export async function checkOmniRouteAlive(baseUrl = 'http://localhost:20128/v1', apiKey = 'sk-omniroute') {
+export function readOmniRouteToken() {
   try {
-    let cleanUrl = (baseUrl || 'http://localhost:20128/v1').trim().replace(/\/$/, '');
-    if (!cleanUrl.endsWith('/v1') && !cleanUrl.includes('/v1/')) {
-      cleanUrl += '/v1';
+    const dbPath = path.join(os.homedir(), '.omniroute', 'storage.sqlite');
+    if (fs.existsSync(dbPath)) {
+      const raw = execSync(
+        `sqlite3 "${dbPath}" "SELECT key FROM api_keys WHERE is_active = 1 AND (revoked_at IS NULL OR revoked_at = '') ORDER BY created_at ASC LIMIT 1;"`,
+        { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }
+      ).trim();
+      if (raw && raw.startsWith('sk-')) {
+        return raw;
+      }
     }
-    const resp = await axios.get(`${cleanUrl}/models`, {
-      headers: { Authorization: `Bearer ${apiKey || 'sk-omniroute'}` },
-      timeout: 1500
-    });
-    return resp.status === 200;
-  } catch {
-    return false;
+  } catch {}
+  return null;
+}
+
+export async function checkOmniRouteStatus(baseUrl = 'http://localhost:20128/v1', apiKey = '') {
+  let cleanUrl = (baseUrl || 'http://localhost:20128/v1').trim().replace(/\/$/, '');
+  if (!cleanUrl.endsWith('/v1') && !cleanUrl.includes('/v1/')) {
+    cleanUrl += '/v1';
   }
+
+  const detectedKey = readOmniRouteToken();
+  const effectiveKey = (apiKey && apiKey !== 'sk-omniroute' && apiKey.trim()) || detectedKey || 'sk-omniroute';
+
+  // 1. Try authenticated /models check
+  try {
+    const resp = await axios.get(`${cleanUrl}/models`, {
+      headers: { Authorization: `Bearer ${effectiveKey}` },
+      timeout: 2500
+    });
+    if (resp.status === 200) {
+      return {
+        alive: true,
+        ready: true,
+        authenticated: true,
+        detectedKey,
+        effectiveKey,
+        reason: 'OmniRoute 게이트웨이 정상 연결됨',
+        hint: ''
+      };
+    }
+  } catch (err) {
+    if (err.response) {
+      const isOmniHeader = Boolean(err.response.headers?.['x-omniroute-route-class']);
+      const status = err.response.status;
+      if (status === 401 || status === 403 || isOmniHeader) {
+        return {
+          alive: true,
+          ready: false,
+          authenticated: false,
+          detectedKey,
+          effectiveKey,
+          reason: 'OmniRoute 구동 중 (API 키 인증 필요)',
+          hint: detectedKey ? '감지된 로컬 키 적용 필요' : '설정에서 OmniRoute API 키 확인 필요'
+        };
+      }
+    }
+  }
+
+  // 2. Try root host ping (e.g. http://localhost:20128/)
+  try {
+    const parsed = new URL(cleanUrl);
+    const rootUrl = `${parsed.protocol}//${parsed.host}/`;
+    const resp = await axios.get(rootUrl, {
+      timeout: 1500,
+      maxRedirects: 3,
+      validateStatus: () => true
+    });
+    const hasOmniHeader = Boolean(resp.headers?.['x-omniroute-route-class']);
+    const hasOmniBody = typeof resp.data === 'string' && (resp.data.includes('OmniRoute') || resp.data.includes('/dashboard'));
+    if (hasOmniHeader || hasOmniBody) {
+      return {
+        alive: true,
+        ready: false,
+        authenticated: false,
+        detectedKey,
+        effectiveKey,
+        reason: 'OmniRoute 구동 중 (API 키 인증 필요)',
+        hint: '설정에서 OmniRoute API 키 확인 필요'
+      };
+    }
+  } catch {
+    // Process unreachable
+  }
+
+  return {
+    alive: false,
+    ready: false,
+    authenticated: false,
+    detectedKey: null,
+    effectiveKey: null,
+    reason: 'OmniRoute 서비스 미구동 (localhost:20128)',
+    hint: '터미널에서 omniroute 실행 필요'
+  };
+}
+
+export async function checkOmniRouteAlive(baseUrl = 'http://localhost:20128/v1', apiKey = '') {
+  const status = await checkOmniRouteStatus(baseUrl, apiKey);
+  return status.ready;
 }
 
 /**
@@ -281,7 +367,7 @@ export function getCodexModels() {
 /**
  * 4. OmniRoute — 로컬 AI Gateway (http://localhost:20128/v1/models)
  */
-export async function getOmniRouteModels(baseUrl = 'http://localhost:20128/v1', apiKey = 'sk-omniroute') {
+export async function getOmniRouteModels(baseUrl = 'http://localhost:20128/v1', apiKey = '') {
   const fallback = [
     { id: 'auto', displayName: 'auto (OmniRoute 스마트 자동 라우팅)' },
     { id: 'auto/coding', displayName: 'auto/coding (코딩 및 Diff 분석 특화)' },
@@ -297,17 +383,19 @@ export async function getOmniRouteModels(baseUrl = 'http://localhost:20128/v1', 
       cleanUrl += '/v1';
     }
 
+    const effectiveKey = (apiKey && apiKey !== 'sk-omniroute' && apiKey.trim()) || readOmniRouteToken() || 'sk-omniroute';
+
     const resp = await axios.get(`${cleanUrl}/models`, {
       headers: {
-        Authorization: `Bearer ${apiKey || 'sk-omniroute'}`
+        Authorization: `Bearer ${effectiveKey}`
       },
-      timeout: 4000
+      timeout: 5000
     });
 
     if (resp.data?.data && Array.isArray(resp.data.data)) {
       const fetched = resp.data.data.map(m => ({
         id: m.id,
-        displayName: m.id
+        displayName: m.name && m.name !== m.id ? `${m.id} (${m.name})` : m.id
       }));
 
       const existingIds = new Set(fetched.map(m => m.id));
@@ -401,7 +489,7 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
  * 7. Comprehensive AI Providers Availability Checker
  */
 export async function getAIProvidersStatus(aiSettings = {}) {
-  const isOmniAlive = await checkOmniRouteAlive(aiSettings.omnirouteUrl, aiSettings.omnirouteApiKey);
+  const omniStatus = await checkOmniRouteStatus(aiSettings.omnirouteUrl, aiSettings.omnirouteApiKey);
   const claudeToken = readClaudeToken();
   const hasClaudeCli = hasCommand('claude');
   const hasCodexCli = hasCommand('codex');
@@ -419,11 +507,12 @@ export async function getAIProvidersStatus(aiSettings = {}) {
     omniroute: {
       key: 'omniroute',
       label: 'OmniRoute',
-      available: isOmniAlive,
-      ready: isOmniAlive,
+      available: omniStatus.alive,
+      ready: omniStatus.ready,
       badge: 'Gateway',
-      reason: isOmniAlive ? 'OmniRoute 게이트웨이 정상 연결됨' : 'OmniRoute 서비스 미구동 (localhost:20128)',
-      hint: isOmniAlive ? '' : '터미널에서 omniroute 실행 필요'
+      detectedKey: omniStatus.detectedKey,
+      reason: omniStatus.reason,
+      hint: omniStatus.hint
     },
     custom: {
       key: 'custom',
