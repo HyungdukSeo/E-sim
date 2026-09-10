@@ -317,22 +317,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   }, [form.ai.provider]);
 
-  useEffect(() => {
-    if (isOpen) {
-      fetchAIProvidersStatus({
+  const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
+
+  const refreshProvidersStatus = React.useCallback(async () => {
+    try {
+      setIsRefreshingProviders(true);
+      const res = await fetchAIProvidersStatus({
         omnirouteUrl: form.ai.omnirouteUrl,
         omnirouteApiKey: form.ai.omnirouteApiKey,
         customUrl: form.ai.customUrl,
         openaiApiKey: form.ai.apiKey,
         claudeApiKey: form.ai.apiKey,
         geminiApiKey: form.ai.apiKey
-      }).then(res => {
-        if (res && res.status) {
-          setProvidersStatus(res.status);
-        }
-      }).catch(() => {});
+      });
+      if (res && res.status) {
+        setProvidersStatus(res.status);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsRefreshingProviders(false);
     }
-  }, [isOpen, form.ai.omnirouteUrl, form.ai.customUrl]);
+  }, [form.ai.omnirouteUrl, form.ai.omnirouteApiKey, form.ai.customUrl, form.ai.apiKey]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    refreshProvidersStatus();
+    // Real-time polling every 3 seconds while modal is open
+    const timer = setInterval(refreshProvidersStatus, 3000);
+    return () => clearInterval(timer);
+  }, [isOpen, refreshProvidersStatus]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -518,7 +532,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
-                <label className="block font-semibold text-slate-300">AI 공급자 (Provider)</label>
+                <div className="flex items-center gap-2">
+                  <label className="block font-semibold text-slate-300">AI 공급자 (Provider)</label>
+                  <button
+                    type="button"
+                    onClick={refreshProvidersStatus}
+                    className="p-1 rounded-md text-slate-400 hover:text-indigo-300 hover:bg-slate-800 transition-all flex items-center gap-1 text-[11px] cursor-pointer"
+                    title="실시간 공급자 구동 상태 즉시 새로고침"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isRefreshingProviders ? 'animate-spin text-indigo-400' : ''}`} />
+                    <span>실시간 감지</span>
+                  </button>
+                </div>
                 <span className="text-[11px] text-slate-400">
                   {providersStatus[form.ai.provider]?.ready 
                     ? <span className="text-emerald-400 font-medium">● 정상 작동 준비됨</span> 

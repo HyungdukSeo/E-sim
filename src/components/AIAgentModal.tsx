@@ -21,10 +21,11 @@ import {
   AlertCircle,
   HelpCircle,
   RotateCcw,
-  Trash2
+  Trash2,
+  RefreshCw
 } from 'lucide-react';
 import { CRItem, AppSettings, SSHConfig } from '../types/cr';
-import { queryAI, fetchCRDetail } from '../services/api';
+import { queryAI, fetchCRDetail, fetchAIProvidersStatus, AIProviderStatusItem } from '../services/api';
 import { SimilarCRs } from './SimilarCRs';
 import { FileTreeView } from './FileTreeView';
 import { CRCodeChangesView } from './CRCodeChangesView';
@@ -95,6 +96,36 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
   const [activeRightTab, setActiveRightTab] = useState<'details' | 'overview' | 'checkin' | 'raw'>('details');
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [diffTargetFile, setDiffTargetFile] = useState<string | null>(null);
+  const [providersStatus, setProvidersStatus] = useState<Record<string, AIProviderStatusItem>>({});
+  const [isCheckingHealth, setIsCheckingHealth] = useState(false);
+
+  const checkHealth = React.useCallback(async () => {
+    try {
+      setIsCheckingHealth(true);
+      const res = await fetchAIProvidersStatus({
+        omnirouteUrl: aiSettings.omnirouteUrl,
+        omnirouteApiKey: aiSettings.omnirouteApiKey,
+        customUrl: aiSettings.customUrl,
+        openaiApiKey: aiSettings.apiKey,
+        claudeApiKey: aiSettings.apiKey,
+        geminiApiKey: aiSettings.apiKey
+      });
+      if (res && res.status) {
+        setProvidersStatus(res.status);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsCheckingHealth(false);
+    }
+  }, [aiSettings]);
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+    checkHealth();
+    const timer = setInterval(checkHealth, 3000);
+    return () => clearInterval(timer);
+  }, [isOpen, checkHealth]);
 
   // Auto fetch details for previewCR if not yet fetched
   React.useEffect(() => {
@@ -199,13 +230,42 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-bold text-main">Mantis CR AI 지능형 분석 & 실시간 뷰어</h2>
-                <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 uppercase font-semibold">
-                  {aiSettings.provider === 'local' 
-                    ? '고도화 로컬 NLP' 
-                    : aiSettings.provider === 'omniroute' 
-                    ? `OmniRoute (${aiSettings.model || 'auto'})` 
-                    : `${aiSettings.provider} (${aiSettings.model})`}
-                </span>
+                {(() => {
+                  const currentStatus = providersStatus[aiSettings.provider];
+                  const isCurrentReady = aiSettings.provider === 'local' ? true : (currentStatus ? currentStatus.ready : false);
+                  return (
+                    <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-950/80 border border-slate-700/70 text-xs">
+                      <span 
+                        className={`w-2 h-2 rounded-full shrink-0 ${
+                          isCurrentReady 
+                            ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50' 
+                            : 'bg-amber-400 animate-pulse'
+                        }`} 
+                        title={isCurrentReady ? '실시간 정상 구동 중' : '미구동 / 미설정 (로컬 NLP로 자동 대체)'}
+                      />
+                      <span className="text-[11px] font-semibold text-slate-200">
+                        {aiSettings.provider === 'local' 
+                          ? '고도화 로컬 NLP' 
+                          : aiSettings.provider === 'omniroute' 
+                          ? `OmniRoute (${aiSettings.model || 'auto'})` 
+                          : `${aiSettings.provider} (${aiSettings.model})`}
+                      </span>
+                      {!isCurrentReady && (
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-mono">
+                          미구동 → 로컬 NLP 대체
+                        </span>
+                      )}
+                      <button 
+                        type="button"
+                        onClick={checkHealth}
+                        title="실시간 공급자 구동 상태 즉시 새로고침"
+                        className="ml-0.5 text-slate-400 hover:text-indigo-300 cursor-pointer p-0.5"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${isCheckingHealth ? 'animate-spin text-indigo-400' : ''}`} />
+                      </button>
+                    </div>
+                  );
+                })()}
               </div>
               <p className="text-xs text-slate-400">
                 질문 시 연관된 CR 카드를 생성하며, <strong className="text-mantis-300">카드를 클릭하면 오른쪽 화면에 소스 파일 변경 내역과 원문이 즉시 표시</strong>됩니다.
@@ -485,6 +545,42 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
 
             {/* Input Form Bar */}
             <div className="p-3 sm:p-4 border-t border-slate-800 bg-slate-900/90 flex flex-col gap-3">
+              {/* Real-time Unready Provider Alert Banner */}
+              {(() => {
+                const currentStatus = providersStatus[aiSettings.provider];
+                const isCurrentReady = aiSettings.provider === 'local' ? true : (currentStatus ? currentStatus.ready : true);
+                if (isCurrentReady || aiSettings.provider === 'local') return null;
+
+                return (
+                  <div className="p-2.5 px-3 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between text-xs text-amber-200">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span className="truncate">
+                        현재 선택된 <strong>[{currentStatus?.label || aiSettings.provider}]</strong> 공급자가 미구동 상태입니다 ({currentStatus?.reason || '연결 대기'}). 질의 시 <strong>[로컬 NLP (기본)]</strong> 엔진으로 자동 전환됩니다.
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 ml-2">
+                      <button
+                        type="button"
+                        onClick={checkHealth}
+                        className="text-[10px] text-amber-300 hover:text-amber-100 flex items-center gap-1 cursor-pointer bg-amber-500/20 px-2 py-0.5 rounded-md border border-amber-500/30"
+                        title="실시간 상태 다시 확인"
+                      >
+                        <RefreshCw className={`w-2.5 h-2.5 ${isCheckingHealth ? 'animate-spin' : ''}`} />
+                        <span>재확인</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={onOpenSettings}
+                        className="text-[11px] text-amber-300 hover:text-amber-100 underline cursor-pointer"
+                      >
+                        설정
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className="flex items-center gap-2 px-1">
                 <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 hover:text-main transition-colors group">
                   <input
