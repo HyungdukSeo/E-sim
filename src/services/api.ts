@@ -183,13 +183,28 @@ export async function fetchStats(): Promise<StatsData> {
   return resp.data;
 }
 
+export interface AIProviderStatusItem {
+  key: string;
+  label: string;
+  available: boolean;
+  ready: boolean;
+  badge?: string;
+  reason?: string;
+  hint?: string;
+}
+
+export async function fetchAIProvidersStatus(aiConfig?: any): Promise<{ ok: boolean; status: Record<string, AIProviderStatusItem> }> {
+  const resp = await axios.get(`${API_BASE}/ai/providers-status`, { params: aiConfig });
+  return resp.data;
+}
+
 export async function queryAI(
   query: string, 
   contextCrs: CRItem[], 
   aiConfig: AppSettings['ai'],
   useDeepAnalysis: boolean = false,
   sshConfig?: SSHConfig
-): Promise<{ answer: string; matchedCrs?: any[]; provider?: string }> {
+): Promise<{ answer: string; matchedCrs?: any[]; provider?: string; fallbackNotice?: string }> {
   const resp = await axios.post(`${API_BASE}/ai/query`, {
     query,
     crs: contextCrs.slice(0, 20),
@@ -289,6 +304,7 @@ export async function compareCRsAPI(
   }, { timeout: 120000 });
   return resp.data;
 }
+
 export interface DiffWorkerStatus {
   enabled: boolean;
   status: 'idle' | 'running' | 'paused' | 'waiting_ssh' | 'completed';

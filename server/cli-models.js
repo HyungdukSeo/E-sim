@@ -4,7 +4,48 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-/**
+// Augment PATH for macOS GUI Electron environment to find claude, agy, codex, omniroute, etc.
+const userHome = os.homedir();
+const commonBinPaths = [
+  path.join(userHome, '.local', 'bin'),
+  path.join(userHome, '.nvm', 'versions', 'node', process.version, 'bin'),
+  '/opt/homebrew/bin',
+  '/usr/local/bin',
+  '/usr/bin',
+  '/bin',
+  '/usr/sbin',
+  '/sbin'
+];
+if (process.env.PATH) {
+  commonBinPaths.push(...process.env.PATH.split(':'));
+}
+process.env.PATH = Array.from(new Set(commonBinPaths)).filter(Boolean).join(':');
+
+export function hasCommand(cmd) {
+  try {
+    execSync(`which ${cmd}`, { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function checkOmniRouteAlive(baseUrl = 'http://localhost:20128/v1', apiKey = 'sk-omniroute') {
+  try {
+    let cleanUrl = (baseUrl || 'http://localhost:20128/v1').trim().replace(/\/$/, '');
+    if (!cleanUrl.endsWith('/v1') && !cleanUrl.includes('/v1/')) {
+      cleanUrl += '/v1';
+    }
+    const resp = await axios.get(`${cleanUrl}/models`, {
+      headers: { Authorization: `Bearer ${apiKey || 'sk-omniroute'}` },
+      timeout: 1500
+    });
+    return resp.status === 200;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 1. Claude — REST API 직접 호출 (Keychain / ~/.claude/.credentials.json)
  */
@@ -283,4 +324,142 @@ export async function getOmniRouteModels(baseUrl = 'http://localhost:20128/v1', 
   }
 
   return fallback;
+}
+
+/**
+ * 6. Execute AI via Local CLI (Claude Code or Antigravity/Agy)
+ */
+export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = '', timeoutMs = 90000 }) {
+  return new Promise((resolve, reject) => {
+    const cmd = cmdType === 'gemini' || cmdType === 'agy' ? 'agy' : 'claude';
+    if (!hasCommand(cmd)) {
+      return reject(new Error(`${cmd} CLI가 설치되지 않았거나 PATH에 없습니다.`));
+    }
+
+    const fullPrompt = systemPrompt
+      ? `${systemPrompt}\n\n[사용자 요청 및 분석 대상 데이터]\n${userPrompt}`
+      : userPrompt;
+
+    const args = [];
+
+    if (cmd === 'claude') {
+      if (model) {
+        const lower = model.toLowerCase();
+        if (lower.includes('opus')) args.push('--model', 'opus');
+        else if (lower.includes('haiku')) args.push('--model', 'haiku');
+        else if (lower.includes('sonnet')) args.push('--model', 'sonnet');
+      }
+      args.push('-p', fullPrompt);
+    } else if (cmd === 'agy') {
+      if (model && (model.startsWith('gemini') || model.startsWith('claude') || model.startsWith('gpt'))) {
+        args.push('--model', model);
+      }
+      args.push('-p', fullPrompt);
+    }
+
+    let stdout = '';
+    let stderr = '';
+
+    const proc = spawn(cmd, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, PATH: process.env.PATH }
+    });
+
+    const timer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch {}
+      reject(new Error(`${cmd} CLI 응답 타임아웃 (${Math.round(timeoutMs / 1000)}초 초과)`));
+    }, timeoutMs);
+
+    proc.stdout.on('data', (d) => {
+      stdout += d.toString();
+    });
+
+    proc.stderr.on('data', (d) => {
+      stderr += d.toString();
+    });
+
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve({
+          content: stdout.trim(),
+          provider: `${cmd.toUpperCase()} CLI (${model || 'default'})`
+        });
+      } else {
+        reject(new Error(`${cmd} CLI 실패 (코드 ${code}): ${stderr.trim() || stdout.trim()}`));
+      }
+    });
+  });
+}
+
+/**
+ * 7. Comprehensive AI Providers Availability Checker
+ */
+export async function getAIProvidersStatus(aiSettings = {}) {
+  const isOmniAlive = await checkOmniRouteAlive(aiSettings.omnirouteUrl, aiSettings.omnirouteApiKey);
+  const claudeToken = readClaudeToken();
+  const hasClaudeCli = hasCommand('claude');
+  const hasCodexCli = hasCommand('codex');
+  const hasAgyCli = hasCommand('agy');
+
+  return {
+    local: {
+      key: 'local',
+      label: '로컬 NLP (기본)',
+      available: true,
+      ready: true,
+      badge: '기본',
+      reason: '사내 보안 격리 로컬 NLP (상시 사용 가능)'
+    },
+    omniroute: {
+      key: 'omniroute',
+      label: 'OmniRoute',
+      available: isOmniAlive,
+      ready: isOmniAlive,
+      badge: 'Gateway',
+      reason: isOmniAlive ? 'OmniRoute 게이트웨이 정상 연결됨' : 'OmniRoute 서비스 미구동 (localhost:20128)',
+      hint: isOmniAlive ? '' : '터미널에서 omniroute 실행 필요'
+    },
+    custom: {
+      key: 'custom',
+      label: 'Custom LLM',
+      available: Boolean(aiSettings.customUrl && aiSettings.customUrl.trim().length > 5),
+      ready: Boolean(aiSettings.customUrl && aiSettings.customUrl.trim().length > 5),
+      badge: 'API',
+      reason: (aiSettings.customUrl && aiSettings.customUrl.trim().length > 5) ? '엔드포인트 URL 설정됨' : '엔드포인트 URL 미설정',
+      hint: '설정에서 Custom LLM URL 입력 필요'
+    },
+    openai: {
+      key: 'openai',
+      label: 'Codex',
+      available: Boolean(hasCodexCli || aiSettings.openaiApiKey),
+      ready: Boolean(hasCodexCli || aiSettings.openaiApiKey),
+      badge: 'CLI/API',
+      reason: hasCodexCli ? 'Codex CLI 사용 가능' : (aiSettings.openaiApiKey ? 'OpenAI API 키 설정됨' : 'Codex CLI 미설치'),
+      hint: hasCodexCli || aiSettings.openaiApiKey ? '' : 'Codex CLI 설치 또는 API 키 설정 필요'
+    },
+    gemini: {
+      key: 'gemini',
+      label: 'Antigravity',
+      available: Boolean(hasAgyCli || aiSettings.geminiApiKey),
+      ready: Boolean(hasAgyCli || aiSettings.geminiApiKey),
+      badge: 'CLI/API',
+      reason: hasAgyCli ? 'Antigravity(agy) CLI 사용 가능' : (aiSettings.geminiApiKey ? 'Gemini API 키 설정됨' : 'agy CLI 미설치'),
+      hint: hasAgyCli || aiSettings.geminiApiKey ? '' : 'agy CLI 설치 또는 API 키 설정 필요'
+    },
+    claude: {
+      key: 'claude',
+      label: 'Claude',
+      available: Boolean(hasClaudeCli || claudeToken || aiSettings.claudeApiKey),
+      ready: Boolean(hasClaudeCli || claudeToken || aiSettings.claudeApiKey),
+      badge: 'CLI/API',
+      reason: hasClaudeCli ? 'Claude CLI 정상 사용 가능' : (claudeToken ? 'Claude 인증 토큰 감지됨' : (aiSettings.claudeApiKey ? 'Claude API 키 설정됨' : 'Claude 인증 필요')),
+      hint: hasClaudeCli || claudeToken || aiSettings.claudeApiKey ? '' : 'claude login 또는 API 키 설정 필요'
+    }
+  };
 }

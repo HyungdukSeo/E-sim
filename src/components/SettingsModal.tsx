@@ -29,7 +29,17 @@ import {
   FolderOpen
 } from 'lucide-react';
 import { AppSettings, SyncMeta } from '../types/cr';
-import { testSSH, saveSettingsToDisk, fetchSettingsFromDisk, fetchDiffWorkerStatus, controlDiffWorker, DiffWorkerStatus, openDataDirectory } from '../services/api';
+import { 
+  testSSH, 
+  saveSettingsToDisk, 
+  fetchSettingsFromDisk, 
+  fetchDiffWorkerStatus, 
+  controlDiffWorker, 
+  DiffWorkerStatus, 
+  openDataDirectory,
+  fetchAIProvidersStatus,
+  AIProviderStatusItem
+} from '../services/api';
 import axios from 'axios';
 
 interface SettingsModalProps {
@@ -56,6 +66,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [sshTesting, setSshTesting] = useState(false);
   const [sshTestResult, setSshTestResult] = useState<{ok: boolean; message: string} | null>(null);
   const [dataFolderStatus, setDataFolderStatus] = useState<string | null>(null);
+  const [providersStatus, setProvidersStatus] = useState<Record<string, AIProviderStatusItem>>({});
 
   // Background Diff Worker Status & Control
   const [workerStatus, setWorkerStatus] = useState<DiffWorkerStatus | null>(null);
@@ -305,6 +316,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       fetchModelsForProvider(form.ai.provider, form.ai.omnirouteUrl, form.ai.omnirouteApiKey);
     }
   }, [form.ai.provider]);
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchAIProvidersStatus({
+        omnirouteUrl: form.ai.omnirouteUrl,
+        omnirouteApiKey: form.ai.omnirouteApiKey,
+        customUrl: form.ai.customUrl,
+        openaiApiKey: form.ai.apiKey,
+        claudeApiKey: form.ai.apiKey,
+        geminiApiKey: form.ai.apiKey
+      }).then(res => {
+        if (res && res.status) {
+          setProvidersStatus(res.status);
+        }
+      }).catch(() => {});
+    }
+  }, [isOpen, form.ai.omnirouteUrl, form.ai.customUrl]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -488,8 +516,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               AI 어시스턴트 & 모델 연동 설정
             </h3>
 
-            <div className="space-y-2">
-              <label className="block font-semibold text-slate-300">AI 공급자 (Provider)</label>
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <label className="block font-semibold text-slate-300">AI 공급자 (Provider)</label>
+                <span className="text-[11px] text-slate-400">
+                  {providersStatus[form.ai.provider]?.ready 
+                    ? <span className="text-emerald-400 font-medium">● 정상 작동 준비됨</span> 
+                    : form.ai.provider === 'local' 
+                    ? <span className="text-emerald-400 font-medium">● 상시 사용 가능</span> 
+                    : <span className="text-amber-400 font-medium">▲ 미구동 (로컬 NLP로 자동 대체)</span>}
+                </span>
+              </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
                 {[
                   { key: 'local', label: '로컬 NLP (기본)' },
@@ -498,26 +535,64 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   { key: 'openai', label: 'Codex' },
                   { key: 'gemini', label: 'Antigravity' },
                   { key: 'claude', label: 'Claude' }
-                ].map(item => (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => handleProviderChange(item.key as any)}
-                    className={`py-2 px-2 rounded-xl border text-xs font-semibold transition-all text-center flex flex-col items-center justify-center gap-0.5 ${
-                      form.ai.provider === item.key
-                        ? 'bg-indigo-600/20 border-indigo-500 text-indigo-300 shadow-sm'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    <span>{item.label}</span>
-                    {item.badge && (
-                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono">
-                        {item.badge}
-                      </span>
-                    )}
-                  </button>
-                ))}
+                ].map(item => {
+                  const status = providersStatus[item.key];
+                  const isReady = item.key === 'local' ? true : (status ? status.ready : false);
+                  const isSelected = form.ai.provider === item.key;
+
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => handleProviderChange(item.key as any)}
+                      title={status?.reason || (isReady ? '정상 사용 가능' : '미구동/설정 필요')}
+                      className={`relative py-2 px-2 rounded-xl border text-xs font-semibold transition-all text-center flex flex-col items-center justify-center gap-1 cursor-pointer ${
+                        isSelected
+                          ? 'bg-indigo-600/20 border-indigo-500 text-indigo-200 shadow-sm ring-1 ring-indigo-500/40'
+                          : isReady
+                          ? 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-slate-100'
+                          : 'bg-slate-950/60 border-slate-800/60 text-slate-500 hover:text-slate-400 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span 
+                          className={`w-2 h-2 rounded-full shrink-0 ${
+                            isReady 
+                              ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50' 
+                              : 'bg-slate-600'
+                          }`} 
+                        />
+                        <span className="truncate max-w-[85px]">{item.label}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {item.badge && (
+                          <span className="text-[9px] px-1 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono">
+                            {item.badge}
+                          </span>
+                        )}
+                        <span className={`text-[9px] font-mono ${isReady ? 'text-emerald-400' : 'text-slate-500'}`}>
+                          {isReady ? '준비됨' : '미구동'}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
+
+              {/* Provider Unready / Fallback Explanatory Notice */}
+              {form.ai.provider !== 'local' && providersStatus[form.ai.provider] && !providersStatus[form.ai.provider].ready && (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-start gap-2.5 text-xs text-amber-200">
+                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <div className="font-semibold text-amber-300">
+                      선택하신 [{providersStatus[form.ai.provider]?.label}] 공급자가 현재 미구동/미설정 상태입니다.
+                    </div>
+                    <div className="text-[11px] text-amber-300/80 leading-relaxed">
+                      {providersStatus[form.ai.provider]?.reason}. 질의 시 오류 없이 <strong>[로컬 NLP (기본)]</strong> 엔진으로 자동 전환되어 정상 동작합니다.
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* OmniRoute Dedicated Configuration */}

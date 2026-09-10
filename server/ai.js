@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { checkOmniRouteAlive, hasCommand, runCliAI } from './cli-models.js';
 
 const STOP_WORDS = new Set([
   'ssw', 'cr', 'crid', '시', '에서', '을', '를', '이', '가', '의', '에', '으로', '로', 
@@ -338,6 +339,7 @@ async function collectDeepDiffs(localAnalysis, sshConfig) {
 export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
   const provider = config.provider || 'local';
 
+  // 1. Custom LLM Endpoint
   if (provider === 'custom' && config.customUrl) {
     const endpoint = config.customUrl.replace(/\/$/, '') + '/chat/completions';
     const apiKey = config.apiKey || 'b644f37bc89d3472041218af3976fb9e';
@@ -353,58 +355,79 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
       headers: { Authorization: `Bearer ${apiKey}` },
       timeout: 120000
     });
-    return { content: resp.data.choices[0].message.content, provider: `custom (${model})` };
+    return { content: resp.data.choices[0].message.content, provider: `Custom LLM (${model})` };
   }
 
+  // 2. OpenAI / Codex
   if (provider === 'openai') {
-    const apiKey = config.openaiApiKey || 'proxy-handled-key';
+    const apiKey = config.openaiApiKey;
     const model = config.openaiModel || 'gpt-4o-mini';
 
-    const resp = await axios.post('https://api.openai.com/v1/chat/completions', {
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ]
-    }, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      timeout: 120000
-    });
-    return { content: resp.data.choices[0].message.content, provider: `openai (${model})` };
+    if (apiKey && apiKey !== 'proxy-handled-key') {
+      const resp = await axios.post('https://api.openai.com/v1/chat/completions', {
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ]
+      }, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        timeout: 120000
+      });
+      return { content: resp.data.choices[0].message.content, provider: `OpenAI (${model})` };
+    }
+    throw new Error('OpenAI API 키가 설정되지 않았습니다.');
   }
 
+  // 3. Antigravity / Gemini
   if (provider === 'gemini') {
-    const apiKey = config.geminiApiKey || 'proxy-handled-key';
-    const model = config.geminiModel || 'gemini-1.5-flash';
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-    const resp = await axios.post(url, {
-      contents: [{ parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }]
-    }, { timeout: 120000 });
-    const content = resp.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    return { content, provider: `gemini (${model})` };
+    const model = config.geminiModel || config.model || 'gemini-3.7-flash-high';
+    if (hasCommand('agy')) {
+      return await runCliAI('agy', { systemPrompt, userPrompt, model, timeoutMs: 90000 });
+    }
+    if (config.geminiApiKey && config.geminiApiKey !== 'proxy-handled-key') {
+      const apiKey = config.geminiApiKey;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const resp = await axios.post(url, {
+        contents: [{ parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }]
+      }, { timeout: 120000 });
+      const content = resp.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      return { content, provider: `Gemini API (${model})` };
+    }
+    throw new Error('Antigravity(agy) CLI 또는 Gemini API 키가 필요합니다.');
   }
 
+  // 4. Claude Code / Anthropic
   if (provider === 'claude') {
-    const apiKey = config.claudeApiKey || config.apiKey || 'proxy-handled-key';
-    const model = config.claudeModel || config.model || 'claude-3-5-sonnet-latest';
-
-    const resp = await axios.post('https://api.anthropic.com/v1/messages', {
-      model,
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }]
-    }, {
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      timeout: 120000
-    });
-    return { content: resp.data.content?.[0]?.text || '', provider: `claude (${model})` };
+    const model = config.claudeModel || config.model || 'sonnet';
+    if (hasCommand('claude')) {
+      return await runCliAI('claude', { systemPrompt, userPrompt, model, timeoutMs: 90000 });
+    }
+    if (config.claudeApiKey && config.claudeApiKey !== 'proxy-handled-key') {
+      const apiKey = config.claudeApiKey;
+      const resp = await axios.post('https://api.anthropic.com/v1/messages', {
+        model,
+        max_tokens: 4096,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }]
+      }, {
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        timeout: 120000
+      });
+      return { content: resp.data.content?.[0]?.text || '', provider: `Claude API (${model})` };
+    }
+    throw new Error('Claude CLI 또는 Anthropic API 키가 필요합니다.');
   }
 
+  // 5. OmniRoute Gateway
   if (provider === 'omniroute') {
+    const isAlive = await checkOmniRouteAlive(config.omnirouteUrl, config.omnirouteApiKey);
+    if (!isAlive) {
+      throw new Error('OmniRoute 서비스가 로컬(localhost:20128)에서 실행 중이지 않습니다.');
+    }
     let baseUrl = (config.omnirouteUrl || config.baseUrl || 'http://localhost:20128/v1').trim().replace(/\/$/, '');
     if (!baseUrl.endsWith('/v1') && !baseUrl.includes('/v1/')) {
       baseUrl += '/v1';
@@ -434,7 +457,7 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
 
   // Local fallback explanation
   return {
-    content: `[로컬 NLP 모드]\n\n설정된 외부 AI 공급자(${provider})가 없거나 로컬 모드입니다. 상세 소스 코드 분석을 위해 상단 환경설정에서 AI 공급자(OmniRoute / Claude / Custom LLM / OpenAI 등)를 설정해 주세요.`,
+    content: `[로컬 NLP 모드]\n\n설정된 외부 AI 공급자(${provider})가 없거나 로컬 모드입니다. 상단 환경설정에서 AI 공급자를 확인해 주세요.`,
     provider: 'local-fallback'
   };
 }
@@ -473,12 +496,30 @@ ${cr.checkinLog || '로그 없음'}
 [실제 소스 코드 변경 내역 (총 ${validDiffs.length}개 파일 변경)]
 ${diffText || '(변경 코드가 없거나 바이너리 파일입니다.)'}`;
 
-  const res = await callLLM({ systemPrompt, userPrompt, config });
-  return {
-    analysis: res.content,
-    provider: res.provider,
-    fileCount: validDiffs.length
-  };
+  try {
+    const res = await callLLM({ systemPrompt, userPrompt, config });
+    return {
+      analysis: res.content,
+      provider: res.provider,
+      fileCount: validDiffs.length
+    };
+  } catch (err) {
+    console.warn(`[AI Diff Analysis Error] ${config.provider || 'unknown'}:`, err.message);
+    const fallbackText = `> 💡 **알림**: 선택하신 AI 공급자(\`${config.provider || 'AI'}\`)가 비활성화 또는 응답 불가 상태여서 **[로컬 코드 Diff 요약 모드]**로 자동 전환하여 결과를 표시합니다.\n\n` +
+      `### 🎯 CR #${cr.crid} 코드 수정 개요\n` +
+      `- **요약:** ${cr.cleanSummary || cr.summary}\n` +
+      `- **수정 파일 수:** 총 ${validDiffs.length}개 파일 변경\n\n` +
+      `### 📝 변경 파일 목록\n` +
+      validDiffs.map(f => `- \`${f.fileName}\` (${f.oldVersion} -> ${f.newVersion})`).join('\n') +
+      `\n\n*(상세한 AI 심층 분석을 원하실 경우 환경설정에서 활성화된 AI 공급자를 선택하거나 OmniRoute를 실행해 주세요.)*`;
+
+    return {
+      analysis: fallbackText,
+      provider: 'local-summary (기본 자동전환)',
+      isFallback: true,
+      fileCount: validDiffs.length
+    };
+  }
 }
 
 /**
@@ -525,13 +566,33 @@ export async function compareMultipleCRDiffs({ crs, diffMap, config = {} }) {
 
   const userPrompt = `[비교 대상 CR 목록]\n${crsContext}\n\n[공통 수정 파일]\n${overlappingFiles.length > 0 ? overlappingFiles.join(', ') : '공통 수정 파일 없음 (개별 파일 독립 수정)'}\n\n위 CR들의 실제 소스 코드 변경점을 상호 교차 비교하여 한국어 마크다운으로 상세히 분석해 주세요.`;
 
-  const res = await callLLM({ systemPrompt, userPrompt, config });
-  return {
-    analysis: res.content,
-    provider: res.provider,
-    overlappingFiles,
-    crCount: crs.length
-  };
+  try {
+    const res = await callLLM({ systemPrompt, userPrompt, config });
+    return {
+      analysis: res.content,
+      provider: res.provider,
+      overlappingFiles,
+      crCount: crs.length
+    };
+  } catch (err) {
+    console.warn(`[AI Compare Error] ${config.provider || 'unknown'}:`, err.message);
+    const fallbackText = `> 💡 **알림**: 선택하신 AI 공급자(\`${config.provider || 'AI'}\`)가 비활성화 또는 응답 불가 상태여서 **[로컬 교차 비교 요약 모드]**로 자동 전환되었습니다.\n\n` +
+      `### 📊 비교 대상 CR 목록 (${crs.length}개)\n` +
+      crs.map(c => `- **#${c.crid}**: ${c.cleanSummary || c.summary} (${(c.files || []).length}개 파일)`).join('\n') +
+      `\n\n### 🔄 공통 수정 파일 분석\n` +
+      (overlappingFiles.length > 0 
+        ? `다음 파일이 여러 CR에서 중복 수정되었습니다:\n` + overlappingFiles.map(f => `- \`${f}\``).join('\n')
+        : `- 공통으로 겹치는 수정 파일이 없습니다. (각 CR이 독립된 파일을 수정함)`) +
+      `\n\n*(상세한 AI 심층 분석을 원하실 경우 환경설정에서 활성화된 AI 공급자를 선택하거나 OmniRoute를 실행해 주세요.)*`;
+
+    return {
+      analysis: fallbackText,
+      provider: 'local-summary (기본 자동전환)',
+      isFallback: true,
+      overlappingFiles,
+      crCount: crs.length
+    };
+  }
 }
 
 /**
@@ -542,6 +603,49 @@ export async function processAiQuery({ query, contextCrs = [], config = {} }) {
 
   // 1. External LLM Provider Proxy
   if (provider !== 'local') {
+    let unavailableReason = null;
+
+    // Quick availability sanity check
+    if (provider === 'omniroute') {
+      const isAlive = await checkOmniRouteAlive(config.omnirouteUrl, config.omnirouteApiKey);
+      if (!isAlive) {
+        unavailableReason = 'OmniRoute 로컬 서비스(localhost:20128)가 현재 실행 중이지 않아';
+      }
+    } else if (provider === 'custom') {
+      if (!config.customUrl || config.customUrl.trim().length < 5) {
+        unavailableReason = 'Custom LLM 엔드포인트 URL이 설정되지 않아';
+      }
+    } else if (provider === 'openai') {
+      if (!config.openaiApiKey || config.openaiApiKey === 'proxy-handled-key') {
+        unavailableReason = 'OpenAI API 키가 설정되지 않아';
+      }
+    } else if (provider === 'gemini') {
+      const hasAgy = hasCommand('agy');
+      const hasKey = Boolean(config.geminiApiKey && config.geminiApiKey !== 'proxy-handled-key');
+      if (!hasAgy && !hasKey) {
+        unavailableReason = 'Antigravity(agy) CLI 또는 Gemini API 키가 감지되지 않아';
+      }
+    } else if (provider === 'claude') {
+      const hasClaude = hasCommand('claude');
+      const hasKey = Boolean(config.claudeApiKey && config.claudeApiKey !== 'proxy-handled-key');
+      if (!hasClaude && !hasKey) {
+        unavailableReason = 'Claude CLI 또는 Anthropic API 키가 감지되지 않아';
+      }
+    }
+
+    if (unavailableReason) {
+      console.warn(`[AI Provider Unavailable] ${provider}: ${unavailableReason} -> falling back to local NLP`);
+      const fallbackResult = analyzeQueryLocally(query, contextCrs);
+      const prefixNotice = `> 💡 **알림**: 선택하신 AI 공급자(\`${provider}\`)가 ${unavailableReason} **[로컬 NLP (기본)]** 엔진으로 자동 전환하여 분석했습니다.\n\n`;
+      return {
+        ...fallbackResult,
+        answer: prefixNotice + fallbackResult.answer,
+        provider: 'local-nlp (기본값으로 자동 전환)',
+        isFallback: true,
+        fallbackNotice: `${unavailableReason} [로컬 NLP (기본)] 값으로 동작했습니다.`
+      };
+    }
+
     try {
       const localAnalysis = analyzeQueryLocally(query, contextCrs);
       let deepDiffContext = '';
@@ -564,6 +668,15 @@ export async function processAiQuery({ query, contextCrs = [], config = {} }) {
       };
     } catch (err) {
       console.warn(`[AI Proxy Error: ${provider}] Fallback to local NLP analyzer:`, err.message);
+      const fallbackResult = analyzeQueryLocally(query, contextCrs);
+      const prefixNotice = `> ⚠️ **알림**: 선택하신 AI 공급자(\`${provider}\`) 응답 실패 (${err.message})로 인해 **[로컬 NLP (기본)]** 엔진으로 안전하게 자동 전환하여 결과를 생성했습니다.\n\n`;
+      return {
+        ...fallbackResult,
+        answer: prefixNotice + fallbackResult.answer,
+        provider: 'local-nlp (기본값으로 자동 전환)',
+        isFallback: true,
+        fallbackNotice: `선택하신 [${provider}] 응답 실패로 인해 [로컬 NLP (기본)] 값으로 동작했습니다.`
+      };
     }
   }
 

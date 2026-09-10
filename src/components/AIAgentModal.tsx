@@ -19,7 +19,9 @@ import {
   Code2,
   CheckCircle2,
   AlertCircle,
-  HelpCircle
+  HelpCircle,
+  RotateCcw,
+  Trash2
 } from 'lucide-react';
 import { CRItem, AppSettings, SSHConfig } from '../types/cr';
 import { queryAI, fetchCRDetail } from '../services/api';
@@ -106,6 +108,14 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
         .catch(err => console.warn('AIAgent preview details error:', err));
     }
   }, [previewCR?.crid]);
+
+  const handleClearAll = () => {
+    setMessages([]);
+    setQuery('');
+    setPreviewCR(null);
+    setActiveRightTab('details');
+    setDiffTargetFile(null);
+  };
 
   if (!isOpen) return null;
 
@@ -203,7 +213,16 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleClearAll}
+              disabled={messages.length === 0 && !query && !previewCR}
+              className="text-xs text-slate-300 hover:text-white px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700/80 flex items-center gap-1.5 transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+              title="질의 내역과 우측 미리보기를 모두 비우고 처음 상태로 초기화합니다"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+              <span>화면 비우기</span>
+            </button>
             <button
               onClick={onOpenSettings}
               className="text-xs text-indigo-300 hover:text-indigo-200 px-3 py-1.5 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 transition-colors"
@@ -260,8 +279,24 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                   </div>
                 </div>
               ) : (
-                messages.map((msg, idx) => (
-                  <div key={idx} className="space-y-3">
+                <>
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 text-xs">
+                    <span className="font-semibold text-slate-400 flex items-center gap-1.5">
+                      <Bot className="w-4 h-4 text-indigo-400" />
+                      대화 내역 ({messages.filter(m => m.role === 'user').length}개 질의)
+                    </span>
+                    <button
+                      onClick={handleClearAll}
+                      className="flex items-center gap-1 text-xs text-rose-400 hover:text-rose-300 px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 transition-all cursor-pointer"
+                      title="모든 대화 내역을 비우고 초기 화면으로 돌아갑니다"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>대화 비우기</span>
+                    </button>
+                  </div>
+
+                  {messages.map((msg, idx) => (
+                    <div key={idx} className="space-y-3">
                     
                     {/* User Question Bubble */}
                     {msg.role === 'user' && (
@@ -279,10 +314,21 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                           
                           {/* Briefing Text Header */}
                           <div className="flex items-center justify-between text-xs text-indigo-300 font-bold border-b border-slate-800 pb-2">
-                            <span className="flex items-center gap-1.5">
-                              <Sparkles className="w-4 h-4 text-indigo-400" />
-                              분석 결과 요약
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="flex items-center gap-1.5">
+                                <Sparkles className="w-4 h-4 text-indigo-400" />
+                                분석 결과 요약
+                              </span>
+                              {msg.provider && (
+                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-medium ${
+                                  msg.provider.includes('자동 전환') || msg.provider.includes('fallback')
+                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                    : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                                }`}>
+                                  {msg.provider}
+                                </span>
+                              )}
+                            </div>
                             <button
                               onClick={() => handleCopy(msg.text, `msg_${idx}`)}
                               className="text-slate-400 hover:text-slate-200 flex items-center gap-1 text-[11px]"
@@ -421,8 +467,9 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                       </div>
                     )}
                   </div>
-                ))
-              )}
+                ))}
+              </>
+            )}
 
               {loading && (
                 <div className="glass-panel p-4 rounded-2xl border border-slate-800 flex items-center gap-3 text-slate-300 text-xs">
@@ -459,17 +506,42 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                 }}
                 className="flex items-center gap-2"
               >
-                <input
-                  type="text"
-                  value={query}
-                  onChange={e => setQuery(e.target.value)}
-                  placeholder="예: SSW 기동시 plsm 에서 IPCDRM 대기 이슈, 타임아웃 해결 내역..."
-                  className="flex-1 px-4 py-3 bg-slate-950 text-slate-100 text-xs sm:text-sm rounded-xl border border-slate-700/80 focus:border-indigo-500 outline-none"
-                />
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    value={query}
+                    onChange={e => setQuery(e.target.value)}
+                    placeholder="예: SSW 기동시 plsm 에서 IPCDRM 대기 이슈, 타임아웃 해결 내역..."
+                    className="w-full pl-4 pr-10 py-3 bg-slate-950 text-slate-100 text-xs sm:text-sm rounded-xl border border-slate-700/80 focus:border-indigo-500 outline-none"
+                  />
+                  {query && (
+                    <button
+                      type="button"
+                      onClick={() => setQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 p-1 transition-colors cursor-pointer"
+                      title="입력 내용 지우기"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {messages.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearAll}
+                    className="px-3 py-3 rounded-xl bg-slate-800 hover:bg-rose-500/20 hover:text-rose-300 text-slate-400 border border-slate-700/80 transition-all flex items-center gap-1.5 text-xs font-semibold flex-shrink-0 cursor-pointer"
+                    title="대화 내역 및 화면 비우기"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+                    <span className="hidden sm:inline">화면 비우기</span>
+                  </button>
+                )}
+
                 <button
                   type="submit"
                   disabled={!query.trim() || loading}
-                  className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:hover:bg-indigo-600 text-main font-bold text-xs transition-all flex items-center gap-1.5 flex-shrink-0 shadow-lg shadow-indigo-600/20"
+                  className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:hover:bg-indigo-600 text-main font-bold text-xs transition-all flex items-center gap-1.5 flex-shrink-0 shadow-lg shadow-indigo-600/20 cursor-pointer"
                 >
                   <Send className="w-4 h-4" />
                   <span>검색/질의</span>
@@ -535,6 +607,14 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                     >
                       <ExternalLink className="w-3.5 h-3.5" />
                     </a>
+
+                    <button
+                      onClick={() => setPreviewCR(null)}
+                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 transition-colors ml-1 border border-slate-700/60 cursor-pointer"
+                      title="미리보기 닫기 (화면 비우기)"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
 

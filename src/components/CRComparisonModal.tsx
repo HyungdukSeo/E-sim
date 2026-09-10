@@ -15,7 +15,9 @@ import {
   AlertTriangle,
   ArrowRight,
   Code2,
-  ExternalLink
+  ExternalLink,
+  RotateCcw,
+  Trash2
 } from 'lucide-react';
 import { CRItem, AppSettings, SSHConfig } from '../types/cr';
 import { compareCRsAPI, fetchCRDiffCache, loadSettings } from '../services/api';
@@ -138,10 +140,21 @@ export const CRComparisonModal: React.FC<CRComparisonModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {analysisResult && (
+              <button
+                onClick={() => { setAnalysisResult(null); setAiProvider(''); }}
+                className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-rose-500/20 text-slate-300 hover:text-rose-300 border border-slate-700/80 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+                title="비교 분석 결과를 지우고 초기화합니다"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+                <span>화면 비우기</span>
+              </button>
+            )}
+
             <button
               onClick={handleRunComparison}
               disabled={analyzing}
-              className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-indigo-500/20 transition-all disabled:opacity-50"
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-indigo-500/20 transition-all disabled:opacity-50 cursor-pointer"
             >
               {analyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
               {analysisResult ? 'AI 교차 비교 재분석' : 'AI 교차 비교 분석 시작'}
@@ -282,13 +295,23 @@ export const CRComparisonModal: React.FC<CRComparisonModalProps> = ({
               </h3>
 
               {analysisResult && (
-                <button
-                  onClick={handleCopy}
-                  className="flex items-center gap-1 text-slate-400 hover:text-slate-200 text-xs px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors"
-                >
-                  {copiedText ? <Check className="w-3.5 h-3.5 text-mantis-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  리포트 복사
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => { setAnalysisResult(null); setAiProvider(''); }}
+                    className="flex items-center gap-1 text-slate-400 hover:text-rose-400 text-xs px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-rose-500/15 border border-slate-700/60 hover:border-rose-500/30 transition-all cursor-pointer"
+                    title="비교 분석 결과를 지우고 초기화합니다"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    결과 비우기
+                  </button>
+                  <button
+                    onClick={handleCopy}
+                    className="flex items-center gap-1 text-slate-400 hover:text-slate-200 text-xs px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors cursor-pointer"
+                  >
+                    {copiedText ? <Check className="w-3.5 h-3.5 text-mantis-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    리포트 복사
+                  </button>
+                </div>
               )}
             </div>
 

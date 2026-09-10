@@ -19,7 +19,9 @@ import {
   Building2,
   FolderKanban,
   AlertTriangle,
-  Search
+  Search,
+  RotateCcw,
+  Trash2
 } from 'lucide-react';
 import { CRItem, SSHConfig, AppSettings } from '../types/cr';
 import { SimilarCRs } from './SimilarCRs';
@@ -424,13 +426,23 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
                     <Bot className="w-4 h-4 text-indigo-400" />
                     AI 엔진 분석 리포트 ({aiProvider})
                   </span>
-                  <button
-                    onClick={() => handleCopy(aiAnalysis, 'aiAnalysis')}
-                    className="flex items-center gap-1 text-slate-400 hover:text-slate-200 text-xs px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors"
-                  >
-                    {copiedField === 'aiAnalysis' ? <Check className="w-3.5 h-3.5 text-mantis-400" /> : <Copy className="w-3.5 h-3.5" />}
-                    리포트 복사
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => { setAiAnalysis(null); setAiProvider(''); }}
+                      className="flex items-center gap-1 text-slate-400 hover:text-rose-400 text-xs px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-rose-500/15 border border-slate-700/60 hover:border-rose-500/30 transition-all cursor-pointer"
+                      title="분석 리포트를 화면에서 지우고 초기화합니다"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      리포트 비우기
+                    </button>
+                    <button
+                      onClick={() => handleCopy(aiAnalysis, 'aiAnalysis')}
+                      className="flex items-center gap-1 text-slate-400 hover:text-slate-200 text-xs px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors cursor-pointer"
+                    >
+                      {copiedField === 'aiAnalysis' ? <Check className="w-3.5 h-3.5 text-mantis-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      리포트 복사
+                    </button>
+                  </div>
                 </div>
 
                 <div className="prose prose-invert prose-sm max-w-none text-slate-200 text-xs leading-relaxed space-y-3">

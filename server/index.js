@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 import { syncMantisData, getLocalDatabase, importDatabase, fetchCRPageDetails, DB_FILE, META_FILE, DATA_DIR } from './sync.js';
 import { processAiQuery, analyzeSingleCRDiff, compareMultipleCRDiffs } from './ai.js';
 import { testSSHConnection, fetchFileDiffSSH } from './ssh.js';
-import { getClaudeModels, getAntigravityModels, getCodexModels, getOmniRouteModels } from './cli-models.js';
+import { getClaudeModels, getAntigravityModels, getCodexModels, getOmniRouteModels, getAIProvidersStatus } from './cli-models.js';
 import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, batchIndexDiffs, backgroundDiffIndexer } from './diff-cache.js';
 import { sshPool } from './ssh-pool.js';
 
@@ -408,6 +408,19 @@ app.post('/api/ai/query', async (req, res) => {
     res.json({ ok: true, result });
   } catch (err) {
     console.error('[AI Query Error]', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// 8.4 AI Providers Availability & Health Checker
+app.get('/api/ai/providers-status', async (req, res) => {
+  try {
+    const disk = loadDiskSettings()?.settings || {};
+    const aiConfig = { ...(disk.ai || {}), ...(req.query || {}) };
+    const status = await getAIProvidersStatus(aiConfig);
+    res.json({ ok: true, status });
+  } catch (err) {
+    console.error('[AI Providers Status Error]', err.message);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
