@@ -55,6 +55,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [sshTestStatus, setSshTestStatus] = useState<string | null>(null);
   const [sshTesting, setSshTesting] = useState(false);
   const [sshTestResult, setSshTestResult] = useState<{ok: boolean; message: string} | null>(null);
+  const [dataFolderStatus, setDataFolderStatus] = useState<string | null>(null);
 
   // Background Diff Worker Status & Control
   const [workerStatus, setWorkerStatus] = useState<DiffWorkerStatus | null>(null);
@@ -306,8 +307,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   }, [form.ai.provider]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  if (!isOpen) return null;
-
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     const primaryServer = form.sshServers?.find(s => s.enabled) || form.sshServers?.[0] || form.ssh;
@@ -326,8 +325,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       onClose();
     }, 1200);
   };
-
-  const [dataFolderStatus, setDataFolderStatus] = useState<string | null>(null);
 
   const handleOpenDataFolder = async () => {
     try {
@@ -371,6 +368,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setTimeout(() => setImportStatus(null), 4000);
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-150">
