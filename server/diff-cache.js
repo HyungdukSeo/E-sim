@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { fetchFileDiffSSH } from './ssh.js';
+import { sshPool } from './ssh-pool.js';
 import { DATA_DIR, ROOT_DIR } from './sync.js';
 
 export const DIFF_CACHE_DIR = path.join(DATA_DIR, 'diff_cache');
@@ -145,8 +146,11 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = 10, forceRef
     if (BINARY_EXTS.has(ext)) continue;
 
     processed++;
+    if (sshPool.isVIPActive()) {
+      await new Promise(res => setTimeout(res, 1200)); // Momentarily yield to interactive user requests
+    }
     try {
-      const diffRes = await fetchFileDiffSSH(validServers, filePath, checkinLog);
+      const diffRes = await fetchFileDiffSSH(validServers, filePath, checkinLog, { priority: 'background' });
       results.push({
         fileName,
         filePath,

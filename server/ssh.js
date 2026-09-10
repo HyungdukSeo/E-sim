@@ -144,144 +144,25 @@ export function execSSHBuffer(conn, command, timeoutMs = 6000, streamRef) {
   });
 }
 
+import { sshPool, createRawSSHClient } from './ssh-pool.js';
+
 /**
  * Connect to SSH server with guaranteed timeout & legacy algorithm support
- * Uses a raw net.Socket for TCP-level timeout (covers SYN hang on Windows)
+ * Delegated to high-performance ssh-pool
  */
 function createSSHClient(config) {
-  return new Promise((resolve, reject) => {
-    const conn = new Client();
-    let isSettled = false;
-
-    const host = sanitizeHost(config.host);
-    const port = parseInt(config.port, 10) || 22;
-    const username = (config.username || 'dev').trim();
-    const TCP_TIMEOUT = 5000;
-
-    function settle(fn) {
-      if (!isSettled) {
-        isSettled = true;
-        fn();
-      }
-    }
-
-    // Try reading local user private key if password is empty
-    let privateKey = config.privateKey;
-    if (!privateKey && !config.password) {
-      try {
-        const defaultKeyPath = path.join(os.homedir(), '.ssh', 'id_rsa');
-        if (fs.existsSync(defaultKeyPath)) {
-          privateKey = fs.readFileSync(defaultKeyPath, 'utf8');
-        }
-      } catch (e) {}
-    }
-
-    // ── Pre-create a raw TCP socket with explicit connect timeout ──
-    const socket = new net.Socket();
-    let tcpTimer = setTimeout(() => {
-      socket.destroy();
-      settle(() => reject(new Error(
-        `SSH TCP 연결 시간 초과 (${TCP_TIMEOUT / 1000}초) - [${host}:${port}] 서버 IP 및 사내망/VPN 연결을 확인해주세요.`
-      )));
-    }, TCP_TIMEOUT);
-
-    socket.once('error', (err) => {
-      clearTimeout(tcpTimer);
-      socket.destroy();
-      let friendly = err.message;
-      if (err.code === 'ECONNREFUSED') {
-        friendly = `접속 거부 (ECONNREFUSED) - ${host}:${port}에 SSH 데몬이 구동 중이지 않거나 방화벽으로 차단되었습니다.`;
-      } else if (['ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH'].includes(err.code)) {
-        friendly = `접속 불가 (${err.code}) - ${host} 서버로 패킷이 도달할 수 없습니다. 사내 VPN 또는 서버 IP를 확인해주세요.`;
-      }
-      settle(() => reject(new Error(friendly)));
-    });
-
-    socket.connect(port, host, () => {
-      clearTimeout(tcpTimer);
-      tcpTimer = null;
-    });
-
-    conn
-      .on('ready', () => settle(() => resolve(conn)))
-      .on('error', (err) => {
-        try { conn.destroy(); } catch (e) {}
-        let friendly = err.message;
-        if (err.level === 'client-authentication' || err.message.includes('All configured authentication methods failed')) {
-          friendly = `인증 실패 - 계정(${username}) 또는 비밀번호가 올바르지 않습니다.`;
-        } else if (err.message.includes('Handshake failed')) {
-          friendly = `SSH 암호화 핸드셰이크 실패 - 서버의 키 교환/암호 알고리즘 불일치: ${err.message}`;
-        }
-        settle(() => reject(new Error(friendly)));
-      })
-      .on('keyboard-interactive', (name, instructions, instructionsLang, prompts, finish) => {
-        const answers = prompts.map(() => config.password || '');
-        finish(answers);
-      })
-      .connect({
-        sock: socket,       // hand off our pre-connected socket
-        username: username,
-        password: config.password,
-        privateKey: privateKey,
-        tryKeyboard: true,
-        readyTimeout: 15000, // SSH handshake timeout (after TCP is up)
-        keepaliveInterval: 5000,
-        keepaliveCountMax: 2,
-        algorithms: {
-          kex: [
-            'curve25519-sha256',
-            'curve25519-sha256@libssh.org',
-            'ecdh-sha2-nistp256',
-            'ecdh-sha2-nistp384',
-            'ecdh-sha2-nistp521',
-            'diffie-hellman-group14-sha256',
-            'diffie-hellman-group14-sha1',
-            'diffie-hellman-group1-sha1',
-            'diffie-hellman-group-exchange-sha256',
-            'diffie-hellman-group-exchange-sha1'
-          ],
-          cipher: [
-            'aes128-ctr',
-            'aes192-ctr',
-            'aes256-ctr',
-            'aes128-gcm',
-            'aes256-gcm',
-            'aes256-cbc',
-            'aes192-cbc',
-            'aes128-cbc',
-            '3des-cbc'
-          ],
-          serverHostKey: [
-            'ssh-ed25519',
-            'ecdsa-sha2-nistp256',
-            'ecdsa-sha2-nistp384',
-            'ecdsa-sha2-nistp521',
-            'rsa-sha2-512',
-            'rsa-sha2-256',
-            'ssh-rsa',
-            'ssh-dss'
-          ],
-          hmac: [
-            'hmac-sha2-256',
-            'hmac-sha2-512',
-            'hmac-sha1',
-            'hmac-md5',
-            'hmac-sha1-96'
-          ]
-        }
-      });
-  });
+  return createRawSSHClient(config);
 }
 
 /**
- * Test SSH Connection (Lightweight, pure connection verification)
+ * Test SSH Connection (Lightweight, pure connection verification with VIP priority)
  */
-export async function testSSHConnection(config) {
+export async function testSSHConnection(config, options = {}) {
   if (!config.host || !config.username) {
     throw new Error('서버 IP와 계정(Username)을 입력해주세요.');
   }
 
-  const HARD_TIMEOUT_MS = 10000;
+  const HARD_TIMEOUT_MS = 12000;
   let hardTimer;
   const deadline = new Promise((_, reject) => {
     hardTimer = setTimeout(() =>
@@ -290,20 +171,20 @@ export async function testSSHConnection(config) {
     );
   });
 
-  let conn;
+  let handle;
   try {
     return await Promise.race([deadline, (async () => {
-      conn = await createSSHClient(config);
-      const { buffer } = await execSSHBuffer(conn, 'uname -a || hostname || echo ok', 4000);
+      // testSSHConnection always gets VIP priority to jump ahead of background workers
+      handle = await sshPool.acquire(config, { priority: 'vip', timeout: 10000 });
+      const { buffer } = await execSSHBuffer(handle.conn, 'uname -a || hostname || echo ok', 4000);
       return { ok: true, message: `SSH 연결 성공 (${buffer.toString('utf-8').trim() || 'OK'})` };
     })()]);
   } catch (err) {
     throw new Error(err.message);
   } finally {
     clearTimeout(hardTimer);
-    if (conn) {
-      try { conn.end(); } catch (e) {}
-      try { conn.destroy(); } catch (e) {}
+    if (handle) {
+      handle.release();
     }
   }
 }
@@ -399,7 +280,7 @@ async function fetchOneVersion(conn, vobSubPath, versionSuffix, candidateViews) 
  * Fetch Line-by-Line Diff for ClearCase Element with Multi-Server Auto-Fallback
  * (VOB Affinity Learning + Fast Shell Pre-Flight Probe + Dynamic Fast Failover Across Servers)
  */
-export async function fetchFileDiffSSH(configOrServers, filePath, checkinLog = '') {
+export async function fetchFileDiffSSH(configOrServers, filePath, checkinLog = '', options = {}) {
   let servers = [];
   if (Array.isArray(configOrServers)) {
     servers = configOrServers;
@@ -445,7 +326,7 @@ export async function fetchFileDiffSSH(configOrServers, filePath, checkinLog = '
     try {
       console.log(`[ClearCase Multi-Server] (${i + 1}/${servers.length}) Searching file ${filePath} on ${serverLabel}...`);
       const isSingle = servers.length === 1;
-      const result = await _fetchFileDiffFromSingleServer(server, filePath, checkinLog, isSingle);
+      const result = await _fetchFileDiffFromSingleServer(server, filePath, checkinLog, isSingle, options);
       if (result && result.ok) {
         if (vobKey) {
           markVobServerAffinity(vobKey, server.host);
@@ -477,7 +358,7 @@ export async function fetchFileDiffSSH(configOrServers, filePath, checkinLog = '
   );
 }
 
-async function _fetchFileDiffFromSingleServer(config, filePath, checkinLog = '', isSingleServer = false) {
+async function _fetchFileDiffFromSingleServer(config, filePath, checkinLog = '', isSingleServer = false, options = {}) {
   if (!config.host || !config.username) {
     throw new Error(`ClearCase SSH 서버 설정(IP/계정)이 필요합니다: ${config.host || 'IP미설정'}`);
   }
@@ -492,13 +373,14 @@ async function _fetchFileDiffFromSingleServer(config, filePath, checkinLog = '',
   });
 
   try {
-    return await Promise.race([hardDeadline, _fetchFileDiffSSHImpl(config, filePath, checkinLog)]);
+    return await Promise.race([hardDeadline, _fetchFileDiffSSHImpl(config, filePath, checkinLog, options)]);
   } finally {
     clearTimeout(hardTimer);
   }
 }
 
-async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '') {
+async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '', options = {}) {
+  const priority = options.priority || 'normal';
 
   // 1. Calculate predecessor version and current version
   let currentVersion = '1';
@@ -581,11 +463,12 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '') {
   }
   const uniqueViews = Array.from(new Set(candidateViews)).filter(Boolean);
 
-  let conn;
-  let oldConn;
+  let handle1;
+  let handle2;
   try {
     const t0 = Date.now();
-    conn = await createSSHClient(config);
+    handle1 = await sshPool.acquire(config, { priority, timeout: 15000 });
+    const conn = handle1.conn;
 
     // Fast Pre-Flight Check (< 2s): Verify if file, directory or VOB is present on this server
     // Note: Remote user login shell may be csh/tcsh, so commands must NOT contain raw unescaped newlines.
@@ -624,13 +507,12 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '') {
 
     // 2. Fetch current and previous versions in parallel.
     // Each fetchOneVersion() races many exec() channels at once (per-view x per-strategy),
-    // so old/new MUST use separate SSH connections — sharing one connection made both
-    // sides compete for the same channel slots and the server would silently starve
-    // whichever side's channels opened second (observed: old/left side always empty).
+    // so old/new uses separate pooled connections if needOld is true.
     const needOld = predVersion !== '0';
     if (needOld) {
-      oldConn = await createSSHClient(config);
+      handle2 = await sshPool.acquire(config, { priority, timeout: 15000 });
     }
+    const oldConn = handle2 ? handle2.conn : null;
     const [newRes, oldRes] = await Promise.all([
       fetchOneVersion(conn, vobSubPath, currSuffix, effectiveViews),
       needOld
@@ -669,22 +551,24 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '') {
       fileName,
       oldText,
       newText,
-      `Predecessor (v${predVersion})`,
-      `Current (v${currentVersion})`
+      prevSuffix,
+      currSuffix,
+      { context: 3 }
     );
 
     const unifiedDiffText = diff.createTwoFilesPatch(
-      `a/${fileName}`,
-      `b/${fileName}`,
+      fileName,
+      fileName,
       oldText,
       newText,
-      `v${predVersion}`,
-      `v${currentVersion}`
+      prevSuffix,
+      currSuffix,
+      { context: 3 }
     );
 
     // Compute friendly CLI vimdiff command
-    const cliOldPath = `/view/${foundView}${vobSubPath}${prevSuffix}`;
-    const cliNewPath = `/view/${foundView}${vobSubPath}${currSuffix}`;
+    const cliOldPath = `${vobSubPath}${prevSuffix}`;
+    const cliNewPath = `${vobSubPath}${currSuffix}`;
     const vimdiffCommand = `vimdiff ${cliOldPath} ${cliNewPath}`;
 
     const finalResult = {
@@ -717,14 +601,12 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '') {
     console.error('[SSH Diff Error]', err.message);
     throw new Error(err.message);
   } finally {
-    // ALWAYS guaranteed clean disconnect - 0 garbage/zombie sessions
-    if (conn) {
-      try { conn.end(); } catch (e) {}
-      try { conn.destroy(); } catch (e) {}
+    // Release connections back to warm pool (0 socket destruction)
+    if (handle1) {
+      try { handle1.release(); } catch (e) {}
     }
-    if (oldConn) {
-      try { oldConn.end(); } catch (e) {}
-      try { oldConn.destroy(); } catch (e) {}
+    if (handle2) {
+      try { handle2.release(); } catch (e) {}
     }
   }
 }

@@ -12,6 +12,7 @@ import { processAiQuery, analyzeSingleCRDiff, compareMultipleCRDiffs } from './a
 import { testSSHConnection, fetchFileDiffSSH } from './ssh.js';
 import { getClaudeModels, getAntigravityModels, getCodexModels, getOmniRouteModels } from './cli-models.js';
 import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, batchIndexDiffs, backgroundDiffIndexer } from './diff-cache.js';
+import { sshPool } from './ssh-pool.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -477,7 +478,7 @@ app.post('/api/ssh/diff', async (req, res) => {
       return res.status(400).json({ ok: false, error: '파일 경로가 필요합니다.' });
     }
     const servers = resolveAllSSHServers(sshServers, sshConfig);
-    const result = await fetchFileDiffSSH(servers, filePath, checkinLog || '');
+    const result = await fetchFileDiffSSH(servers, filePath, checkinLog || '', { priority: 'vip' });
     res.json(result);
   } catch (err) {
     console.error('[SSH Diff Error]', err.message);
@@ -752,6 +753,7 @@ export function startServer(defaultPort = PORT) {
 
 export function stopServer() {
   return new Promise((resolve) => {
+    try { sshPool.destroyAll(); } catch (e) {}
     if (!serverInstance) return resolve();
     serverInstance.close(() => {
       console.log('[Backend] Server stopped successfully.');
