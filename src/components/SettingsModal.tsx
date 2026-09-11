@@ -323,7 +323,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
 
-  const refreshProvidersStatus = React.useCallback(async () => {
+  // forceRefresh bypasses the server-side CLI-path cache (see server/cli-models.js).
+  // Without it, clicking "실시간 감지" right after the modal's own auto-check almost
+  // always hits the cache and returns near-instantly — the spinner flashes so briefly
+  // it looks like the button did nothing. The manual button always forces a real
+  // re-check, and we also floor the spinner at ~400ms so the click always reads as
+  // having done something even when the result truly is unchanged.
+  const refreshProvidersStatus = React.useCallback(async (forceRefresh = false) => {
+    const startedAt = Date.now();
     try {
       setIsRefreshingProviders(true);
       const res = await fetchAIProvidersStatus({
@@ -332,7 +339,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         customUrl: form.ai.customUrl,
         openaiApiKey: form.ai.apiKey,
         claudeApiKey: form.ai.apiKey,
-        geminiApiKey: form.ai.apiKey
+        geminiApiKey: form.ai.apiKey,
+        forceRefresh
       });
       if (res && res.status) {
         setProvidersStatus(res.status);
@@ -351,6 +359,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     } catch {
       // ignore
     } finally {
+      if (forceRefresh) {
+        const elapsed = Date.now() - startedAt;
+        const MIN_SPINNER_MS = 400;
+        if (elapsed < MIN_SPINNER_MS) {
+          await new Promise(r => setTimeout(r, MIN_SPINNER_MS - elapsed));
+        }
+      }
       setIsRefreshingProviders(false);
     }
   }, [form.ai.omnirouteUrl, form.ai.omnirouteApiKey, form.ai.customUrl, form.ai.apiKey]);
@@ -592,7 +607,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <label className="block font-semibold text-slate-300">AI 공급자 (Provider)</label>
                   <button
                     type="button"
-                    onClick={refreshProvidersStatus}
+                    onClick={() => refreshProvidersStatus(true)}
                     className="p-1 rounded-md text-slate-400 hover:text-indigo-300 hover:bg-slate-800 transition-all flex items-center gap-1 text-[11px] cursor-pointer"
                     title="실시간 공급자 구동 상태 즉시 새로고침"
                   >

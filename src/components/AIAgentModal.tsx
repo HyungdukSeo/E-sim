@@ -99,7 +99,13 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
   const [providersStatus, setProvidersStatus] = useState<Record<string, AIProviderStatusItem>>({});
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
 
-  const checkHealth = React.useCallback(async () => {
+  // forceRefresh bypasses the server-side CLI-path cache (server/cli-models.js) so the
+  // manual refresh buttons below actually re-check instead of near-instantly returning
+  // a cached result right after the modal's own auto-check (which made clicking the
+  // button look like nothing happened). Floors the spinner at ~400ms so a forced
+  // refresh always reads as having done something.
+  const checkHealth = React.useCallback(async (forceRefresh = false) => {
+    const startedAt = Date.now();
     try {
       setIsCheckingHealth(true);
       const res = await fetchAIProvidersStatus({
@@ -108,7 +114,8 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
         customUrl: aiSettings.customUrl,
         openaiApiKey: aiSettings.apiKey,
         claudeApiKey: aiSettings.apiKey,
-        geminiApiKey: aiSettings.apiKey
+        geminiApiKey: aiSettings.apiKey,
+        forceRefresh
       });
       if (res && res.status) {
         setProvidersStatus(res.status);
@@ -116,6 +123,13 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
     } catch {
       // ignore
     } finally {
+      if (forceRefresh) {
+        const elapsed = Date.now() - startedAt;
+        const MIN_SPINNER_MS = 400;
+        if (elapsed < MIN_SPINNER_MS) {
+          await new Promise(r => setTimeout(r, MIN_SPINNER_MS - elapsed));
+        }
+      }
       setIsCheckingHealth(false);
     }
   }, [aiSettings]);
@@ -255,9 +269,9 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                           미구동 → 로컬 NLP 대체
                         </span>
                       )}
-                      <button 
+                      <button
                         type="button"
-                        onClick={checkHealth}
+                        onClick={() => checkHealth(true)}
                         title="실시간 공급자 구동 상태 즉시 새로고침"
                         className="ml-0.5 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-300 cursor-pointer p-0.5"
                       >
@@ -562,7 +576,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                     <div className="flex items-center gap-2 shrink-0 ml-2">
                       <button
                         type="button"
-                        onClick={checkHealth}
+                        onClick={() => checkHealth(true)}
                         className="text-[10px] text-amber-800 dark:text-amber-300 hover:text-amber-950 dark:hover:text-amber-100 flex items-center gap-1 cursor-pointer bg-amber-500/15 dark:bg-amber-500/20 px-2 py-0.5 rounded-md border border-amber-500/30 font-medium"
                         title="실시간 상태 다시 확인"
                       >

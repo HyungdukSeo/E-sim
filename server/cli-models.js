@@ -76,9 +76,9 @@ if (process.platform !== 'win32') {
 const commandPathCache = new Map();
 const COMMAND_CACHE_TTL_MS = 5 * 60 * 1000;
 
-export async function findCommandPath(cmd) {
+export async function findCommandPath(cmd, { forceRefresh = false } = {}) {
   const cached = commandPathCache.get(cmd);
-  if (cached && Date.now() - cached.at < COMMAND_CACHE_TTL_MS) {
+  if (!forceRefresh && cached && Date.now() - cached.at < COMMAND_CACHE_TTL_MS) {
     return cached.path;
   }
   const resolved = await _findCommandPathUncached(cmd);
@@ -113,8 +113,8 @@ async function _findCommandPathUncached(cmd) {
   return null;
 }
 
-export async function hasCommand(cmd) {
-  return Boolean(await findCommandPath(cmd));
+export async function hasCommand(cmd, opts) {
+  return Boolean(await findCommandPath(cmd, opts));
 }
 
 export function isInvalidOmniRouteKey(key) {
@@ -690,15 +690,18 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
 /**
  * 7. Comprehensive AI Providers Availability Checker
  */
-export async function getAIProvidersStatus(aiSettings = {}) {
+export async function getAIProvidersStatus(aiSettings = {}, { forceRefresh = false } = {}) {
   // All of these shell out or hit the network — run them concurrently instead of
   // sequentially so the total wait is the slowest single check, not the sum of all.
+  // forceRefresh bypasses the CLI-path cache — used by the Settings modal's manual
+  // "실시간 감지" button so it actually re-checks instead of instantly returning a
+  // cached result (which made the click look like it did nothing).
   const [omniStatus, claudeToken, hasClaudeCli, hasCodexCli, hasAgyCli] = await Promise.all([
     checkOmniRouteStatus(aiSettings.omnirouteUrl, aiSettings.omnirouteApiKey),
     readClaudeToken(),
-    hasCommand('claude'),
-    hasCommand('codex'),
-    hasCommand('agy')
+    hasCommand('claude', { forceRefresh }),
+    hasCommand('codex', { forceRefresh }),
+    hasCommand('agy', { forceRefresh })
   ]);
 
   return {

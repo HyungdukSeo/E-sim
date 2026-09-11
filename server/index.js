@@ -549,8 +549,9 @@ app.post('/api/ai/query', async (req, res) => {
 app.get('/api/ai/providers-status', async (req, res) => {
   try {
     const disk = loadDiskSettings()?.settings || {};
-    const aiConfig = { ...(disk.ai || {}), ...(req.query || {}) };
-    const status = await getAIProvidersStatus(aiConfig);
+    const { forceRefresh, ...queryRest } = req.query || {};
+    const aiConfig = { ...(disk.ai || {}), ...queryRest };
+    const status = await getAIProvidersStatus(aiConfig, { forceRefresh: forceRefresh === 'true' });
     res.json({ ok: true, status });
   } catch (err) {
     console.error('[AI Providers Status Error]', err.message);
