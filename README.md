@@ -109,74 +109,92 @@
 
 ## 💻 설치 및 실행 방법 (Quick Start Guide)
 
-### 🍎 macOS 환경 (추천: 전용 설치형 DMG 또는 스크립트)
+> **[GitHub Releases v1.0.2 바로가기](https://github.com/HyungdukSeo/E-sim/releases/tag/v1.0.2)** 에서 운영체제에 맞는 최신 설치 파일과 데이터 번들을 다운로드할 수 있습니다.
 
-#### 방법 1: macOS 전용 설치형 DMG 파일로 설치 (가장 간편)
-1. [GitHub Releases](https://github.com/HyungdukSeo/E-sim/releases)에서 **`Mantis CR Ultra Hub-1.0.2-arm64.dmg`** 를 다운로드합니다.
-2. 다운로드한 `.dmg` 파일을 열고 **`Mantis CR Ultra Hub`** 아이콘을 **`Applications`** 폴더로 드래그하여 설치합니다.
-3. 실행하면 상단 **메뉴바(시스템 트레이)에 번개 아이콘이 상주**하며 백그라운드로 작동합니다.
-   * **트레이 아이콘 클릭 메뉴**:
-     * 🌐 **Mantis CR Hub 열기** (전용 데스크톱 창 또는 브라우저 실행)
-     * 🔄 **Mantis 최신 데이터 즉시 동기화 / 업데이트** (원격 7,700건 원클릭 갱신)
-     * 🟢 **서버 상태 실시간 모니터링 (Port 3001)**
-     * ⚙️ **ClearCase SSH 설정 열기**
-     * 🚪 **완전 종료**
+---
 
-#### 방법 2: 터미널 스크립트로 실행
-1. 저장소를 클론합니다:
-   ```bash
-   git clone https://github.com/HyungdukSeo/E-sim.git
-   cd E-sim
-   ```
-2. 시작 스크립트를 실행합니다:
-   ```bash
-   chmod +x start.sh stop.sh
-   ./start.sh
-   ```
-3. 브라우저에서 **`http://localhost:5173`** 또는 **`http://localhost:3001`** 에 접속합니다.
-4. 서비스 종료 시:
-   ```bash
-   ./stop.sh
-   ```
+### 1️⃣ OS별 설치 파일로 간편 설치 (추천)
 
-#### 방법 3: 소스에서 직접 macOS DMG 빌드
+#### 🪟 Windows 환경 (원클릭 자동 설치)
+1. **설치 파일 다운로드**: [GitHub Releases v1.0.2](https://github.com/HyungdukSeo/E-sim/releases/tag/v1.0.2)에서 **`MantisCRHub-Setup-1.0.2.exe`** (118MB)를 다운로드합니다.
+2. **설치 실행**: 다운로드한 설치 프로그램을 실행하면 바탕화면과 시작 메뉴에 바로가기가 생성되며 자동으로 설치가 완료됩니다.
+3. **실행**: 생성된 **`Mantis CR Ultra Hub`** 아이콘을 클릭하여 실행합니다.
+
+#### 🍎 macOS 환경 (Apple Silicon M1/M2/M3/M4 전용)
+1. **설치 파일 다운로드**: [GitHub Releases v1.0.2](https://github.com/HyungdukSeo/E-sim/releases/tag/v1.0.2)에서 **`Mantis.CR.Ultra.Hub-1.0.2-arm64.dmg`** (147MB)를 다운로드합니다.
+2. **설치 실행**: 다운로드한 `.dmg` 파일을 더블 클릭하여 연 후, **`Mantis CR Ultra Hub`** 아이콘을 **`Applications`** 폴더로 드래그 앤 드롭합니다.
+3. **실행**: Launchpad 또는 응용 프로그램 폴더에서 앱을 실행합니다.
+   * macOS 상단 **메뉴바(시스템 트레이)에 번개 아이콘이 상주**하며 백그라운드로 작동합니다.
+   * **트레이 메뉴**: 🌐 데스크톱 창 열기, 🔄 Mantis 데이터 즉시 동기화, 🟢 서버 상태 모니터링, ⚙️ ClearCase SSH 설정, 🚪 완전 종료
+
+---
+
+### 2️⃣ ⚡ 초고속 구동을 위한 초기 데이터셋 셋업 (Zero-Setup 가이드)
 
 > [!IMPORTANT]
-> **전제 조건**: `data/cr_database.json` 파일이 반드시 있어야 합니다.  
-> 이 파일은 234MB로 GitHub에 올라가 있지 않으므로, **기존 설치된 앱에서 DB를 복사**하거나 앱을 먼저 실행하여 동기화해야 합니다.
+> **신규 PC나 다른 동료의 PC에 설치한 직후**, 원격 서버에 접속하여 7,700여 건의 Mantis CR과 5,400여 건의 소스코드 Diff를 수 시간에 걸쳐 새로 수집할 필요가 없습니다!  
+> 릴리즈에 첨부된 **`mantis_db_diff_bundle_2026-09-11.zip`**과 **`settings.json`**을 적용하면 **단 10초 만에 100% 완성된 상태로 즉시 사용**할 수 있습니다.
 
+#### 📥 다운로드 항목 (v1.0.2 Releases에서 다운로드):
+* 📦 **`mantis_db_diff_bundle_2026-09-11.zip`** (267MB) : 7,700+건 CR 메타데이터 DB 및 5,454건 소스코드 Diff 캐시 전수 통합 백업 번들
+* ⚙️ **`settings.json`** (2KB) : 기본 연동 환경설정 파일
+
+---
+
+#### 📂 적용 방법 A: [데이터 저장 폴더 열기]로 직접 압축 해제 (가장 빠름 & 권장)
+
+1. 앱을 실행한 후 우측 상단 **`[⚙️ 설정]`** 아이콘을 클릭합니다.
+2. 하단 데이터베이스 섹션에서 **`[📂 데이터 저장 폴더 열기 (영구 보존)]`** 버튼을 클릭합니다.
+   * **Windows 탐색기** 또는 **macOS Finder**에서 앱의 로컬 영구 데이터 폴더가 즉시 열립니다.
+   * *(실제 OS별 저장 경로)*:
+     * **Windows**: `%APPDATA%\Mantis CR Ultra Hub\data` (또는 설치 경로 내 `data/`)
+     * **macOS**: `~/Library/Application Support/Mantis CR Ultra Hub/data`
+3. 열린 데이터 폴더에:
+   * 다운로드한 **`mantis_db_diff_bundle_2026-09-11.zip`** 파일의 압축을 해당 폴더에 그대로 풉니다.  
+     *(압축을 풀면 폴더 내에 `cr_database.json`, `cr_meta.json`, `diff_cache/` 폴더가 위치하게 됩니다.)*
+   * 다운로드한 **`settings.json`** 파일을 해당 폴더에 덮어씁니다.
+4. 앱 화면을 새로고침(F5 또는 `Cmd+R`)하거나 앱을 재시작하면, **7,700여 건의 CR과 5,454건(100%)의 소스코드 Diff 데이터셋이 즉시 로딩**되어 ClearCase SSH 수집 없이 바로 초고속 검색, Web Diff, AI 심층 분석을 이용할 수 있습니다!
+
+---
+
+#### 📥 적용 방법 B: 앱 내 [외부 DB&Cache 가져오기] 버튼으로 적용
+
+1. 앱 우측 상단 **`[⚙️ 설정]`** 아이콘을 클릭합니다.
+2. 하단 데이터베이스 관리 항목에서 **`[📥 외부 DB&Cache 가져오기 (.zip/.json)]`** 버튼을 클릭합니다.
+3. 다운로드한 **`mantis_db_diff_bundle_2026-09-11.zip`** 파일을 선택합니다.
+4. 고속 바이너리 스트리밍 업로드가 진행되며 압축이 자동 해제되고, 인메모리 DB 및 Diff 캐시 인덱스가 **앱 재시작 없이 실시간으로 리로딩**됩니다.
+
+---
+
+### 3️⃣ 개발자 및 소스코드 직접 실행 가이드 (Advanced)
+
+<details>
+<summary><strong>터미널 스크립트 실행 및 직접 빌드 방법 펼치기</strong></summary>
+
+#### macOS / Linux 터미널 스크립트 실행
 ```bash
 # 1. 저장소 클론
 git clone https://github.com/HyungdukSeo/E-sim.git
 cd E-sim
 
-# 2. 의존성 설치
+# 2. 의존성 설치 및 실행
 npm install
-
-# 3. data/cr_database.json 준비 (아래 두 방법 중 하나)
-#    방법 A: 기존 설치된 앱의 DB 파일 복사
-#    cp ~/Library/Application\ Support/Mantis\ CR\ Ultra\ Hub/data/cr_database.json data/
-#    방법 B: 앱을 먼저 실행하여 Mantis 서버와 동기화 후 복사
-
-# 4. macOS DMG 빌드 (DB 파일 존재 여부를 자동 검증)
-npm run dist:mac
+chmod +x start.sh stop.sh
+./start.sh
+# 브라우저에서 http://localhost:5173 또는 http://localhost:3001 접속
 ```
 
----
-
-### 🪟 Windows 환경
-
-1. [GitHub Releases](https://github.com/HyungdukSeo/E-sim/releases) 또는 저장소에서 프로젝트를 다운로드합니다.
-2. 폴더 내의 **`start.bat`** 파일을 **더블 클릭**합니다.
-   * Node.js가 설치되어 있다면 필요한 모듈을 자동 구성하고 로컬 서버를 즉시 시작합니다.
-   * 브라우저(`http://localhost:3001`)가 자동으로 실행됩니다.
-3. 서비스 종료 시에는 **`stop.bat`**을 더블 클릭하거나 실행 창을 닫으시면 됩니다.
-
+#### Windows 배치 스크립트 실행
 ```cmd
-:: 수동 실행 시 (Windows CMD / PowerShell)
 cd E-sim
 start.bat
 ```
+
+#### 소스에서 직접 설치 패키지 빌드
+* **macOS DMG 빌드**: `npm run dist:mac`
+* **Windows NSIS Installer 빌드**: `npm run dist:win`
+
+</details>
 
 ---
 
