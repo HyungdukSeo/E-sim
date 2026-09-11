@@ -98,10 +98,11 @@
 | **🛡️ 엔터프라이즈급 SSH 세션 안전 관리** | 요청 시점에만 안전하게 통신하고 완료 즉시 소켓을 완전 파괴(`conn.destroy()`)하여 서버 측 좀비 프로세스 및 SSH 동시 접속 한도 초과(`MaxStartups`)를 100% 방지 |
 | **📦 7,700+건 독립 휴대용 포터블 DB** | 원격 Mantis 서버에 부하를 주지 않고, 로컬 메모리/파일 기반 초고속 검색 및 증분 동기화(Incremental Upsert) 지원 |
 | **🧭 스마트 경로 정규화 & Auto-Locator** | 체크인 로그로부터 VOB 절대 경로를 자동 추적하고, 경로 차이가 있더라도 백그라운드에서 파일 위치를 자동 탐색 |
+| **📦 DB & Diff 캐시 통합 ZIP 백업/복원** | `cr_database.json` 메타데이터뿐만 아니라 1.38GB 분량의 소스코드 Diff 캐시 전수(5,454건)를 약 250MB 단일 ZIP 번들로 고속 압축 내보내기/가져오기 지원. 다른 PC에 전달 시 SSH 추가 수집 없이 100% 즉시 사용 |
 | **📊 인터랙티브 비주얼 분석 대시보드** | Recharts 기반 월별 유입량, 고객사별 점유율, 상태별 도넛 차트 제공 |
 | **✅ 다차원 상세 필터 (교차 선택)** | 프로젝트/상태/고객사/보고자/담당자를 다중 체크박스로 자유롭게 조합, 다른 항목을 체크해도 형제 옵션은 사라지지 않고 카운트만 실시간으로 좁혀짐 |
-| **🌗 라이트 / 다크 / 개발자 테마** | 헤더에서 즉시 전환 가능한 3종 테마, 다크 모드는 딥 에메랄드 톤으로 가독성 강화 |
-| **🧠 멀티 AI 공급자 (OmniRoute / Claude 포함)** | 로컬 NLP / **OmniRoute Gateway** / Custom LLM / Codex / Antigravity / **Claude** 중 선택, 공급자별 실시간 모델 목록 조회 및 독립 모델 저장 |
+| **🌗 라이트 / 다크 / 개발자 테마** | 헤더에서 즉시 전환 가능한 3종 테마, 라이트 모드 고대비(High Contrast) 가독성 및 딥 에메랄드 다크 톤 지원 |
+| **🧠 멀티 AI 공급자 (OmniRoute / Claude 포함)** | 로컬 NLP / **OmniRoute Gateway** / Custom LLM / Codex / Antigravity / **Claude** 중 선택, SQLite 기반 토큰 자동 감지 및 실시간 모델 목록 연동 |
 | **💾 설정 디스크 영구 저장** | 환경설정(`data/settings.json`)이 로컬 디스크에 저장되어 앱 재시작 후에도 SSH/AI 설정이 유지됨 |
 
 ---
@@ -111,7 +112,7 @@
 ### 🍎 macOS 환경 (추천: 전용 설치형 DMG 또는 스크립트)
 
 #### 방법 1: macOS 전용 설치형 DMG 파일로 설치 (가장 간편)
-1. [GitHub Releases](https://github.com/HyungdukSeo/E-sim/releases)에서 **`Mantis.CR.Ultra.Hub-1.0.0-arm64.dmg`** 를 다운로드합니다.
+1. [GitHub Releases](https://github.com/HyungdukSeo/E-sim/releases)에서 **`Mantis CR Ultra Hub-1.0.2-arm64.dmg`** 를 다운로드합니다.
 2. 다운로드한 `.dmg` 파일을 열고 **`Mantis CR Ultra Hub`** 아이콘을 **`Applications`** 폴더로 드래그하여 설치합니다.
 3. 실행하면 상단 **메뉴바(시스템 트레이)에 번개 아이콘이 상주**하며 백그라운드로 작동합니다.
    * **트레이 아이콘 클릭 메뉴**:
@@ -204,23 +205,19 @@ start.bat
 
 ## 📝 변경 이력 (Changelog)
 
-### v1.1.0
-* 🤖 **로컬 소스코드 Diff 데이터셋 무인 자동 구축 시스템**:
-  * ClearCase 서버 부하 방지를 위한 1.5초 안전 쓰로틀링(Throttle) 백그라운드 인덱서 탑재
-  * Mantis 동기화 시 갱신/신규 등록된 CR 우선순위 큐(Priority Queue) 자동 증분 반영
-  * 환경설정 모달 내 실시간 완성률(%) 프로그레스 바 및 4분할 상세 통계 대시보드 제공
-* 🔀 **복수 CR 코드 변경점 교차 비교 분석 (Cross CR Comparison)**:
-  * 검색 테이블에서 2~3개 CR 다중 선택 및 하단 플로팅 바를 통한 교차 비교 분석 원클릭 지원
-  * 공통 수정 파일 및 소스코드 변경 흐름 AI 심층 비교 보고서 생성
-* 🏢 **고객사 / 사이트(625개) 스마트 필터링 시스템 구축**:
-  * 625개 고객사 전용 실시간 검색창 (`customerSearch`) 지원
-  * 알파벳(A~Z) & 한글 초성(ㄱ~ㅎ)별 접기/펼치기 아코디언 그룹화 및 퀵 이니셜 점프 바
-  * 상위 핵심 고객사를 한눈에 확인하는 `인기순 Top 20` 탭 모드 및 선택 뱃지 모아보기 지원
-* 🤖 **CR 상세 정보 모달 내 AI 코드 Diff 종합 분석 탭 추가**:
-  * 단일 CR의 소스코드 변경 사항(Unified Diff)을 AI가 즉시 종합 요약·해설
-
 ### v1.0.2
-* 🤖 **OmniRoute 로컬 AI 게이트웨이 연동 지원**: 로컬 AI Gateway(`http://localhost:20128/v1`) 연결, 스마트 가상 라우팅 모델(`auto`, `auto/coding`, `auto/fast`, `auto/cheap`) 및 실시간 모델 자동 조회 지원
+* 📦 **전체 DB & Diff 캐시 통합 ZIP 백업/복원 (`DB&Cache 내보내기`)**:
+  * Mantis CR 메타데이터 DB와 1.38GB 분량의 소스코드 Diff 캐시 전수(5,454건)를 약 250MB 단일 ZIP 번들로 고속 압축 내보내기 및 스트리밍 가져오기 지원
+  * 다른 PC의 `데이터 저장 폴더 열기`에 직접 압축을 풀거나 `외부 DB&Cache 가져오기`로 업로드하면, ClearCase SSH 추가 수집 없이 즉시 100% 동일하게 구동
+* 🤖 **OmniRoute 토큰 자동 감지 및 401 자동 복구 Fallback**:
+  * 로컬 SQLite(`~/.omniroute/storage.sqlite`)에서 API 키 자동 추출
+  * `CHANGEME`, `sk-omniroute` 등 플레이스홀더 키 자동 정화 및 401 인증 실패 시 로컬 토큰으로 자동 재시도 복구 탑재
+* 🎨 **라이트 모드 고대비(High Contrast) UI 전면 개선**:
+  * 라이트 테마(베이지/페이퍼)에서 미선택 버튼 텍스트가 배경에 묻히던 현상 해결 (`text-neutral-900` 딥 블랙 및 볼드 적용)
+  * `OmniRoute`, `Antigravity` 등 긴 라벨 텍스트의 말줄임(`truncate`) 현상 방지 및 인덱싱 통계 카드 명도 강화
+* 🎯 **Diff 데이터셋 인덱싱 분자/분모 정밀화 및 Update 트리거 개선**:
+  * 5,454개 유효 대상 CR 기준 캐시 수를 정확히 매핑하여 `5454 / 5454 (100%)`로 일치
+  * Mantis 동기화 시 신규 추가/수정된 CR이 있을 때만 diff 수집 큐에 등록하여, 변경사항 없는 일반 Update 시 100% 완료 상태 유지
 * 🌐 **ClearCase VOB 서버 다중 연동 & 지능형 자동 폴백(Fallback)**: 복수 ClearCase 서버 등록 지원, 1차 서버에 VOB/소스가 없을 경우 2차/3차 서버를 백그라운드에서 순차 자동 탐색하여 Diff 표시
 * 🔄 **백그라운드 Diff 데이터셋 무인 자동 갱신**: 신규 CR 유입뿐만 아니라 Mantis에서 소스코드나 체크인 로그가 수정된 기존 CR도 스스로 감지하여 최신 소스코드로 자동 재수집 및 갱신(Auto-Refresh)
 * ⚡ **Diff 데이터셋 인덱서 10개 초초고속 병렬 워커 풀 지원**: 최대 10개 동시 수집 지원 (고성능 병렬 다운로드)
