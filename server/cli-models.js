@@ -5,9 +5,14 @@ import os from 'os';
 import path from 'path';
 
 // Augment PATH for macOS/Linux GUI Electron environment to find claude, agy, codex, omniroute, etc.
+// GUI apps on those platforms don't inherit the login shell's PATH, so common install
+// locations are missing unless we add them explicitly. Windows GUI apps DO inherit the
+// full user/system PATH (set via the registry, not a shell profile), and splitting/joining
+// it on ':' would corrupt every entry (e.g. "C:\Users\..." splits after the drive letter) —
+// so this augmentation is skipped entirely on win32.
+const userHome = os.homedir();
 const commonBinPaths = [];
 if (process.platform !== 'win32') {
-  const userHome = os.homedir();
   commonBinPaths.push(
     path.join(userHome, '.local', 'bin'),
     '/opt/homebrew/bin',
@@ -40,16 +45,26 @@ if (process.platform !== 'win32') {
   process.env.PATH = Array.from(new Set(commonBinPaths)).filter(Boolean).join(path.delimiter);
 }
 
+// Locate a CLI binary's full path. On macOS/Linux this first checks the augmented
+// commonBinPaths list (GUI apps may not have PATH fully populated), then falls back
+// to `which`. On Windows, PATH is already complete (registry-driven), so this goes
+// straight to `where`, which prints one path per line — take the first.
 export function findCommandPath(cmd) {
-  if (process.platform !== 'win32') {
-    for (const dir of commonBinPaths) {
-      const full = path.join(dir, cmd);
-      if (fs.existsSync(full)) return full;
-    }
+  if (process.platform === 'win32') {
+    try {
+      const out = execSync(`where ${cmd}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+      const first = out.split(/\r?\n/)[0]?.trim();
+      if (first && fs.existsSync(first)) return first;
+    } catch {}
+    return null;
+  }
+
+  for (const dir of commonBinPaths) {
+    const full = path.join(dir, cmd);
+    if (fs.existsSync(full)) return full;
   }
   try {
-    const whichCmd = process.platform === 'win32' ? `where ${cmd}` : `which ${cmd}`;
-    const out = execSync(whichCmd, {
+    const out = execSync(`which ${cmd}`, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       env: { ...process.env, PATH: process.env.PATH }
@@ -75,6 +90,9 @@ export function isInvalidOmniRouteKey(key) {
 export function readOmniRouteToken() {
   try {
     const dbPath = path.join(os.homedir(), '.omniroute', 'storage.sqlite');
+    // The sqlite3 CLI ships by default on macOS/most Linux distros but not on Windows,
+    // so check for it first rather than letting execSync throw — hasCommand() already
+    // handles the win32 (`where`) vs. posix (`which`) distinction.
     if (fs.existsSync(dbPath) && hasCommand('sqlite3')) {
       const raw = execSync(
         `sqlite3 "${dbPath}" "SELECT key FROM api_keys WHERE is_active = 1 AND (revoked_at IS NULL OR revoked_at = '') ORDER BY created_at ASC LIMIT 1;"`,
@@ -266,6 +284,9 @@ export async function getClaudeModels() {
       
       // 토큰 만료 등의 경우 claude cli를 통해 토큰 갱신 시도
       try {
+        // stdio:'ignore' already detaches stdin/stdout/stderr, making the `< /dev/null`
+        // POSIX redirection unnecessary — and that redirection syntax isn't valid when
+        // execSync shells out via cmd.exe on Windows.
         execSync('claude -p "ping"', { timeout: 15000, stdio: 'ignore' });
         const refreshedToken = readClaudeToken();
         if (refreshedToken && refreshedToken !== token) {
