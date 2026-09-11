@@ -4,26 +4,37 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-// Augment PATH for macOS GUI Electron environment to find claude, agy, codex, omniroute, etc.
-const userHome = os.homedir();
-const commonBinPaths = [
-  path.join(userHome, '.local', 'bin'),
-  path.join(userHome, '.nvm', 'versions', 'node', process.version, 'bin'),
-  '/opt/homebrew/bin',
-  '/usr/local/bin',
-  '/usr/bin',
-  '/bin',
-  '/usr/sbin',
-  '/sbin'
-];
-if (process.env.PATH) {
-  commonBinPaths.push(...process.env.PATH.split(':'));
+// Augment PATH for macOS/Linux GUI Electron environment to find claude, agy, codex, omniroute, etc.
+// GUI apps on those platforms don't inherit the login shell's PATH, so common install
+// locations are missing unless we add them explicitly. Windows GUI apps DO inherit the
+// full user/system PATH (set via the registry, not a shell profile), and splitting/joining
+// it on ':' would corrupt every entry (e.g. "C:\Users\..." splits after the drive letter) —
+// so this augmentation is skipped entirely on win32.
+if (process.platform !== 'win32') {
+  const userHome = os.homedir();
+  const commonBinPaths = [
+    path.join(userHome, '.local', 'bin'),
+    path.join(userHome, '.nvm', 'versions', 'node', process.version, 'bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin'
+  ];
+  if (process.env.PATH) {
+    commonBinPaths.push(...process.env.PATH.split(path.delimiter));
+  }
+  process.env.PATH = Array.from(new Set(commonBinPaths)).filter(Boolean).join(path.delimiter);
 }
-process.env.PATH = Array.from(new Set(commonBinPaths)).filter(Boolean).join(':');
 
 export function hasCommand(cmd) {
   try {
-    execSync(`which ${cmd}`, { stdio: 'pipe' });
+    if (process.platform === 'win32') {
+      execSync(`where ${cmd}`, { stdio: 'pipe' });
+    } else {
+      execSync(`which ${cmd}`, { stdio: 'pipe' });
+    }
     return true;
   } catch {
     return false;
@@ -39,7 +50,10 @@ export function isInvalidOmniRouteKey(key) {
 export function readOmniRouteToken() {
   try {
     const dbPath = path.join(os.homedir(), '.omniroute', 'storage.sqlite');
-    if (fs.existsSync(dbPath)) {
+    // The sqlite3 CLI ships by default on macOS/most Linux distros but not on Windows,
+    // so check for it first rather than letting execSync throw — hasCommand() already
+    // handles the win32 (`where`) vs. posix (`which`) distinction.
+    if (fs.existsSync(dbPath) && hasCommand('sqlite3')) {
       const raw = execSync(
         `sqlite3 "${dbPath}" "SELECT key FROM api_keys WHERE is_active = 1 AND (revoked_at IS NULL OR revoked_at = '') ORDER BY created_at ASC LIMIT 1;"`,
         { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }
@@ -230,7 +244,10 @@ export async function getClaudeModels() {
       
       // 토큰 만료 등의 경우 claude cli를 통해 토큰 갱신 시도
       try {
-        execSync('claude -p "ping" < /dev/null', { timeout: 15000, stdio: 'ignore' });
+        // stdio:'ignore' already detaches stdin/stdout/stderr, making the `< /dev/null`
+        // POSIX redirection unnecessary — and that redirection syntax isn't valid when
+        // execSync shells out via cmd.exe on Windows.
+        execSync('claude -p "ping"', { timeout: 15000, stdio: 'ignore' });
         const refreshedToken = readClaudeToken();
         if (refreshedToken && refreshedToken !== token) {
           const retriedModels = await fetchModelsFromApi(refreshedToken);
