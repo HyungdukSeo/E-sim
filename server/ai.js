@@ -1,5 +1,19 @@
 import axios from 'axios';
-import { checkOmniRouteAlive, checkOmniRouteStatus, readOmniRouteToken, isInvalidOmniRouteKey, hasCommand, runCliAI } from './cli-models.js';
+import { checkOmniRouteAlive, checkOmniRouteStatus, readOmniRouteToken, readClaudeToken, isInvalidOmniRouteKey, hasCommand, runCliAI } from './cli-models.js';
+
+function isBinaryDiff(fileName, content) {
+  if (!fileName) return false;
+  const lower = fileName.toLowerCase();
+  const binaryExts = ['.so', '.a', '.o', '.bin', '.tar', '.gz', '.zip', '.png', '.jpg', '.jpeg', '.pdf', '.exe', '.dll', '.dylib', '.class', '.jar'];
+  if (binaryExts.some(ext => lower.endsWith(ext) || lower.includes(ext + '.'))) return true;
+  if (content && typeof content === 'string' && content.includes('\0')) return true;
+  return false;
+}
+
+function sanitizeDiffText(text) {
+  if (!text || typeof text !== 'string') return '';
+  return text.replace(/\0/g, '');
+}
 
 const STOP_WORDS = new Set([
   'ssw', 'cr', 'crid', '시', '에서', '을', '를', '이', '가', '의', '에', '으로', '로', 
@@ -383,14 +397,14 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
   if (provider === 'gemini') {
     const model = config.geminiModel || config.model || 'gemini-3.7-flash-high';
     if (hasCommand('agy')) {
-      return await runCliAI('agy', { systemPrompt, userPrompt, model, timeoutMs: 90000 });
+      return await runCliAI('agy', { systemPrompt, userPrompt, model, timeoutMs: 180000 });
     }
     if (config.geminiApiKey && config.geminiApiKey !== 'proxy-handled-key') {
       const apiKey = config.geminiApiKey;
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const resp = await axios.post(url, {
         contents: [{ parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }]
-      }, { timeout: 120000 });
+      }, { timeout: 180000 });
       const content = resp.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
       return { content, provider: `Gemini API (${model})` };
     }
@@ -400,25 +414,41 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
   // 4. Claude Code / Anthropic
   if (provider === 'claude') {
     const model = config.claudeModel || config.model || 'sonnet';
+    let cliError = null;
     if (hasCommand('claude')) {
-      return await runCliAI('claude', { systemPrompt, userPrompt, model, timeoutMs: 90000 });
+      try {
+        return await runCliAI('claude', { systemPrompt, userPrompt, model, timeoutMs: 180000 });
+      } catch (err) {
+        console.warn('[Claude CLI execution failed, trying direct API/Token fallback]:', err.message);
+        cliError = err;
+      }
     }
-    if (config.claudeApiKey && config.claudeApiKey !== 'proxy-handled-key') {
-      const apiKey = config.claudeApiKey;
+    const detectedToken = readClaudeToken();
+    const apiKey = config.claudeApiKey || (config.apiKey && config.apiKey.startsWith('sk-ant-') ? config.apiKey : null) || detectedToken;
+    if (apiKey && apiKey !== 'proxy-handled-key') {
+      const isOauthToken = apiKey.startsWith('oauth_') || apiKey.length > 80;
+      const headers = {
+        'anthropic-version': '2023-06-01'
+      };
+      if (isOauthToken) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+        headers['anthropic-beta'] = 'oauth-2024-05-20';
+      } else {
+        headers['x-api-key'] = apiKey;
+      }
+
       const resp = await axios.post('https://api.anthropic.com/v1/messages', {
-        model,
+        model: model.includes('sonnet') ? 'claude-3-5-sonnet-latest' : model,
         max_tokens: 4096,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }]
+        system: systemPrompt.replace(/\0/g, ''),
+        messages: [{ role: 'user', content: userPrompt.replace(/\0/g, '') }]
       }, {
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01'
-        },
+        headers,
         timeout: 120000
       });
       return { content: resp.data.content?.[0]?.text || '', provider: `Claude API (${model})` };
     }
+    if (cliError) throw cliError;
     throw new Error('Claude CLI 또는 Anthropic API 키가 필요합니다.');
   }
 
@@ -476,9 +506,15 @@ export async function analyzeSingleCRDiff({ cr, diffPayload, config = {} }) {
 
   let diffText = '';
   validDiffs.forEach(f => {
-    const truncated = f.unifiedDiff.length > 5000 
-      ? f.unifiedDiff.substring(0, 5000) + '\n... (일부 긴 diff 생략)' 
-      : f.unifiedDiff;
+    let rawDiff = f.unifiedDiff || '';
+    if (isBinaryDiff(f.fileName, rawDiff)) {
+      diffText += `\n### 파일: \`${f.fileName}\` (${f.oldVersion} -> ${f.newVersion})\n*(바이너리 파일 변경 내역 - 코드 텍스트 분석 대상에서 제외됨)*\n`;
+      return;
+    }
+    rawDiff = sanitizeDiffText(rawDiff);
+    const truncated = rawDiff.length > 5000 
+      ? rawDiff.substring(0, 5000) + '\n... (일부 긴 diff 생략)' 
+      : rawDiff;
     diffText += `\n### 파일: \`${f.fileName}\` (${f.oldVersion} -> ${f.newVersion})\n\`\`\`diff\n${truncated}\n\`\`\`\n`;
   });
 
@@ -502,7 +538,11 @@ ${cr.checkinLog || '로그 없음'}
 ${diffText || '(변경 코드가 없거나 바이너리 파일입니다.)'}`;
 
   try {
-    const res = await callLLM({ systemPrompt, userPrompt, config });
+    const res = await callLLM({ 
+      systemPrompt: sanitizeDiffText(systemPrompt), 
+      userPrompt: sanitizeDiffText(userPrompt), 
+      config 
+    });
     return {
       analysis: res.content,
       provider: res.provider,
@@ -556,7 +596,13 @@ export async function compareMultipleCRDiffs({ crs, diffMap, config = {} }) {
     const valid = diffs.filter(d => d.hasChanges && d.unifiedDiff);
     crsContext += `- 변경 파일(${valid.length}개): ${valid.map(v => v.fileName).join(', ')}\n`;
     valid.forEach(v => {
-      const truncated = v.unifiedDiff.length > 3000 ? v.unifiedDiff.substring(0, 3000) + '\n...(생략)' : v.unifiedDiff;
+      let rawDiff = v.unifiedDiff || '';
+      if (isBinaryDiff(v.fileName, rawDiff)) {
+        crsContext += `  * 파일 \`${v.fileName}\`: (바이너리 파일 변경 - 코드 제외)\n`;
+        return;
+      }
+      rawDiff = sanitizeDiffText(rawDiff);
+      const truncated = rawDiff.length > 3000 ? rawDiff.substring(0, 3000) + '\n...(생략)' : rawDiff;
       crsContext += `  * 파일 \`${v.fileName}\` Diff:\n\`\`\`diff\n${truncated}\n\`\`\`\n`;
     });
   });
@@ -572,7 +618,11 @@ export async function compareMultipleCRDiffs({ crs, diffMap, config = {} }) {
   const userPrompt = `[비교 대상 CR 목록]\n${crsContext}\n\n[공통 수정 파일]\n${overlappingFiles.length > 0 ? overlappingFiles.join(', ') : '공통 수정 파일 없음 (개별 파일 독립 수정)'}\n\n위 CR들의 실제 소스 코드 변경점을 상호 교차 비교하여 한국어 마크다운으로 상세히 분석해 주세요.`;
 
   try {
-    const res = await callLLM({ systemPrompt, userPrompt, config });
+    const res = await callLLM({ 
+      systemPrompt: sanitizeDiffText(systemPrompt), 
+      userPrompt: sanitizeDiffText(userPrompt), 
+      config 
+    });
     return {
       analysis: res.content,
       provider: res.provider,

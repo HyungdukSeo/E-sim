@@ -21,13 +21,20 @@ if (process.env.PATH) {
 }
 process.env.PATH = Array.from(new Set(commonBinPaths)).filter(Boolean).join(':');
 
-export function hasCommand(cmd) {
+export function findCommandPath(cmd) {
   try {
-    execSync(`which ${cmd}`, { stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
+    const out = execSync(`which ${cmd}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    if (out && fs.existsSync(out)) return out;
+  } catch {}
+  for (const dir of commonBinPaths) {
+    const full = path.join(dir, cmd);
+    if (fs.existsSync(full)) return full;
   }
+  return null;
+}
+
+export function hasCommand(cmd) {
+  return Boolean(findCommandPath(cmd));
 }
 
 export function isInvalidOmniRouteKey(key) {
@@ -162,7 +169,7 @@ export async function checkOmniRouteAlive(baseUrl = 'http://localhost:20128/v1',
 /**
  * 1. Claude — REST API 직접 호출 (Keychain / ~/.claude/.credentials.json)
  */
-function readClaudeToken() {
+export function readClaudeToken() {
   let token = null;
 
   // 1) ~/.claude/.credentials.json 확인
@@ -459,45 +466,54 @@ export async function getOmniRouteModels(baseUrl = 'http://localhost:20128/v1', 
 /**
  * 6. Execute AI via Local CLI (Claude Code or Antigravity/Agy)
  */
-export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = '', timeoutMs = 90000 }) {
+export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = '', timeoutMs = 180000 }) {
   return new Promise((resolve, reject) => {
-    const cmd = cmdType === 'gemini' || cmdType === 'agy' ? 'agy' : 'claude';
-    if (!hasCommand(cmd)) {
-      return reject(new Error(`${cmd} CLI가 설치되지 않았거나 PATH에 없습니다.`));
+    const cmdName = cmdType === 'gemini' || cmdType === 'agy' ? 'agy' : 'claude';
+    const cmdBin = findCommandPath(cmdName) || cmdName;
+    if (!hasCommand(cmdName)) {
+      return reject(new Error(`${cmdName} CLI가 설치되지 않았거나 PATH에 없습니다.`));
     }
 
     const fullPrompt = systemPrompt
       ? `${systemPrompt}\n\n[사용자 요청 및 분석 대상 데이터]\n${userPrompt}`
       : userPrompt;
 
+    // Remove any null bytes or invalid control characters that break child_process.spawn
+    const sanitizedPrompt = (fullPrompt || '').replace(/\0/g, '');
+
     const args = [];
 
-    if (cmd === 'claude') {
+    if (cmdName === 'claude') {
       if (model) {
         const lower = model.toLowerCase();
         if (lower.includes('opus')) args.push('--model', 'opus');
         else if (lower.includes('haiku')) args.push('--model', 'haiku');
         else if (lower.includes('sonnet')) args.push('--model', 'sonnet');
       }
-      args.push('-p', fullPrompt);
-    } else if (cmd === 'agy') {
+      args.push('-p', sanitizedPrompt);
+    } else if (cmdName === 'agy') {
       if (model && (model.startsWith('gemini') || model.startsWith('claude') || model.startsWith('gpt'))) {
         args.push('--model', model);
       }
-      args.push('-p', fullPrompt);
+      args.push('-p', sanitizedPrompt);
     }
 
     let stdout = '';
     let stderr = '';
 
-    const proc = spawn(cmd, args, {
+    const proc = spawn(cmdBin, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, PATH: process.env.PATH }
+      env: {
+        ...process.env,
+        PATH: process.env.PATH,
+        HOME: os.homedir(),
+        USER: os.userInfo()?.username || process.env.USER || 'user'
+      }
     });
 
     const timer = setTimeout(() => {
       try { proc.kill('SIGKILL'); } catch {}
-      reject(new Error(`${cmd} CLI 응답 타임아웃 (${Math.round(timeoutMs / 1000)}초 초과)`));
+      reject(new Error(`${cmdName} CLI 응답 타임아웃 (${Math.round(timeoutMs / 1000)}초 초과)`));
     }, timeoutMs);
 
     proc.stdout.on('data', (d) => {
@@ -518,10 +534,10 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
       if (code === 0) {
         resolve({
           content: stdout.trim(),
-          provider: `${cmd.toUpperCase()} CLI (${model || 'default'})`
+          provider: `${cmdName.toUpperCase()} CLI (${model || 'default'})`
         });
       } else {
-        reject(new Error(`${cmd} CLI 실패 (코드 ${code}): ${stderr.trim() || stdout.trim()}`));
+        reject(new Error(`${cmdName} CLI 실패 (코드 ${code}): ${stderr.trim() || stdout.trim()}`));
       }
     });
   });
