@@ -30,6 +30,12 @@ export function hasCommand(cmd) {
   }
 }
 
+export function isInvalidOmniRouteKey(key) {
+  if (!key || typeof key !== 'string') return true;
+  const trimmed = key.trim();
+  return !trimmed || trimmed === 'CHANGEME' || trimmed === 'sk-omniroute';
+}
+
 export function readOmniRouteToken() {
   try {
     const dbPath = path.join(os.homedir(), '.omniroute', 'storage.sqlite');
@@ -53,9 +59,9 @@ export async function checkOmniRouteStatus(baseUrl = 'http://localhost:20128/v1'
   }
 
   const detectedKey = readOmniRouteToken();
-  const effectiveKey = (apiKey && apiKey !== 'sk-omniroute' && apiKey.trim()) || detectedKey || 'sk-omniroute';
+  const effectiveKey = !isInvalidOmniRouteKey(apiKey) ? apiKey.trim() : (detectedKey || 'sk-omniroute');
 
-  // 1. Try authenticated /models check
+  // 1. Try authenticated /models check with effectiveKey
   try {
     const resp = await axios.get(`${cleanUrl}/models`, {
       headers: { Authorization: `Bearer ${effectiveKey}` },
@@ -73,6 +79,27 @@ export async function checkOmniRouteStatus(baseUrl = 'http://localhost:20128/v1'
       };
     }
   } catch (err) {
+    // If primary key failed with 401/403 and detectedKey is available and different, retry with detectedKey
+    if (detectedKey && effectiveKey !== detectedKey && err.response && (err.response.status === 401 || err.response.status === 403)) {
+      try {
+        const retryResp = await axios.get(`${cleanUrl}/models`, {
+          headers: { Authorization: `Bearer ${detectedKey}` },
+          timeout: 2500
+        });
+        if (retryResp.status === 200) {
+          return {
+            alive: true,
+            ready: true,
+            authenticated: true,
+            detectedKey,
+            effectiveKey: detectedKey,
+            reason: 'OmniRoute 게이트웨이 정상 연결됨 (로컬 키 자동 복구)',
+            hint: ''
+          };
+        }
+      } catch {}
+    }
+
     if (err.response) {
       const isOmniHeader = Boolean(err.response.headers?.['x-omniroute-route-class']);
       const status = err.response.status;
@@ -383,14 +410,29 @@ export async function getOmniRouteModels(baseUrl = 'http://localhost:20128/v1', 
       cleanUrl += '/v1';
     }
 
-    const effectiveKey = (apiKey && apiKey !== 'sk-omniroute' && apiKey.trim()) || readOmniRouteToken() || 'sk-omniroute';
+    const detectedKey = readOmniRouteToken();
+    let effectiveKey = !isInvalidOmniRouteKey(apiKey) ? apiKey.trim() : (detectedKey || 'sk-omniroute');
 
-    const resp = await axios.get(`${cleanUrl}/models`, {
-      headers: {
-        Authorization: `Bearer ${effectiveKey}`
-      },
-      timeout: 5000
-    });
+    let resp;
+    try {
+      resp = await axios.get(`${cleanUrl}/models`, {
+        headers: {
+          Authorization: `Bearer ${effectiveKey}`
+        },
+        timeout: 5000
+      });
+    } catch (reqErr) {
+      if (detectedKey && effectiveKey !== detectedKey && reqErr.response && (reqErr.response.status === 401 || reqErr.response.status === 403)) {
+        resp = await axios.get(`${cleanUrl}/models`, {
+          headers: {
+            Authorization: `Bearer ${detectedKey}`
+          },
+          timeout: 5000
+        });
+      } else {
+        throw reqErr;
+      }
+    }
 
     if (resp.data?.data && Array.isArray(resp.data.data)) {
       const fetched = resp.data.data.map(m => ({

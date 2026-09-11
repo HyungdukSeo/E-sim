@@ -7,11 +7,11 @@ import os from 'os';
 import axios from 'axios';
 import { exec } from 'child_process';
 import { fileURLToPath } from 'url';
-import { syncMantisData, getLocalDatabase, importDatabase, fetchCRPageDetails, DB_FILE, META_FILE, DATA_DIR } from './sync.js';
+import { syncMantisData, getLocalDatabase, reloadDatabase, importDatabase, fetchCRPageDetails, DB_FILE, META_FILE, DATA_DIR } from './sync.js';
 import { processAiQuery, analyzeSingleCRDiff, compareMultipleCRDiffs } from './ai.js';
 import { testSSHConnection, fetchFileDiffSSH } from './ssh.js';
 import { getClaudeModels, getAntigravityModels, getCodexModels, getOmniRouteModels, getAIProvidersStatus } from './cli-models.js';
-import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, batchIndexDiffs, backgroundDiffIndexer } from './diff-cache.js';
+import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, initCacheIndex, batchIndexDiffs, backgroundDiffIndexer } from './diff-cache.js';
 import { sshPool } from './ssh-pool.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -86,6 +86,9 @@ function loadDiskSettings() {
       try {
         const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
         if (parsed && typeof parsed === 'object') {
+          if (parsed.ai && (parsed.ai.omnirouteApiKey === 'CHANGEME' || parsed.ai.omnirouteApiKey === 'sk-omniroute')) {
+            parsed.ai.omnirouteApiKey = '';
+          }
           return { settings: parsed, source: file };
         }
       } catch (e) {}
@@ -158,6 +161,10 @@ app.post('/api/settings', (req, res) => {
         ...(newSettings.ai || {})
       }
     };
+
+    if (mergedSettings.ai && (mergedSettings.ai.omnirouteApiKey === 'CHANGEME' || mergedSettings.ai.omnirouteApiKey === 'sk-omniroute')) {
+      mergedSettings.ai.omnirouteApiKey = '';
+    }
 
     // If newSettings has valid sshServers, update them; otherwise preserve existing sshServers
     if (Array.isArray(newSettings.sshServers) && newSettings.sshServers.length > 0) {
@@ -237,9 +244,11 @@ app.post('/api/sync', async (req, res) => {
   try {
     const { mantisUrl = 'http://192.168.16.200' } = req.body || {};
     const result = await syncMantisData(mantisUrl);
-    // Queue newly synced CRs for priority diff indexing
-    if (result.crs && result.crs.length > 0) {
-      backgroundDiffIndexer.queueUpdates(result.crs.slice(0, 100));
+    // Queue ONLY newly added or updated CRs for priority diff indexing
+    const changed = result.changedCrs || [];
+    if (changed.length > 0) {
+      console.log(`[Sync] Queueing ${changed.length} newly added/updated CRs for background diff indexing`);
+      backgroundDiffIndexer.queueUpdates(changed.slice(0, 100));
     }
     res.json({
       ok: true,
@@ -258,18 +267,57 @@ app.post('/api/sync', async (req, res) => {
 });
 
 // 4. Download / Export Portable Database File
+// 4. Download / Export Database & Diff Cache Bundle (.zip) or Portable JSON
 app.get('/api/database/export', (req, res) => {
-  if (fs.existsSync(DB_FILE)) {
-    const filename = `cr_database_${new Date().toISOString().slice(0, 10)}.json`;
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Type', 'application/json');
-    res.sendFile(DB_FILE);
-  } else {
-    res.status(404).json({ ok: false, error: '데이터베이스 파일이 존재하지 않습니다.' });
+  const format = req.query.format;
+  // If explicitly requested single JSON format
+  if (format === 'json') {
+    if (fs.existsSync(DB_FILE)) {
+      const filename = `cr_database_${new Date().toISOString().slice(0, 10)}.json`;
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Type', 'application/json');
+      return res.sendFile(DB_FILE);
+    }
+    return res.status(404).json({ ok: false, error: '데이터베이스 파일이 존재하지 않습니다.' });
+  }
+
+  // Default: Export Full DB & Diff Cache Bundle as single .zip package
+  try {
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const filename = `mantis_db_diff_bundle_${timestamp}.zip`;
+    const tmpZip = path.join(os.tmpdir(), `bundle_${Date.now()}.zip`);
+
+    console.log(`[Export Bundle] Packaging DB & Diff Cache from ${DATA_DIR} into ${filename}...`);
+
+    // Target files to package: cr_database.json, cr_meta.json, diff_cache/
+    const cmd = process.platform === 'win32'
+      ? `powershell -Command "Compress-Archive -Path '${path.join(DATA_DIR, 'cr_database.json')}','${path.join(DATA_DIR, 'cr_meta.json')}','${path.join(DATA_DIR, 'diff_cache')}' -DestinationPath '${tmpZip}' -CompressionLevel Fastest -Force"`
+      : `cd "${DATA_DIR}" && zip -r -1 "${tmpZip}" cr_database.json cr_meta.json diff_cache/ > /dev/null`;
+
+    exec(cmd, { maxBuffer: 1024 * 1024 * 50 }, (err) => {
+      if (err || !fs.existsSync(tmpZip)) {
+        console.error('[Export Bundle Error]', err);
+        return res.status(500).json({ ok: false, error: `압축 생성 실패: ${err?.message || '알 수 없는 오류'}` });
+      }
+
+      const stat = fs.statSync(tmpZip);
+      console.log(`[Export Bundle] Bundle created (${(stat.size / (1024 * 1024)).toFixed(2)} MB). Sending file...`);
+
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Type', 'application/zip');
+      res.sendFile(tmpZip, (sendErr) => {
+        try {
+          if (fs.existsSync(tmpZip)) fs.unlinkSync(tmpZip);
+        } catch {}
+      });
+    });
+  } catch (err) {
+    console.error('[Export Bundle Error]', err);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// 5. Import Database File
+// 5. Import Database File (JSON)
 app.post('/api/database/import', (req, res) => {
   try {
     const { crs } = req.body;
@@ -277,6 +325,7 @@ app.post('/api/database/import', (req, res) => {
       return res.status(400).json({ ok: false, error: '유효한 CR 목록 데이터가 필요합니다.' });
     }
     const result = importDatabase(crs);
+    initCacheIndex(true);
     res.json({
       ok: true,
       message: '데이터베이스 가져오기 및 병합이 완료되었습니다.',
@@ -287,6 +336,90 @@ app.post('/api/database/import', (req, res) => {
     console.error('[DB Import Error]', err);
     res.status(500).json({ ok: false, error: err.message });
   }
+});
+
+// 5.1 Import Full Bundle (.zip) or Raw Binary File Stream
+app.post('/api/database/import-bundle', (req, res) => {
+  const tmpUpload = path.join(os.tmpdir(), `upload_${Date.now()}.tmp`);
+  const writeStream = fs.createWriteStream(tmpUpload);
+
+  req.pipe(writeStream);
+
+  writeStream.on('finish', () => {
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+
+      // Check file magic number (zip starts with PK: 0x50, 0x4B)
+      const headerBuf = Buffer.alloc(4);
+      const fd = fs.openSync(tmpUpload, 'r');
+      fs.readSync(fd, headerBuf, 0, 4, 0);
+      fs.closeSync(fd);
+
+      const isZip = headerBuf[0] === 0x50 && headerBuf[1] === 0x4B;
+
+      if (isZip) {
+        console.log(`[Import Bundle] Unzipping dataset bundle into ${DATA_DIR}...`);
+        const unzipCmd = process.platform === 'win32'
+          ? `powershell -Command "Expand-Archive -Path '${tmpUpload}' -DestinationPath '${DATA_DIR}' -Force"`
+          : `unzip -o -q "${tmpUpload}" -d "${DATA_DIR}"`;
+
+        exec(unzipCmd, { maxBuffer: 1024 * 1024 * 50 }, (unzipErr) => {
+          try { if (fs.existsSync(tmpUpload)) fs.unlinkSync(tmpUpload); } catch {}
+
+          if (unzipErr) {
+            console.error('[Import Unzip Error]', unzipErr);
+            return res.status(500).json({ ok: false, error: `압축 해제 실패: ${unzipErr.message}` });
+          }
+
+          // Reload DB and Cache Index
+          const reloaded = reloadDatabase();
+          initCacheIndex(true);
+          backgroundDiffIndexer.allCrsProvider = () => getLocalDatabase().crs;
+
+          const stats = getDiffCacheStats();
+          console.log(`[Import Bundle] Success! Total CRs: ${reloaded.crs.length}, Cached diffs: ${stats.crCount}`);
+
+          res.json({
+            ok: true,
+            isBundle: true,
+            message: 'DB 및 Diff 캐시 번들이 성공적으로 복원되었습니다!',
+            totalCount: reloaded.crs.length,
+            cachedDiffs: stats.crCount,
+            totalSize: stats.totalSizeFormatted
+          });
+        });
+      } else {
+        // Fallback: Parse as JSON
+        const content = fs.readFileSync(tmpUpload, 'utf8');
+        try { if (fs.existsSync(tmpUpload)) fs.unlinkSync(tmpUpload); } catch {}
+        const parsed = JSON.parse(content);
+        const crs = Array.isArray(parsed) ? parsed : parsed.crs;
+        if (!Array.isArray(crs)) {
+          return res.status(400).json({ ok: false, error: '유효한 JSON 또는 ZIP 번들 형식이 아닙니다.' });
+        }
+        const result = importDatabase(crs);
+        initCacheIndex(true);
+        res.json({
+          ok: true,
+          isBundle: false,
+          message: '데이터베이스 가져오기 및 병합이 완료되었습니다.',
+          meta: result.meta,
+          totalCount: result.totalCount
+        });
+      }
+    } catch (err) {
+      try { if (fs.existsSync(tmpUpload)) fs.unlinkSync(tmpUpload); } catch {}
+      console.error('[Import Error]', err);
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  writeStream.on('error', (err) => {
+    try { if (fs.existsSync(tmpUpload)) fs.unlinkSync(tmpUpload); } catch {}
+    res.status(500).json({ ok: false, error: `업로드 스트림 오류: ${err.message}` });
+  });
 });
 
 // 6. Get Single CR Detail

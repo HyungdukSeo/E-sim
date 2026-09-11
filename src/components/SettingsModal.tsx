@@ -66,6 +66,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [sshTesting, setSshTesting] = useState(false);
   const [sshTestResult, setSshTestResult] = useState<{ok: boolean; message: string} | null>(null);
   const [dataFolderStatus, setDataFolderStatus] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
   const [providersStatus, setProvidersStatus] = useState<Record<string, AIProviderStatusItem>>({});
 
   // Background Diff Worker Status & Control
@@ -231,7 +232,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       let url = `/api/ai/models?provider=${provider}`;
       if (provider === 'omniroute') {
         const cleanBaseUrl = omnirouteUrl || form.ai.omnirouteUrl || 'http://localhost:20128/v1';
-        const cleanApiKey = omnirouteApiKey || form.ai.omnirouteApiKey || providersStatus.omniroute?.detectedKey || '';
+        const rawKey = omnirouteApiKey !== undefined ? omnirouteApiKey : form.ai.omnirouteApiKey;
+        const cleanApiKey = (rawKey && rawKey !== 'CHANGEME' && rawKey !== 'sk-omniroute')
+          ? rawKey
+          : (providersStatus.omniroute?.detectedKey || '');
         url += `&baseUrl=${encodeURIComponent(cleanBaseUrl)}&apiKey=${encodeURIComponent(cleanApiKey)}`;
       }
 
@@ -332,7 +336,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       });
       if (res && res.status) {
         setProvidersStatus(res.status);
-        if (res.status.omniroute?.detectedKey && (!form.ai.omnirouteApiKey || form.ai.omnirouteApiKey === 'sk-omniroute')) {
+        const currentKey = form.ai.omnirouteApiKey;
+        const isDefaultOrPlaceholder = !currentKey || currentKey === 'sk-omniroute' || currentKey === 'CHANGEME';
+        if (res.status.omniroute?.detectedKey && isDefaultOrPlaceholder) {
           setForm(prev => ({
             ...prev,
             ai: {
@@ -394,7 +400,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleExportDB = () => {
-    window.location.href = '/api/database/export';
+    setIsExporting(true);
+    setDataFolderStatus('📦 전체 DB 및 소스코드 Diff 캐시를 하나의 ZIP 번들로 압축 생성 중입니다 (약 10~15초 소요)...');
+
+    const link = document.createElement('a');
+    link.href = '/api/database/export';
+    link.download = '';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    setTimeout(() => {
+      setIsExporting(false);
+      setDataFolderStatus('✓ 압축 번들 다운로드가 시작되었습니다!');
+      setTimeout(() => setDataFolderStatus(null), 5000);
+    }, 4000);
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -402,21 +422,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (!file) return;
 
     try {
-      setImportStatus('파일 읽는 중...');
-      const text = await file.text();
-      const crs = JSON.parse(text);
+      const isZip = file.name.toLowerCase().endsWith('.zip');
+      setImportStatus(isZip 
+        ? `📦 번들 파일 업로드 및 압축 해제 중입니다 (${(file.size / (1024 * 1024)).toFixed(1)} MB)... 잠시만 기다려주세요.` 
+        : 'JSON 데이터베이스 파일 읽는 중...');
 
-      setImportStatus('데이터베이스에 병합하는 중...');
-      const resp = await axios.post('/api/database/import', { crs });
-      
-      if (resp.data.ok) {
-        setImportStatus(`성공! 총 ${resp.data.totalCount}건 동기화 완료`);
+      // Direct binary streaming upload
+      const response = await fetch('/api/database/import-bundle', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'X-Filename': encodeURIComponent(file.name)
+        },
+        body: file
+      });
+
+      const res = await response.json();
+      if (res.ok) {
+        if (res.isBundle) {
+          setImportStatus(`🎉 복원 완료! 총 ${res.totalCount.toLocaleString()}건 CR 및 ${res.cachedDiffs.toLocaleString()}건 Diff 캐시 복원됨 (${res.totalSize || ''})`);
+        } else {
+          setImportStatus(`🎉 성공! 총 ${res.totalCount.toLocaleString()}건 동기화 완료`);
+        }
         onRefreshData();
-        setTimeout(() => setImportStatus(null), 3000);
+        loadWorkerStatus();
+        setTimeout(() => setImportStatus(null), 6000);
+      } else {
+        throw new Error(res.error || '가져오기 실패');
       }
     } catch (err: any) {
-      setImportStatus(`오류 발생: ${err.message}`);
-      setTimeout(() => setImportStatus(null), 4000);
+      setImportStatus(`❌ 오류 발생: ${err.message}`);
+      setTimeout(() => setImportStatus(null), 5000);
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
@@ -465,7 +505,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
             <p className="text-slate-400 text-[11px] leading-relaxed">
               모든 Mantis CR 메타데이터 DB와 Diff 캐시는 시스템 표준 영구 데이터 디렉토리에 보존되어, <strong className="text-emerald-300 font-semibold">앱을 업데이트하거나 재설치(덮어쓰기)해도 데이터가 절대 삭제되지 않습니다.</strong>
-              새로운 CR이 추가되어도 실시간 증분 업데이트를 지원하며, 독립적인 외부 백업 및 복원이 가능합니다.
+              &nbsp;<strong>'DB&Cache 내보내기'</strong>로 전체 데이터셋을 하나의 압축 파일(.zip)로 백업하여 다른 PC의 데이터 저장 폴더에 넣거나 가져오기하면, <strong className="text-cyan-300">ClearCase SSH 추가 수집 없이 즉시 100% 동일하게 사용</strong>할 수 있습니다.
             </p>
 
             <div className="flex flex-wrap items-center gap-2.5 pt-1">
@@ -473,7 +513,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <button
                 type="button"
                 onClick={handleOpenDataFolder}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-200 border border-emerald-700/60 font-semibold transition-all"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-200 border border-emerald-700/60 font-semibold transition-all cursor-pointer shadow-sm"
                 title="앱 재설치 시에도 보존되는 OS 영구 데이터 폴더를 엽니다"
               >
                 <FolderOpen className="w-3.5 h-3.5 text-emerald-400" />
@@ -484,27 +524,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <button
                 type="button"
                 onClick={handleExportDB}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold transition-all"
+                disabled={isExporting}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                title="Mantis CR DB와 전체 소스코드 Diff 캐시(데이터셋)를 하나의 .zip 파일로 압축하여 다운로드합니다."
               >
-                <Download className="w-3.5 h-3.5 text-mantis-400" />
-                <span>DB 파일 내보내기 (.json)</span>
+                {isExporting ? (
+                  <RefreshCw className="w-3.5 h-3.5 text-mantis-400 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5 text-mantis-400" />
+                )}
+                <span>{isExporting ? 'DB&Cache 압축 중...' : 'DB&Cache 내보내기 (.zip)'}</span>
               </button>
 
               {/* Import Button */}
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".json"
+                accept=".zip,.json"
                 onChange={handleFileChange}
                 className="hidden"
               />
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold transition-all"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold transition-all cursor-pointer shadow-sm"
+                title="내보낸 .zip 번들 파일 또는 .json 파일을 선택하여 즉시 복원합니다."
               >
                 <Upload className="w-3.5 h-3.5 text-blue-400" />
-                <span>외부 DB 파일 가져와 병합</span>
+                <span>외부 DB&Cache 가져오기 (.zip/.json)</span>
               </button>
             </div>
 
@@ -580,16 +627,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       type="button"
                       onClick={() => handleProviderChange(item.key as any)}
                       title={status?.reason || (isReady ? '정상 사용 가능' : '미구동/설정 필요')}
-                      className={`relative py-2.5 px-1.5 sm:px-2 rounded-xl border text-xs font-semibold transition-all text-center flex flex-col items-center justify-between min-h-[66px] cursor-pointer select-none ${
+                      className={`relative py-2 px-1 rounded-xl border text-xs font-semibold transition-all text-center flex flex-col items-center justify-between min-h-[66px] cursor-pointer select-none ${
                         isSelected
-                          ? 'bg-indigo-100/90 dark:bg-indigo-600/30 border-2 border-indigo-600 dark:border-indigo-400 text-indigo-950 dark:text-indigo-100 shadow-md ring-1 ring-indigo-500/40 font-bold'
+                          ? 'bg-indigo-50 dark:bg-indigo-950/60 border-2 border-indigo-600 dark:border-indigo-400 shadow-md ring-2 ring-indigo-500/40 font-bold'
                           : isReady
-                          ? 'bg-white/80 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-slate-800 dark:text-slate-200 hover:border-indigo-400 dark:hover:border-slate-700'
-                          : 'bg-slate-100/70 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 text-slate-500 dark:text-slate-400 hover:border-slate-400'
+                          ? 'bg-white dark:bg-slate-900 border-2 border-slate-300 dark:border-slate-700 hover:border-indigo-400 dark:hover:border-indigo-500 shadow-sm'
+                          : 'bg-slate-100/80 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/80 hover:border-slate-400'
                       }`}
                     >
                       {/* Top row: Status Dot + Label */}
-                      <div className="flex items-center justify-center gap-1.5 w-full">
+                      <div className="flex items-center justify-center gap-1 w-full px-0.5">
                         <span 
                           className={`w-2 h-2 rounded-full shrink-0 ${
                             isReady 
@@ -597,7 +644,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               : 'bg-slate-400 dark:bg-slate-600'
                           }`} 
                         />
-                        <span className="font-bold truncate text-[11px] sm:text-xs">
+                        <span className={`font-extrabold text-[10.5px] sm:text-[11px] tracking-tight leading-tight whitespace-nowrap overflow-hidden text-ellipsis ${
+                          isSelected
+                            ? 'text-indigo-950 dark:text-indigo-100'
+                            : isReady
+                            ? 'text-neutral-900 dark:text-neutral-100'
+                            : 'text-neutral-500 dark:text-neutral-400'
+                        }`}>
                           {item.label}
                         </span>
                       </div>
@@ -605,14 +658,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       {/* Bottom row: Badge + Status Text */}
                       <div className="flex items-center justify-center gap-1 w-full mt-1">
                         {item.badge && (
-                          <span className="text-[9px] px-1 py-0.2 rounded bg-indigo-500/15 dark:bg-indigo-500/25 text-indigo-800 dark:text-indigo-200 font-mono font-bold whitespace-nowrap">
+                          <span className={`text-[9px] px-1 py-0.2 rounded font-mono font-bold whitespace-nowrap ${
+                            isSelected
+                              ? 'bg-indigo-600/20 text-indigo-950 dark:text-indigo-200'
+                              : 'bg-indigo-500/15 dark:bg-indigo-500/25 text-indigo-900 dark:text-indigo-200'
+                          }`}>
                             {item.badge}
                           </span>
                         )}
-                        <span className={`text-[10px] font-mono whitespace-nowrap font-bold ${
+                        <span className={`text-[10px] font-mono whitespace-nowrap font-extrabold ${
                           isReady 
-                            ? 'text-emerald-700 dark:text-emerald-400' 
-                            : 'text-amber-700 dark:text-amber-400'
+                            ? 'text-emerald-800 dark:text-emerald-400' 
+                            : 'text-amber-800 dark:text-amber-400'
                         }`}>
                           {isReady ? '준비됨' : '미구동'}
                         </span>
@@ -696,7 +753,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       </div>
                       <input
                         type="password"
-                        value={form.ai.omnirouteApiKey !== undefined ? form.ai.omnirouteApiKey : (providersStatus.omniroute?.detectedKey || '')}
+                        value={form.ai.omnirouteApiKey !== undefined && form.ai.omnirouteApiKey !== 'CHANGEME' ? form.ai.omnirouteApiKey : (providersStatus.omniroute?.detectedKey || '')}
                         onChange={e => setForm(f => ({ ...f, ai: { ...f.ai, omnirouteApiKey: e.target.value } }))}
                         placeholder={providersStatus.omniroute?.detectedKey ? `자동 감지됨 (${providersStatus.omniroute.detectedKey.slice(0, 10)}...)` : "sk-omniroute"}
                         className="w-full px-3 py-2 bg-slate-900 rounded-xl border border-slate-700 text-slate-200 text-xs font-mono focus:border-indigo-500 outline-none"
@@ -1149,30 +1206,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
             {/* Detailed Stats Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-center font-mono">
-              <div className="p-2 rounded-xl bg-slate-950/70 border border-slate-800/80">
-                <div className="text-[10px] text-slate-400">인덱싱된 CR</div>
-                <div className="text-xs font-bold text-slate-200 mt-0.5">
-                  {workerStatus ? `${workerStatus.cachedCRs} / ${workerStatus.targetCRsWithFiles || workerStatus.totalCRs}` : '-'}
+              <div className="p-2 rounded-xl bg-slate-900/60 dark:bg-slate-950/70 border border-slate-300 dark:border-slate-800/80 shadow-sm">
+                <div className="text-[10px] text-neutral-600 dark:text-slate-400 font-semibold">인덱싱된 CR</div>
+                <div className="text-xs font-bold text-neutral-900 dark:text-slate-100 mt-0.5">
+                  {workerStatus ? `${Math.min(workerStatus.cachedCRs, workerStatus.targetCRsWithFiles || workerStatus.totalCRs)} / ${workerStatus.targetCRsWithFiles || workerStatus.totalCRs}` : '-'}
                 </div>
               </div>
 
-              <div className="p-2 rounded-xl bg-slate-950/70 border border-slate-800/80">
-                <div className="text-[10px] text-slate-400">수집된 소스 파일</div>
-                <div className="text-xs font-bold text-emerald-300 mt-0.5">
+              <div className="p-2 rounded-xl bg-slate-900/60 dark:bg-slate-950/70 border border-slate-300 dark:border-slate-800/80 shadow-sm">
+                <div className="text-[10px] text-neutral-600 dark:text-slate-400 font-semibold">수집된 소스 파일</div>
+                <div className="text-xs font-bold text-emerald-700 dark:text-emerald-300 mt-0.5">
                   {workerStatus?.totalFiles ? `${workerStatus.totalFiles.toLocaleString()}개` : '0개'}
                 </div>
               </div>
 
-              <div className="p-2 rounded-xl bg-slate-950/70 border border-slate-800/80">
-                <div className="text-[10px] text-slate-400">데이터셋 용량</div>
-                <div className="text-xs font-bold text-cyan-300 mt-0.5">
+              <div className="p-2 rounded-xl bg-slate-900/60 dark:bg-slate-950/70 border border-slate-300 dark:border-slate-800/80 shadow-sm">
+                <div className="text-[10px] text-neutral-600 dark:text-slate-400 font-semibold">데이터셋 용량</div>
+                <div className="text-xs font-bold text-cyan-700 dark:text-cyan-300 mt-0.5">
                   {workerStatus?.totalSizeFormatted || '0 B'}
                 </div>
               </div>
 
-              <div className="p-2 rounded-xl bg-slate-950/70 border border-slate-800/80">
-                <div className="text-[10px] text-slate-400">남은 대상</div>
-                <div className="text-xs font-bold text-amber-300 mt-0.5">
+              <div className="p-2 rounded-xl bg-slate-900/60 dark:bg-slate-950/70 border border-slate-300 dark:border-slate-800/80 shadow-sm">
+                <div className="text-[10px] text-neutral-600 dark:text-slate-400 font-semibold">남은 대상</div>
+                <div className="text-xs font-bold text-amber-700 dark:text-amber-300 mt-0.5">
                   {workerStatus ? `${Math.max(0, (workerStatus.targetCRsWithFiles || workerStatus.totalCRs) - workerStatus.cachedCRs)}개 남음` : '-'}
                 </div>
               </div>

@@ -22,9 +22,12 @@ let totalCachedFiles = 0;
 let totalCachedBytes = 0;
 let isIndexInitialized = false;
 
-export function initCacheIndex() {
-  if (isIndexInitialized) return;
+export function initCacheIndex(forceReset = false) {
+  if (isIndexInitialized && !forceReset) return;
   isIndexInitialized = true;
+  cacheIndex.clear();
+  totalCachedFiles = 0;
+  totalCachedBytes = 0;
   if (!fs.existsSync(DIFF_CACHE_DIR)) return;
 
   try {
@@ -405,7 +408,16 @@ class BackgroundDiffIndexer {
     const allCrs = typeof this.allCrsProvider === 'function' ? this.allCrsProvider() : [];
     const crsWithFiles = allCrs.filter(c => c.files && c.files.length > 0);
     const totalTargetCount = crsWithFiles.length || allCrs.length || 1;
-    const progressPercent = Math.min(100, (stats.crCount / totalTargetCount) * 100);
+
+    // Accurately count cached CRs that belong to current target CRs with files
+    let cachedTargetCRs = 0;
+    for (const cr of crsWithFiles) {
+      if (hasCRDiffCache(cr.crid)) {
+        cachedTargetCRs++;
+      }
+    }
+
+    const progressPercent = Math.min(100, (cachedTargetCRs / totalTargetCount) * 100);
     const activeList = Array.from(this.activeCrids);
 
     return {
@@ -417,7 +429,7 @@ class BackgroundDiffIndexer {
       currentCrid: activeList.length > 0 ? activeList.join(', ') : null,
       totalCRs: allCrs.length,
       targetCRsWithFiles: crsWithFiles.length,
-      cachedCRs: stats.crCount,
+      cachedCRs: cachedTargetCRs,
       totalFiles: stats.totalFiles,
       totalSizeBytes: stats.totalSizeBytes,
       totalSizeFormatted: stats.totalSizeFormatted,

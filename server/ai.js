@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { checkOmniRouteAlive, checkOmniRouteStatus, readOmniRouteToken, hasCommand, runCliAI } from './cli-models.js';
+import { checkOmniRouteAlive, checkOmniRouteStatus, readOmniRouteToken, isInvalidOmniRouteKey, hasCommand, runCliAI } from './cli-models.js';
 
 const STOP_WORDS = new Set([
   'ssw', 'cr', 'crid', '시', '에서', '을', '를', '이', '가', '의', '에', '으로', '로', 
@@ -436,10 +436,9 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
       baseUrl += '/v1';
     }
     const endpoint = baseUrl.endsWith('/chat/completions') ? baseUrl : `${baseUrl}/chat/completions`;
-    const apiKey = (config.omnirouteApiKey && config.omnirouteApiKey !== 'sk-omniroute' && config.omnirouteApiKey.trim())
-      || omniStatus.effectiveKey
-      || readOmniRouteToken()
-      || 'sk-omniroute';
+    const apiKey = !isInvalidOmniRouteKey(config.omnirouteApiKey)
+      ? config.omnirouteApiKey.trim()
+      : (omniStatus.effectiveKey || readOmniRouteToken() || 'sk-omniroute');
     const model = config.model || config.omnirouteModel || 'auto';
 
     const resp = await axios.post(endpoint, {

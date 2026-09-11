@@ -180,6 +180,12 @@ export function getLocalDatabase() {
   }
 }
 
+export function reloadDatabase() {
+  inMemoryCrs = null;
+  inMemoryMeta = null;
+  return getLocalDatabase();
+}
+
 /**
  * Sync Mantis Data and Upsert/Merge into single independent database file
  */
@@ -229,6 +235,7 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
   let addedCount = 0;
   let updatedCount = 0;
   let unchangedCount = 0;
+  const changedCrs = [];
 
   for (let index = 0; index < records.length; index++) {
     const row = records[index];
@@ -246,7 +253,7 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
         const titleParsed = parseTitleTags(summary);
         const checkinParsed = parseCheckinLog(checkinLogRaw);
 
-        crMap.set(crid, {
+        const updatedCr = {
           ...existing,
           project: row['프로젝트'] || row['Project'] || existing.project,
           reporter: row['보고자'] || row['Reporter'] || existing.reporter,
@@ -266,7 +273,9 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
           cleanSummary: titleParsed.cleanSummary,
           files: checkinParsed.files,
           filePaths: checkinParsed.filePaths
-        });
+        };
+        crMap.set(crid, updatedCr);
+        changedCrs.push(updatedCr);
         updatedCount++;
       } else {
         unchangedCount++;
@@ -275,7 +284,7 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
       const titleParsed = parseTitleTags(summary);
       const checkinParsed = parseCheckinLog(checkinLogRaw);
 
-      crMap.set(crid, {
+      const newCr = {
         crid,
         id: numericId,
         project: row['프로젝트'] || row['Project'] || '기타',
@@ -296,7 +305,9 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
         cleanSummary: titleParsed.cleanSummary,
         files: checkinParsed.files,
         filePaths: checkinParsed.filePaths
-      });
+      };
+      crMap.set(crid, newCr);
+      changedCrs.push(newCr);
       addedCount++;
     }
   }
@@ -330,7 +341,7 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
 
   console.log(`[Sync Summary] Total: ${allMergedCrs.length} CRs (Added: ${addedCount}, Updated: ${updatedCount}, Unchanged: ${unchangedCount}) in ${durationMs}ms`);
 
-  return { meta, crs: allMergedCrs };
+  return { meta, crs: allMergedCrs, changedCrs };
 }
 
 export function importDatabase(importedCrs) {
