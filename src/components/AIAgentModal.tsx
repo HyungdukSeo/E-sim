@@ -122,9 +122,9 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
 
   React.useEffect(() => {
     if (!isOpen) return;
+    // One-shot check on open only — 3s auto-polling hammered execSync-based CLI
+    // detection (which/where, sqlite3) on every tick and could stall the UI.
     checkHealth();
-    const timer = setInterval(checkHealth, 3000);
-    return () => clearInterval(timer);
   }, [isOpen, checkHealth]);
 
   // Auto fetch details for previewCR if not yet fetched
