@@ -4,51 +4,60 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-// Augment PATH for macOS GUI Electron environment to find claude, agy, codex, omniroute, etc.
-const userHome = os.homedir();
-const commonBinPaths = [
-  path.join(userHome, '.local', 'bin'),
-  '/opt/homebrew/bin',
-  '/opt/homebrew/sbin',
-  '/usr/local/bin',
-  '/usr/local/sbin',
-  '/usr/bin',
-  '/bin',
-  '/usr/sbin',
-  '/sbin'
-];
+// Augment PATH for macOS/Linux GUI Electron environment to find claude, agy, codex, omniroute, etc.
+const commonBinPaths = [];
+if (process.platform !== 'win32') {
+  const userHome = os.homedir();
+  commonBinPaths.push(
+    path.join(userHome, '.local', 'bin'),
+    '/opt/homebrew/bin',
+    '/opt/homebrew/sbin',
+    '/usr/local/bin',
+    '/usr/local/sbin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin'
+  );
 
-// Scan all installed NVM Node versions
-const nvmBase = path.join(userHome, '.nvm', 'versions', 'node');
-if (fs.existsSync(nvmBase)) {
-  try {
-    const versions = fs.readdirSync(nvmBase);
-    for (const v of versions) {
-      const vBin = path.join(nvmBase, v, 'bin');
-      if (fs.existsSync(vBin)) {
-        commonBinPaths.push(vBin);
+  // Scan all installed NVM Node versions
+  const nvmBase = path.join(userHome, '.nvm', 'versions', 'node');
+  if (fs.existsSync(nvmBase)) {
+    try {
+      const versions = fs.readdirSync(nvmBase);
+      for (const v of versions) {
+        const vBin = path.join(nvmBase, v, 'bin');
+        if (fs.existsSync(vBin)) {
+          commonBinPaths.push(vBin);
+        }
       }
-    }
-  } catch {}
-}
+    } catch {}
+  }
 
-if (process.env.PATH) {
-  commonBinPaths.push(...process.env.PATH.split(':'));
+  if (process.env.PATH) {
+    commonBinPaths.push(...process.env.PATH.split(path.delimiter));
+  }
+  process.env.PATH = Array.from(new Set(commonBinPaths)).filter(Boolean).join(path.delimiter);
 }
-process.env.PATH = Array.from(new Set(commonBinPaths)).filter(Boolean).join(':');
 
 export function findCommandPath(cmd) {
-  for (const dir of commonBinPaths) {
-    const full = path.join(dir, cmd);
-    if (fs.existsSync(full)) return full;
+  if (process.platform !== 'win32') {
+    for (const dir of commonBinPaths) {
+      const full = path.join(dir, cmd);
+      if (fs.existsSync(full)) return full;
+    }
   }
   try {
-    const out = execSync(`which ${cmd}`, {
+    const whichCmd = process.platform === 'win32' ? `where ${cmd}` : `which ${cmd}`;
+    const out = execSync(whichCmd, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       env: { ...process.env, PATH: process.env.PATH }
     }).trim();
-    if (out && fs.existsSync(out)) return out;
+    if (out) {
+      const firstLine = out.split(/\r?\n/)[0].trim();
+      if (fs.existsSync(firstLine)) return firstLine;
+    }
   } catch {}
   return null;
 }
@@ -66,7 +75,7 @@ export function isInvalidOmniRouteKey(key) {
 export function readOmniRouteToken() {
   try {
     const dbPath = path.join(os.homedir(), '.omniroute', 'storage.sqlite');
-    if (fs.existsSync(dbPath)) {
+    if (fs.existsSync(dbPath) && hasCommand('sqlite3')) {
       const raw = execSync(
         `sqlite3 "${dbPath}" "SELECT key FROM api_keys WHERE is_active = 1 AND (revoked_at IS NULL OR revoked_at = '') ORDER BY created_at ASC LIMIT 1;"`,
         { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }
@@ -257,7 +266,7 @@ export async function getClaudeModels() {
       
       // 토큰 만료 등의 경우 claude cli를 통해 토큰 갱신 시도
       try {
-        execSync('claude -p "ping" < /dev/null', { timeout: 15000, stdio: 'ignore' });
+        execSync('claude -p "ping"', { timeout: 15000, stdio: 'ignore' });
         const refreshedToken = readClaudeToken();
         if (refreshedToken && refreshedToken !== token) {
           const retriedModels = await fetchModelsFromApi(refreshedToken);
