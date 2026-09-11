@@ -13,21 +13,32 @@ const os = require('os');
 // splits after the drive letter), so this augmentation is skipped entirely on win32.
 if (process.platform !== 'win32') {
   const userHome = os.homedir();
-  const commonBinPaths = [
+  const commonBinPaths = [];
+
+  // 1) Keep existing PATH first so active user environment takes precedence
+  if (process.env.PATH) {
+    commonBinPaths.push(...process.env.PATH.split(path.delimiter));
+  }
+
+  // 2) Add currently executing Node/Electron binary directory
+  if (process.execPath) {
+    commonBinPaths.push(path.dirname(process.execPath));
+  }
+
+  // 3) Common user CLI & Homebrew directories
+  commonBinPaths.push(
     path.join(userHome, '.local', 'bin'),
     '/opt/homebrew/bin',
-    '/opt/homebrew/sbin',
-    '/usr/local/bin',
-    '/usr/local/sbin',
-    '/usr/bin',
-    '/bin',
-    '/usr/sbin',
-    '/sbin'
-  ];
+    '/opt/homebrew/sbin'
+  );
+
+  // 4) NVM Node versions (sorted descending so newest versions like v24.17.0 take precedence)
   const nvmBase = path.join(userHome, '.nvm', 'versions', 'node');
   if (fs.existsSync(nvmBase)) {
     try {
-      const versions = fs.readdirSync(nvmBase);
+      const versions = fs.readdirSync(nvmBase)
+        .filter(v => v.startsWith('v'))
+        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
       for (const v of versions) {
         const vBin = path.join(nvmBase, v, 'bin');
         if (fs.existsSync(vBin)) {
@@ -36,9 +47,17 @@ if (process.platform !== 'win32') {
       }
     } catch {}
   }
-  if (process.env.PATH) {
-    commonBinPaths.push(...process.env.PATH.split(path.delimiter));
-  }
+
+  // 5) System fallbacks placed AFTER nvm & brew so legacy node (e.g. /usr/local/bin/node) never shadows modern node
+  commonBinPaths.push(
+    '/usr/local/bin',
+    '/usr/local/sbin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin'
+  );
+
   process.env.PATH = Array.from(new Set(commonBinPaths)).filter(Boolean).join(path.delimiter);
 }
 

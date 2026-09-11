@@ -13,23 +13,30 @@ import path from 'path';
 const userHome = os.homedir();
 const commonBinPaths = [];
 if (process.platform !== 'win32') {
+  // 1) Keep existing PATH first so active user environment takes precedence
+  if (process.env.PATH) {
+    commonBinPaths.push(...process.env.PATH.split(path.delimiter));
+  }
+
+  // 2) Add currently executing Node/Electron binary directory
+  if (process.execPath) {
+    commonBinPaths.push(path.dirname(process.execPath));
+  }
+
+  // 3) Common user CLI & Homebrew directories
   commonBinPaths.push(
     path.join(userHome, '.local', 'bin'),
     '/opt/homebrew/bin',
-    '/opt/homebrew/sbin',
-    '/usr/local/bin',
-    '/usr/local/sbin',
-    '/usr/bin',
-    '/bin',
-    '/usr/sbin',
-    '/sbin'
+    '/opt/homebrew/sbin'
   );
 
-  // Scan all installed NVM Node versions
+  // 4) NVM Node versions (sorted descending so newest versions like v24.17.0 take precedence)
   const nvmBase = path.join(userHome, '.nvm', 'versions', 'node');
   if (fs.existsSync(nvmBase)) {
     try {
-      const versions = fs.readdirSync(nvmBase);
+      const versions = fs.readdirSync(nvmBase)
+        .filter(v => v.startsWith('v'))
+        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
       for (const v of versions) {
         const vBin = path.join(nvmBase, v, 'bin');
         if (fs.existsSync(vBin)) {
@@ -39,16 +46,22 @@ if (process.platform !== 'win32') {
     } catch {}
   }
 
-  if (process.env.PATH) {
-    commonBinPaths.push(...process.env.PATH.split(path.delimiter));
-  }
+  // 5) System fallbacks placed AFTER nvm & brew so legacy node (e.g. /usr/local/bin/node) never shadows modern node
+  commonBinPaths.push(
+    '/usr/local/bin',
+    '/usr/local/sbin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin'
+  );
+
   process.env.PATH = Array.from(new Set(commonBinPaths)).filter(Boolean).join(path.delimiter);
 }
 
-// Locate a CLI binary's full path. On macOS/Linux this first checks the augmented
-// commonBinPaths list (GUI apps may not have PATH fully populated), then falls back
-// to `which`. On Windows, PATH is already complete (registry-driven), so this goes
-// straight to `where`, which prints one path per line — take the first.
+// Locate a CLI binary's full path. On macOS/Linux this first checks `which <cmd>`
+// against the augmented PATH (which prioritizes active/modern versions), then checks
+// fallback directories. On Windows, it uses `where`.
 export function findCommandPath(cmd) {
   if (process.platform === 'win32') {
     try {
@@ -59,10 +72,6 @@ export function findCommandPath(cmd) {
     return null;
   }
 
-  for (const dir of commonBinPaths) {
-    const full = path.join(dir, cmd);
-    if (fs.existsSync(full)) return full;
-  }
   try {
     const out = execSync(`which ${cmd}`, {
       encoding: 'utf8',
@@ -74,6 +83,11 @@ export function findCommandPath(cmd) {
       if (fs.existsSync(firstLine)) return firstLine;
     }
   } catch {}
+
+  for (const dir of commonBinPaths) {
+    const full = path.join(dir, cmd);
+    if (fs.existsSync(full)) return full;
+  }
   return null;
 }
 
@@ -380,15 +394,20 @@ export function getCodexModels() {
     };
 
     const fallback = [
+      { id: 'gpt-6-astra', displayName: 'GPT-6-Astra' },
       { id: 'gpt-5.6-sol', displayName: 'GPT-5.6-Sol' },
+      { id: 'gpt-5.6-terra', displayName: 'GPT-5.6-Terra' },
+      { id: 'gpt-5.6-luna', displayName: 'GPT-5.6-Luna' },
       { id: 'gpt-5.5', displayName: 'GPT-5.5' },
       { id: 'gpt-5.4', displayName: 'GPT-5.4' },
       { id: 'gpt-5.4-mini', displayName: 'GPT-5.4-Mini' }
     ];
 
     try {
-      const proc = spawn('codex', ['app-server'], {
-        stdio: ['pipe', 'pipe', 'pipe']
+      const codexBin = findCommandPath('codex') || 'codex';
+      const proc = spawn(codexBin, ['app-server'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, PATH: process.env.PATH }
       });
 
       const timer = setTimeout(() => {
@@ -516,7 +535,7 @@ export async function getOmniRouteModels(baseUrl = 'http://localhost:20128/v1', 
 /**
  * 6. Execute AI via Local CLI (Claude Code or Antigravity/Agy)
  */
-export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = '', timeoutMs = 180000 }) {
+export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = '', timeoutMs = 180000, isRetry = false }) {
   return new Promise((resolve, reject) => {
     let cmdName = 'claude';
     if (cmdType === 'gemini' || cmdType === 'agy') cmdName = 'agy';
@@ -555,16 +574,16 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
       outputFile = path.join(os.tmpdir(), `codex_diff_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.txt`);
       args.push('exec', '--skip-git-repo-check', '--ephemeral', '-s', 'read-only');
       if (model && !model.includes('default') && !model.includes('auto')) {
-        args.push('-m', model);
+        args.push('-m', model.toLowerCase().trim());
       }
-      args.push('-o', outputFile, sanitizedPrompt);
+      args.push('-o', outputFile, '-');
     }
 
     let stdout = '';
     let stderr = '';
 
     const proc = spawn(cmdBin, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [cmdName === 'codex' ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
         PATH: process.env.PATH,
@@ -572,6 +591,15 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
         USER: os.userInfo()?.username || process.env.USER || 'user'
       }
     });
+
+    if (cmdName === 'codex' && proc.stdin) {
+      try {
+        proc.stdin.write(sanitizedPrompt);
+        proc.stdin.end();
+      } catch (err) {
+        console.warn('[Codex Stdin Write Error]:', err.message);
+      }
+    }
 
     const timer = setTimeout(() => {
       try { proc.kill('SIGKILL'); } catch {}
@@ -620,6 +648,12 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
           content: stdout.trim(),
           provider: `${cmdName.toUpperCase()} CLI (${model || 'default'})`
         });
+      } else if (cmdName === 'codex' && model && !isRetry) {
+        // 특정 모델 지정으로 실패한 경우 (예: 계정에서 미지원 모델), 기본 모델로 1회 자동 재시도
+        console.warn(`[Codex Model Retry] Model '${model}' failed (code ${code}). Retrying with Codex default model...`);
+        runCliAI('codex', { systemPrompt, userPrompt, model: null, timeoutMs, isRetry: true })
+          .then(resolve)
+          .catch(reject);
       } else {
         reject(new Error(`${cmdName} CLI 실패 (코드 ${code}): ${stderr.trim() || stdout.trim()}`));
       }
