@@ -380,7 +380,7 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
     let cliError = null;
 
     // 1) Codex CLI
-    if (hasCommand('codex')) {
+    if (await hasCommand('codex')) {
       try {
         return await runCliAI('codex', { systemPrompt, userPrompt, model, timeoutMs: 180000 });
       } catch (err) {
@@ -413,7 +413,7 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
   if (provider === 'gemini') {
     const model = config.geminiModel || config.model || 'gemini-3.7-flash-high';
     let cliError = null;
-    if (hasCommand('agy')) {
+    if (await hasCommand('agy')) {
       try {
         return await runCliAI('agy', { systemPrompt, userPrompt, model, timeoutMs: 180000 });
       } catch (err) {
@@ -437,7 +437,7 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
   if (provider === 'claude') {
     const model = config.claudeModel || config.model || 'sonnet';
     let cliError = null;
-    if (hasCommand('claude')) {
+    if (await hasCommand('claude')) {
       try {
         return await runCliAI('claude', { systemPrompt, userPrompt, model, timeoutMs: 180000 });
       } catch (err) {
@@ -445,7 +445,7 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
         cliError = err;
       }
     }
-    const detectedToken = readClaudeToken();
+    const detectedToken = await readClaudeToken();
     const apiKey = config.claudeApiKey || (config.apiKey && config.apiKey.startsWith('sk-ant-') ? config.apiKey : null) || detectedToken;
     if (apiKey && apiKey !== 'proxy-handled-key') {
       const isOauthToken = apiKey.startsWith('oauth_') || apiKey.length > 80;
@@ -490,7 +490,7 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
     const endpoint = baseUrl.endsWith('/chat/completions') ? baseUrl : `${baseUrl}/chat/completions`;
     const apiKey = !isInvalidOmniRouteKey(config.omnirouteApiKey)
       ? config.omnirouteApiKey.trim()
-      : (omniStatus.effectiveKey || readOmniRouteToken() || 'sk-omniroute');
+      : (omniStatus.effectiveKey || (await readOmniRouteToken()) || 'sk-omniroute');
     const model = config.model || config.omnirouteModel || 'auto';
 
     const resp = await axios.post(endpoint, {
@@ -947,20 +947,20 @@ export async function processAiQuery({ query, contextCrs = [], config = {} }) {
         unavailableReason = 'Custom LLM 엔드포인트 URL이 설정되지 않아';
       }
     } else if (provider === 'openai') {
-      const hasCodex = hasCommand('codex');
+      const hasCodex = await hasCommand('codex');
       const hasKey = Boolean(config.openaiApiKey && config.openaiApiKey !== 'proxy-handled-key');
       if (!hasCodex && !hasKey) {
         unavailableReason = 'Codex CLI 또는 OpenAI API 키가 감지되지 않아';
       }
     } else if (provider === 'gemini') {
-      const hasAgy = hasCommand('agy');
+      const hasAgy = await hasCommand('agy');
       const hasKey = Boolean(config.geminiApiKey && config.geminiApiKey !== 'proxy-handled-key');
       if (!hasAgy && !hasKey) {
         unavailableReason = 'Antigravity(agy) CLI 또는 Gemini API 키가 감지되지 않아';
       }
     } else if (provider === 'claude') {
-      const hasClaude = hasCommand('claude');
-      const hasKey = Boolean((config.claudeApiKey && config.claudeApiKey !== 'proxy-handled-key') || readClaudeToken());
+      const hasClaude = await hasCommand('claude');
+      const hasKey = Boolean((config.claudeApiKey && config.claudeApiKey !== 'proxy-handled-key') || (await readClaudeToken()));
       if (!hasClaude && !hasKey) {
         unavailableReason = 'Claude CLI 또는 Anthropic API 키가 감지되지 않아';
       }

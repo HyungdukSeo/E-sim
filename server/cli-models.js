@@ -1,8 +1,11 @@
-import { spawn, execSync } from 'child_process';
+import { spawn, exec } from 'child_process';
+import { promisify } from 'util';
 import axios from 'axios';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+
+const execAsync = promisify(exec);
 
 // Augment PATH for macOS/Linux GUI Electron environment to find claude, agy, codex, omniroute, etc.
 // GUI apps on those platforms don't inherit the login shell's PATH, so common install
@@ -62,26 +65,45 @@ if (process.platform !== 'win32') {
 // Locate a CLI binary's full path. On macOS/Linux this first checks `which <cmd>`
 // against the augmented PATH (which prioritizes active/modern versions), then checks
 // fallback directories. On Windows, it uses `where`.
-export function findCommandPath(cmd) {
+//
+// This shells out to a child process — using the ASYNC exec (not execSync) is
+// important: execSync blocks Node's single event loop thread entirely, so while it
+// runs, the whole server (all other requests, the Electron UI it serves) is frozen.
+// Checking 3-4 CLIs back-to-back (as getAIProvidersStatus does on every Settings/AI
+// modal open) made the UI visibly stall. CLI install state essentially never changes
+// while the app is running, so results are also cached for a few minutes to avoid
+// even the async cost on repeat checks.
+const commandPathCache = new Map();
+const COMMAND_CACHE_TTL_MS = 5 * 60 * 1000;
+
+export async function findCommandPath(cmd) {
+  const cached = commandPathCache.get(cmd);
+  if (cached && Date.now() - cached.at < COMMAND_CACHE_TTL_MS) {
+    return cached.path;
+  }
+  const resolved = await _findCommandPathUncached(cmd);
+  commandPathCache.set(cmd, { path: resolved, at: Date.now() });
+  return resolved;
+}
+
+async function _findCommandPathUncached(cmd) {
   if (process.platform === 'win32') {
     try {
-      const out = execSync(`where ${cmd}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-      const first = out.split(/\r?\n/)[0]?.trim();
+      const { stdout } = await execAsync(`where ${cmd}`, { encoding: 'utf8', timeout: 5000 });
+      const first = stdout.trim().split(/\r?\n/)[0]?.trim();
       if (first && fs.existsSync(first)) return first;
     } catch {}
     return null;
   }
 
   try {
-    const out = execSync(`which ${cmd}`, {
+    const { stdout } = await execAsync(`which ${cmd}`, {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5000,
       env: { ...process.env, PATH: process.env.PATH }
-    }).trim();
-    if (out) {
-      const firstLine = out.split(/\r?\n/)[0].trim();
-      if (fs.existsSync(firstLine)) return firstLine;
-    }
+    });
+    const firstLine = stdout.trim().split(/\r?\n/)[0]?.trim();
+    if (firstLine && fs.existsSync(firstLine)) return firstLine;
   } catch {}
 
   for (const dir of commonBinPaths) {
@@ -91,8 +113,8 @@ export function findCommandPath(cmd) {
   return null;
 }
 
-export function hasCommand(cmd) {
-  return Boolean(findCommandPath(cmd));
+export async function hasCommand(cmd) {
+  return Boolean(await findCommandPath(cmd));
 }
 
 export function isInvalidOmniRouteKey(key) {
@@ -101,17 +123,18 @@ export function isInvalidOmniRouteKey(key) {
   return !trimmed || trimmed === 'CHANGEME' || trimmed === 'sk-omniroute';
 }
 
-export function readOmniRouteToken() {
+export async function readOmniRouteToken() {
   try {
     const dbPath = path.join(os.homedir(), '.omniroute', 'storage.sqlite');
     // The sqlite3 CLI ships by default on macOS/most Linux distros but not on Windows,
-    // so check for it first rather than letting execSync throw — hasCommand() already
+    // so check for it first rather than letting exec throw — hasCommand() already
     // handles the win32 (`where`) vs. posix (`which`) distinction.
-    if (fs.existsSync(dbPath) && hasCommand('sqlite3')) {
-      const raw = execSync(
+    if (fs.existsSync(dbPath) && await hasCommand('sqlite3')) {
+      const { stdout } = await execAsync(
         `sqlite3 "${dbPath}" "SELECT key FROM api_keys WHERE is_active = 1 AND (revoked_at IS NULL OR revoked_at = '') ORDER BY created_at ASC LIMIT 1;"`,
-        { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }
-      ).trim();
+        { encoding: 'utf8', timeout: 2000 }
+      );
+      const raw = stdout.trim();
       if (raw && raw.startsWith('sk-')) {
         return raw;
       }
@@ -126,7 +149,7 @@ export async function checkOmniRouteStatus(baseUrl = 'http://localhost:20128/v1'
     cleanUrl += '/v1';
   }
 
-  const detectedKey = readOmniRouteToken();
+  const detectedKey = await readOmniRouteToken();
   const effectiveKey = !isInvalidOmniRouteKey(apiKey) ? apiKey.trim() : (detectedKey || 'sk-omniroute');
 
   // 1. Try authenticated /models check with effectiveKey
@@ -230,7 +253,7 @@ export async function checkOmniRouteAlive(baseUrl = 'http://localhost:20128/v1',
 /**
  * 1. Claude — REST API 직접 호출 (Keychain / ~/.claude/.credentials.json)
  */
-export function readClaudeToken() {
+export async function readClaudeToken() {
   let token = null;
 
   // 1) ~/.claude/.credentials.json 확인
@@ -247,10 +270,11 @@ export function readClaudeToken() {
   // 2) macOS Keychain 조회 (security find-generic-password)
   if (!token && process.platform === 'darwin') {
     try {
-      const raw = execSync('security find-generic-password -s "Claude Code-credentials" -w', {
+      const { stdout } = await execAsync('security find-generic-password -s "Claude Code-credentials" -w', {
         encoding: 'utf8',
         timeout: 5000
-      }).trim();
+      });
+      const raw = stdout.trim();
       try {
         const parsed = JSON.parse(raw);
         token = parsed?.claudeAiOauth?.accessToken || raw;
@@ -266,7 +290,7 @@ export function readClaudeToken() {
 }
 
 export async function getClaudeModels() {
-  let token = readClaudeToken();
+  let token = await readClaudeToken();
 
   const fetchModelsFromApi = async (authToken) => {
     const resp = await axios.get('https://api.anthropic.com/v1/models', {
@@ -298,11 +322,12 @@ export async function getClaudeModels() {
       
       // 토큰 만료 등의 경우 claude cli를 통해 토큰 갱신 시도
       try {
-        // stdio:'ignore' already detaches stdin/stdout/stderr, making the `< /dev/null`
+        // stdio:'ignore' would detach stdin/stdout/stderr, making the `< /dev/null`
         // POSIX redirection unnecessary — and that redirection syntax isn't valid when
-        // execSync shells out via cmd.exe on Windows.
-        execSync('claude -p "ping"', { timeout: 15000, stdio: 'ignore' });
-        const refreshedToken = readClaudeToken();
+        // exec shells out via cmd.exe on Windows. Async exec (not execSync) keeps this
+        // 15s call from freezing the whole server/UI while it runs.
+        await execAsync('claude -p "ping"', { timeout: 15000 });
+        const refreshedToken = await readClaudeToken();
         if (refreshedToken && refreshedToken !== token) {
           const retriedModels = await fetchModelsFromApi(refreshedToken);
           if (retriedModels && retriedModels.length > 0) {
@@ -340,12 +365,12 @@ export async function getClaudeModels() {
  */
 export async function getAntigravityModels() {
   try {
-    const raw = execSync('agy models', {
+    const { stdout } = await execAsync('agy models', {
       encoding: 'utf8',
       timeout: 10000
     });
 
-    const lines = raw.split(/\r?\n/);
+    const lines = stdout.split(/\r?\n/);
     const models = [];
 
     for (const line of lines) {
@@ -384,7 +409,7 @@ export async function getAntigravityModels() {
  * 3. Codex — app-server JSON-RPC (`codex app-server`)
  */
 export function getCodexModels() {
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
     let resolved = false;
     const finish = (models) => {
       if (!resolved) {
@@ -404,7 +429,7 @@ export function getCodexModels() {
     ];
 
     try {
-      const codexBin = findCommandPath('codex') || 'codex';
+      const codexBin = (await findCommandPath('codex')) || 'codex';
       const proc = spawn(codexBin, ['app-server'], {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, PATH: process.env.PATH }
@@ -486,7 +511,7 @@ export async function getOmniRouteModels(baseUrl = 'http://localhost:20128/v1', 
       cleanUrl += '/v1';
     }
 
-    const detectedKey = readOmniRouteToken();
+    const detectedKey = await readOmniRouteToken();
     let effectiveKey = !isInvalidOmniRouteKey(apiKey) ? apiKey.trim() : (detectedKey || 'sk-omniroute');
 
     let resp;
@@ -536,16 +561,17 @@ export async function getOmniRouteModels(baseUrl = 'http://localhost:20128/v1', 
  * 6. Execute AI via Local CLI (Claude Code or Antigravity/Agy)
  */
 export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = '', timeoutMs = 180000, isRetry = false }) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     let cmdName = 'claude';
     if (cmdType === 'gemini' || cmdType === 'agy') cmdName = 'agy';
     else if (cmdType === 'openai' || cmdType === 'codex') cmdName = 'codex';
     else if (cmdType === 'claude') cmdName = 'claude';
 
-    const cmdBin = findCommandPath(cmdName) || cmdName;
-    if (!hasCommand(cmdName)) {
+    const resolvedPath = await findCommandPath(cmdName);
+    if (!resolvedPath) {
       return reject(new Error(`${cmdName} CLI가 설치되지 않았거나 PATH에 없습니다.`));
     }
+    const cmdBin = resolvedPath;
 
     const fullPrompt = systemPrompt
       ? `${systemPrompt}\n\n[사용자 요청 및 분석 대상 데이터]\n${userPrompt}`
@@ -665,11 +691,15 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
  * 7. Comprehensive AI Providers Availability Checker
  */
 export async function getAIProvidersStatus(aiSettings = {}) {
-  const omniStatus = await checkOmniRouteStatus(aiSettings.omnirouteUrl, aiSettings.omnirouteApiKey);
-  const claudeToken = readClaudeToken();
-  const hasClaudeCli = hasCommand('claude');
-  const hasCodexCli = hasCommand('codex');
-  const hasAgyCli = hasCommand('agy');
+  // All of these shell out or hit the network — run them concurrently instead of
+  // sequentially so the total wait is the slowest single check, not the sum of all.
+  const [omniStatus, claudeToken, hasClaudeCli, hasCodexCli, hasAgyCli] = await Promise.all([
+    checkOmniRouteStatus(aiSettings.omnirouteUrl, aiSettings.omnirouteApiKey),
+    readClaudeToken(),
+    hasCommand('claude'),
+    hasCommand('codex'),
+    hasCommand('agy')
+  ]);
 
   return {
     local: {
