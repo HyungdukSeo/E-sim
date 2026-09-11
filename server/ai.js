@@ -1,5 +1,20 @@
 import axios from 'axios';
-import { checkOmniRouteAlive, checkOmniRouteStatus, readOmniRouteToken, isInvalidOmniRouteKey, hasCommand, runCliAI } from './cli-models.js';
+import path from 'path';
+import { checkOmniRouteAlive, checkOmniRouteStatus, readOmniRouteToken, readClaudeToken, isInvalidOmniRouteKey, hasCommand, runCliAI } from './cli-models.js';
+
+function isBinaryDiff(fileName, content) {
+  if (!fileName) return false;
+  const lower = fileName.toLowerCase();
+  const binaryExts = ['.so', '.a', '.o', '.bin', '.tar', '.gz', '.zip', '.png', '.jpg', '.jpeg', '.pdf', '.exe', '.dll', '.dylib', '.class', '.jar'];
+  if (binaryExts.some(ext => lower.endsWith(ext) || lower.includes(ext + '.'))) return true;
+  if (content && typeof content === 'string' && content.includes('\0')) return true;
+  return false;
+}
+
+function sanitizeDiffText(text) {
+  if (!text || typeof text !== 'string') return '';
+  return text.replace(/\0/g, '');
+}
 
 const STOP_WORDS = new Set([
   'ssw', 'cr', 'crid', '시', '에서', '을', '를', '이', '가', '의', '에', '으로', '로', 
@@ -341,9 +356,10 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
 
   // 1. Custom LLM Endpoint
   if (provider === 'custom' && config.customUrl) {
-    const endpoint = config.customUrl.replace(/\/$/, '') + '/chat/completions';
+    const rawUrl = config.customUrl.trim().replace(/\/$/, '');
+    const endpoint = rawUrl.endsWith('/chat/completions') ? rawUrl : `${rawUrl}/chat/completions`;
     const apiKey = config.apiKey || 'b644f37bc89d3472041218af3976fb9e';
-    const model = config.customModel || 'aico-rag-qwen2.5-coder-7b';
+    const model = config.customModel || config.model || 'aico-rag-qwen2.5-coder-7b';
 
     const resp = await axios.post(endpoint, {
       model,
@@ -352,45 +368,65 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
         { role: 'user', content: userPrompt }
       ]
     }, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      timeout: 120000
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      timeout: 180000
     });
     return { content: resp.data.choices[0].message.content, provider: `Custom LLM (${model})` };
   }
 
   // 2. OpenAI / Codex
   if (provider === 'openai') {
-    const apiKey = config.openaiApiKey;
-    const model = config.openaiModel || 'gpt-4o-mini';
+    const model = config.openaiModel || config.model || 'gpt-5.5';
+    let cliError = null;
 
+    // 1) Codex CLI
+    if (hasCommand('codex')) {
+      try {
+        return await runCliAI('codex', { systemPrompt, userPrompt, model, timeoutMs: 180000 });
+      } catch (err) {
+        console.warn('[Codex CLI execution failed, trying direct API fallback]:', err.message);
+        cliError = err;
+      }
+    }
+
+    // 2) Direct OpenAI API
+    const apiKey = config.openaiApiKey || (config.apiKey && config.apiKey.startsWith('sk-') && !config.apiKey.startsWith('sk-ant-') && !config.apiKey.includes('omniroute') ? config.apiKey : null);
     if (apiKey && apiKey !== 'proxy-handled-key') {
       const resp = await axios.post('https://api.openai.com/v1/chat/completions', {
-        model,
+        model: model.startsWith('gpt-') ? model : 'gpt-4o-mini',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ]
       }, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        timeout: 120000
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        timeout: 180000
       });
       return { content: resp.data.choices[0].message.content, provider: `OpenAI (${model})` };
     }
-    throw new Error('OpenAI API 키가 설정되지 않았습니다.');
+
+    if (cliError) throw cliError;
+    throw new Error('Codex CLI 또는 OpenAI API 키가 필요합니다.');
   }
 
   // 3. Antigravity / Gemini
   if (provider === 'gemini') {
     const model = config.geminiModel || config.model || 'gemini-3.7-flash-high';
+    let cliError = null;
     if (hasCommand('agy')) {
-      return await runCliAI('agy', { systemPrompt, userPrompt, model, timeoutMs: 90000 });
+      try {
+        return await runCliAI('agy', { systemPrompt, userPrompt, model, timeoutMs: 180000 });
+      } catch (err) {
+        console.warn('[Antigravity(agy) CLI execution failed, trying direct API fallback]:', err.message);
+        cliError = err;
+      }
     }
     if (config.geminiApiKey && config.geminiApiKey !== 'proxy-handled-key') {
       const apiKey = config.geminiApiKey;
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const resp = await axios.post(url, {
         contents: [{ parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }]
-      }, { timeout: 120000 });
+      }, { timeout: 180000 });
       const content = resp.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
       return { content, provider: `Gemini API (${model})` };
     }
@@ -400,25 +436,41 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
   // 4. Claude Code / Anthropic
   if (provider === 'claude') {
     const model = config.claudeModel || config.model || 'sonnet';
+    let cliError = null;
     if (hasCommand('claude')) {
-      return await runCliAI('claude', { systemPrompt, userPrompt, model, timeoutMs: 90000 });
+      try {
+        return await runCliAI('claude', { systemPrompt, userPrompt, model, timeoutMs: 180000 });
+      } catch (err) {
+        console.warn('[Claude CLI execution failed, trying direct API/Token fallback]:', err.message);
+        cliError = err;
+      }
     }
-    if (config.claudeApiKey && config.claudeApiKey !== 'proxy-handled-key') {
-      const apiKey = config.claudeApiKey;
+    const detectedToken = readClaudeToken();
+    const apiKey = config.claudeApiKey || (config.apiKey && config.apiKey.startsWith('sk-ant-') ? config.apiKey : null) || detectedToken;
+    if (apiKey && apiKey !== 'proxy-handled-key') {
+      const isOauthToken = apiKey.startsWith('oauth_') || apiKey.length > 80;
+      const headers = {
+        'anthropic-version': '2023-06-01'
+      };
+      if (isOauthToken) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+        headers['anthropic-beta'] = 'oauth-2024-05-20';
+      } else {
+        headers['x-api-key'] = apiKey;
+      }
+
       const resp = await axios.post('https://api.anthropic.com/v1/messages', {
-        model,
+        model: model.includes('sonnet') ? 'claude-3-5-sonnet-latest' : model,
         max_tokens: 4096,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }]
+        system: systemPrompt.replace(/\0/g, ''),
+        messages: [{ role: 'user', content: userPrompt.replace(/\0/g, '') }]
       }, {
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01'
-        },
+        headers,
         timeout: 120000
       });
       return { content: resp.data.content?.[0]?.text || '', provider: `Claude API (${model})` };
     }
+    if (cliError) throw cliError;
     throw new Error('Claude CLI 또는 Anthropic API 키가 필요합니다.');
   }
 
@@ -468,17 +520,274 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
 }
 
 /**
+ * Built-in Deep Local Diff Analysis Engine
+ * Performs AST/heuristic static code analysis on Unified Diffs
+ * Generates professional 4-section report without external API dependency
+ */
+export function buildLocalDiffAnalysisReport({ cr, validDiffs, notice = '' }) {
+  const fileStats = (validDiffs || []).map(f => {
+    const raw = f.unifiedDiff || '';
+    const lines = raw.split('\n');
+    let added = 0;
+    let deleted = 0;
+    const addedCode = [];
+    const deletedCode = [];
+    const functions = new Set();
+    const keywords = new Set();
+
+    for (const l of lines) {
+      if (l.startsWith('@@')) {
+        const fnMatch = l.match(/@@\s+[^@]+@@\s*(.*)$/);
+        if (fnMatch && fnMatch[1]?.trim()) {
+          functions.add(fnMatch[1].trim());
+        }
+      } else if (l.startsWith('+') && !l.startsWith('+++')) {
+        added++;
+        const trimmed = l.substring(1).trim();
+        if (trimmed && addedCode.length < 20) addedCode.push(trimmed);
+
+        if (/exp_date|expire|license|lic_|auth|token|cert|key/i.test(trimmed)) keywords.add('라이센스/인증 검증');
+        if (/null|nullptr|nil|!ptr/i.test(trimmed)) keywords.add('널 포인터 예외 방어');
+        if (/malloc|calloc|free|new |delete /i.test(trimmed)) keywords.add('동적 메모리 할당/해제');
+        if (/mutex|lock|unlock|pthread|atomic|sync/i.test(trimmed)) keywords.add('동시성/스레드 동기화');
+        if (/return\s+(-1|false|NULL|err|status)/i.test(trimmed)) keywords.add('오류 조기 반환(Fail-fast)');
+        if (/LOG_|ERR|WARN|INFO|printf|syslog/i.test(trimmed)) keywords.add('진단/에러 로깅 강화');
+        if (/select|insert|update|delete\s+from|db_|query/i.test(trimmed)) keywords.add('데이터베이스 트랜잭션');
+        if (/socket|connect|send|recv|packet|port|ip|tcp|udp/i.test(trimmed)) keywords.add('네트워크 소켓 I/O');
+      } else if (l.startsWith('-') && !l.startsWith('---')) {
+        deleted++;
+        const trimmed = l.substring(1).trim();
+        if (trimmed && deletedCode.length < 10) deletedCode.push(trimmed);
+      }
+    }
+
+    const fileName = f.fileName || '';
+    const ext = path.extname(fileName).toLowerCase();
+    const isHeader = ext === '.h' || ext === '.hpp';
+    const isConfig = ['.json', '.xml', '.conf', '.ini', '.yaml', '.properties'].includes(ext);
+    const isSql = ext === '.sql';
+
+    return {
+      fileName,
+      oldVersion: f.oldVersion || 'prev',
+      newVersion: f.newVersion || 'curr',
+      added,
+      deleted,
+      net: added - deleted,
+      addedCode,
+      deletedCode,
+      functions: Array.from(functions),
+      keywords: Array.from(keywords),
+      isHeader,
+      isConfig,
+      isSql,
+      diffSnippet: raw.length > 2500 ? raw.substring(0, 2500) + '\n... (일부 긴 diff 생략)' : raw
+    };
+  });
+
+  const totalAdded = fileStats.reduce((sum, s) => sum + s.added, 0);
+  const totalDeleted = fileStats.reduce((sum, s) => sum + s.deleted, 0);
+  const allKeywords = Array.from(new Set(fileStats.flatMap(s => s.keywords)));
+  const allFunctions = Array.from(new Set(fileStats.flatMap(s => s.functions)));
+  const hasHeaderChanges = fileStats.some(s => s.isHeader);
+  const hasSqlChanges = fileStats.some(s => s.isSql);
+  const hasConfigChanges = fileStats.some(s => s.isConfig);
+
+  let riskLevel = '낮음 (Low Risk)';
+  const riskFactors = [];
+  if (hasHeaderChanges) {
+    riskLevel = '중간 (Medium Risk)';
+    riskFactors.push('헤더 파일(`.h`) 변경 포함 -> 의존 모듈 전체 재컴파일 및 구조체 ABI 호환성 검증 필요');
+  }
+  if (hasSqlChanges) {
+    riskLevel = '주의 (High Risk)';
+    riskFactors.push('DB SQL 스키마/쿼리 변경 포함 -> 데이터베이스 마이그레이션 및 롤백 절차 필수');
+  }
+  if (hasConfigChanges) {
+    riskFactors.push('환경설정/파라미터 변경 포함 -> 배포 시 설정 파일 동기화 필요');
+  }
+  if (allKeywords.includes('동시성/스레드 동기화')) {
+    riskLevel = '주의 (High Risk)';
+    riskFactors.push('스레드 동기화/락 제어 로직 변경 -> 데드락 및 경쟁 상태(Race Condition) 시험 필수');
+  }
+  if (riskFactors.length === 0) {
+    riskFactors.push('단일 기능/로직 보완형 변경으로 전반적인 시스템 영향도 안정적임');
+  }
+
+  // Section 1: 목적 & 원인
+  const summaryText = cr.cleanSummary || cr.summary || '수정 내역';
+  const checkinLog = cr.checkinLog?.trim() || '체크인 로그 없음';
+  
+  let section1 = `### 1. 🎯 수정 핵심 목적 & 버그 원인 분석\n\n` +
+    `- **핵심 목적:** ${summaryText}\n` +
+    `- **모듈 / 고객사:** \`${cr.module || '미지정'}\` / \`${cr.customer || '미지정'}\`\n` +
+    `- **체크인 상세 요약:** ${checkinLog.replace(/\n+/g, ' ')}\n` +
+    `- **변경 규모:** 총 **${fileStats.length}개 파일** (${totalAdded > 0 ? `+${totalAdded}` : '0'} 라인 추가, ${totalDeleted > 0 ? `-${totalDeleted}` : '0'} 라인 삭제)\n`;
+
+  if (allKeywords.length > 0) {
+    section1 += `- **식별된 핵심 로직 패턴:** ${allKeywords.map(k => `\`${k}\``).join(', ')}\n`;
+  }
+  if (allFunctions.length > 0) {
+    section1 += `- **영향 함수/블록:** ${allFunctions.slice(0, 5).map(fn => `\`${fn}\``).join(', ')}\n`;
+  }
+
+  // Section 2: 코드 변경점 상세 요약
+  let section2 = `### 2. 🔬 구체적 코드 변경점 상세 요약\n\n`;
+  section2 += `| 파일명 | 버전 변화 | 추가 (+) | 삭제 (-) | 순변화 | 감지된 핵심 패턴 |\n`;
+  section2 += `| :--- | :---: | :---: | :---: | :---: | :--- |\n`;
+  fileStats.forEach(s => {
+    const kwText = s.keywords.length > 0 ? s.keywords.join(', ') : (s.isHeader ? '헤더 선언부' : '일반 로직');
+    const netText = s.net > 0 ? `+${s.net}` : `${s.net}`;
+    section2 += `| \`${s.fileName}\` | \`${s.oldVersion} → ${s.newVersion}\` | **+${s.added}** | **-${s.deleted}** | \`${netText}\` | ${kwText} |\n`;
+  });
+  section2 += `\n#### 📄 파일별 세부 코드 Diff 분석:\n`;
+
+  fileStats.forEach(s => {
+    section2 += `\n##### 🔹 \`${s.fileName}\` (${s.oldVersion} → ${s.newVersion})\n`;
+    if (s.keywords.length > 0) {
+      section2 += `- **중요 변경 특성:** ${s.keywords.join(' / ')}\n`;
+    }
+    if (s.functions.length > 0) {
+      section2 += `- **수정 위치:** \`${s.functions.join('`, `')}\`\n`;
+    }
+    if (s.addedCode.length > 0) {
+      section2 += `- **주요 추가 로직 발췌:**\n\`\`\`c\n` + s.addedCode.slice(0, 6).join('\n') + `\n\`\`\`\n`;
+    }
+    if (s.deletedCode.length > 0) {
+      section2 += `- **제거/대체된 기존 로직:**\n\`\`\`c\n` + s.deletedCode.slice(0, 4).join('\n') + `\n\`\`\`\n`;
+    }
+  });
+
+  // Section 3: 잠재적 부작용 & 영향 영역
+  let section3 = `### 3. ⚠️ 잠재적 부작용(Side Effects) & 영향 영역\n\n` +
+    `- **종합 위험도 평가:** **${riskLevel}**\n` +
+    `- **주요 영향 검토 항목:**\n` +
+    riskFactors.map(rf => `  - ${rf}`).join('\n') + '\n';
+  
+  if (allKeywords.includes('오류 조기 반환(Fail-fast)')) {
+    section3 += `  - **반환값 호환성:** 오류 발생 시 조기 반환(\`return -1\` 등) 분기가 추가되었으므로 상위 호출자(Caller)에서 해당 반환 코드를 적절히 수신하여 처리하는지 확인 필요\n`;
+  }
+  if (allKeywords.includes('동적 메모리 할당/해제')) {
+    section3 += `  - **메모리 안정성:** 동적 할당 및 해제 로직의 대칭성 검증 및 예외 종료 경로에서의 메모리 누수(Leak) 방지 점검 필요\n`;
+  }
+
+  // Section 4: 종합 평가 및 테스트/운영 주의사항
+  let section4 = `### 4. 💡 종합 평가 및 테스트/운영 주의사항\n\n` +
+    `1. **기능 회귀 테스트 (Regression Test):**\n` +
+    `   - 기존 정상 케이스가 신규 추가된 유효성 검사 분기에 의해 오차단되지 않는지 기본 동작 검증\n` +
+    `2. **예외 및 경계 조건 테스트 (Boundary Test):**\n` +
+    `   - 변경된 로직(${allKeywords.join(', ') || '조건 분기'})의 비정상/경계값 입력 시 정확한 오류 코드 반환 및 로그 기록 확인\n` +
+    `3. **운영 로그 모니터링:**\n` +
+    `   - 실 서비스 반영 후 신규 추가된 로그 키워드 모니터링을 통한 이상 징후 조기 포착\n`;
+
+  const headerNotice = notice ? `${notice}\n\n` : '';
+  return headerNotice + `${section1}\n${section2}\n${section3}\n${section4}`;
+}
+
+/**
+ * Built-in Deep Local Multiple CR Comparison Engine
+ */
+export function buildLocalComparisonReport({ crs, diffMap, overlappingFiles, notice = '' }) {
+  const crStats = crs.map(cr => {
+    const diffs = diffMap[cr.crid]?.files || [];
+    const valid = diffs.filter(d => d.hasChanges && d.unifiedDiff);
+    const files = valid.map(v => v.fileName);
+    const totalAdded = valid.reduce((sum, v) => sum + (v.unifiedDiff?.match(/^\+[^+]/gm)?.length || 0), 0);
+    const totalDeleted = valid.reduce((sum, v) => sum + (v.unifiedDiff?.match(/^-[^-]/gm)?.length || 0), 0);
+    return {
+      crid: cr.crid,
+      summary: cr.cleanSummary || cr.summary,
+      module: cr.module || '미지정',
+      customer: cr.customer || '미지정',
+      files,
+      valid,
+      totalAdded,
+      totalDeleted
+    };
+  });
+
+  // Section 1: 요약 비교표
+  let section1 = `### 1. 📊 핵심 변경 목적 및 접근 방식 비교 요약표\n\n`;
+  section1 += `| CR 번호 | 제목 요약 | 모듈 / 고객사 | 변경 파일 | 코드 라인 변화 | 핵심 접근 방식 |\n`;
+  section1 += `| :---: | :--- | :---: | :---: | :---: | :--- |\n`;
+  crStats.forEach(s => {
+    const net = s.totalAdded - s.totalDeleted;
+    const netStr = net > 0 ? `+${net}` : `${net}`;
+    section1 += `| **#${s.crid}** | ${s.summary} | \`${s.module}\` / \`${s.customer}\` | **${s.files.length}개** | +${s.totalAdded}/-${s.totalDeleted} (\`${netStr}\`) | ${s.module} 기능 보완 및 수정 |\n`;
+  });
+
+  // Section 2: 공통 수정 파일 및 코드 변경 흐름 비교
+  let section2 = `\n### 2. 🔄 공통 수정 파일 및 코드 변경 흐름 비교\n\n`;
+  if (overlappingFiles && overlappingFiles.length > 0) {
+    section2 += `다음 **${overlappingFiles.length}개 파일**이 여러 CR에서 공통으로 수정되었습니다:\n\n`;
+    overlappingFiles.forEach(f => {
+      section2 += `#### 📁 공통 파일: \`${f}\`\n`;
+      const relatedCRs = crStats.filter(s => s.files.includes(f));
+      section2 += `- **수정 참여 CR:** ${relatedCRs.map(r => `#${r.crid}`).join(', ')}\n`;
+      relatedCRs.forEach(r => {
+        const fileDiff = r.valid.find(v => v.fileName === f);
+        const snippet = fileDiff?.unifiedDiff ? fileDiff.unifiedDiff.substring(0, 500) + '...' : 'Diff 없음';
+        section2 += `  - **CR #${r.crid} 변경 요약:** \`${fileDiff?.oldVersion} → ${fileDiff?.newVersion}\`\n`;
+        section2 += `    \`\`\`diff\n${snippet}\n    \`\`\`\n`;
+      });
+      section2 += `- **상호 관계 분석:** 동일 파일에 대한 순차적/병렬 수정이 이루어졌으므로, 빌드 시 베이스라인 버전 충돌 및 로직 덮어쓰기 여부 확인이 필요합니다.\n\n`;
+    });
+  } else {
+    section2 += `> ℹ️ **공통 수정 파일 없음 (독립 모듈)**\n> 비교 대상 CR들이 서로 다른 소스 파일을 수정하고 있어 코드 레벨의 직접적인 소스 머지 충돌(Merge Conflict) 가능성은 없습니다.\n\n`;
+  }
+
+  // Section 3: 상호 연관성 및 사이드이펙트
+  let section3 = `### 3. ⚠️ 상호 연관성 및 사이드이펙트 / 코드 충돌 위험도\n\n`;
+  if (overlappingFiles && overlappingFiles.length > 0) {
+    section3 += `- **코드 충돌 위험도: [주의/중간]** 공통 파일(\`${overlappingFiles.join(', ')}\`)이 존재하므로 패치 적용 순서에 따라 컴파일 에러 또는 이전 수정사항 덮어쓰기 위험이 있습니다.\n`;
+    section3 += `- **통합 빌드 검증:** 각 CR을 개별 반영하지 말고 순차적 머지 후 통합 빌드 및 단위 시험을 수행해야 합니다.\n`;
+  } else {
+    section3 += `- **코드 충돌 위험도: [안정/낮음]** 각 CR의 수정 범위가 독립된 파일에 국한되어 있어 소스 코드 충돌 위험은 극히 낮습니다.\n`;
+    section3 += `- **기능적 상호작용 검증:** 수정된 개별 모듈 간 통신/인터페이스 메시지 규격 호환성을 중점적으로 확인하십시오.\n`;
+  }
+
+  // Section 4: 종합 진단 및 권고사항
+  let section4 = `\n### 4. 💡 종합 진단 및 권고사항\n\n` +
+    `1. **패치 릴리즈 순서 확정:**\n` +
+    `   - CR 등록 일자 및 의존성 관계에 따라 이전 CR(#${crs[0]?.crid}) 선반영 후 후속 CR 반영 권고\n` +
+    `2. **공통 기능 연계 회귀 시험:**\n` +
+    `   - 대상 CR들이 적용된 통합 바이너리를 생성하여 전체 회귀 시험 수행\n` +
+    `3. **배포 시 형상 관리 주의사항:**\n` +
+    `   - ClearCase/Git 브랜치 병합 시 공통 수정 파일의 변경 내용이 누락되지 않도록 3-way merge 검증 진행\n`;
+
+  const headerNotice = notice ? `${notice}\n\n` : '';
+  return headerNotice + `${section1}${section2}${section3}${section4}`;
+}
+
+/**
  * 1. Single CR Deep Diff Analysis
  */
 export async function analyzeSingleCRDiff({ cr, diffPayload, config = {} }) {
   const files = diffPayload?.files || [];
   const validDiffs = files.filter(f => f.hasChanges && f.unifiedDiff);
 
+  // 1. If provider is explicitly 'local', run the built-in deep analysis engine directly
+  if (config.provider === 'local') {
+    const analysisReport = buildLocalDiffAnalysisReport({ cr, validDiffs });
+    return {
+      analysis: analysisReport,
+      provider: '로컬 심층 분석 엔진 (사내 보안 모드)',
+      fileCount: validDiffs.length
+    };
+  }
+
+  // 2. External Provider: format diff and call LLM
   let diffText = '';
   validDiffs.forEach(f => {
-    const truncated = f.unifiedDiff.length > 5000 
-      ? f.unifiedDiff.substring(0, 5000) + '\n... (일부 긴 diff 생략)' 
-      : f.unifiedDiff;
+    let rawDiff = f.unifiedDiff || '';
+    if (isBinaryDiff(f.fileName, rawDiff)) {
+      diffText += `\n### 파일: \`${f.fileName}\` (${f.oldVersion} -> ${f.newVersion})\n*(바이너리 파일 변경 내역 - 코드 텍스트 분석 대상에서 제외됨)*\n`;
+      return;
+    }
+    rawDiff = sanitizeDiffText(rawDiff);
+    const truncated = rawDiff.length > 5000 
+      ? rawDiff.substring(0, 5000) + '\n... (일부 긴 diff 생략)' 
+      : rawDiff;
     diffText += `\n### 파일: \`${f.fileName}\` (${f.oldVersion} -> ${f.newVersion})\n\`\`\`diff\n${truncated}\n\`\`\`\n`;
   });
 
@@ -502,7 +811,11 @@ ${cr.checkinLog || '로그 없음'}
 ${diffText || '(변경 코드가 없거나 바이너리 파일입니다.)'}`;
 
   try {
-    const res = await callLLM({ systemPrompt, userPrompt, config });
+    const res = await callLLM({ 
+      systemPrompt: sanitizeDiffText(systemPrompt), 
+      userPrompt: sanitizeDiffText(userPrompt), 
+      config 
+    });
     return {
       analysis: res.content,
       provider: res.provider,
@@ -510,17 +823,12 @@ ${diffText || '(변경 코드가 없거나 바이너리 파일입니다.)'}`;
     };
   } catch (err) {
     console.warn(`[AI Diff Analysis Error] ${config.provider || 'unknown'}:`, err.message);
-    const fallbackText = `> 💡 **알림**: 선택하신 AI 공급자(\`${config.provider || 'AI'}\`)가 비활성화 또는 응답 불가 상태여서 **[로컬 코드 Diff 요약 모드]**로 자동 전환하여 결과를 표시합니다.\n\n` +
-      `### 🎯 CR #${cr.crid} 코드 수정 개요\n` +
-      `- **요약:** ${cr.cleanSummary || cr.summary}\n` +
-      `- **수정 파일 수:** 총 ${validDiffs.length}개 파일 변경\n\n` +
-      `### 📝 변경 파일 목록\n` +
-      validDiffs.map(f => `- \`${f.fileName}\` (${f.oldVersion} -> ${f.newVersion})`).join('\n') +
-      `\n\n*(상세한 AI 심층 분석을 원하실 경우 환경설정에서 활성화된 AI 공급자를 선택하거나 OmniRoute를 실행해 주세요.)*`;
+    const notice = `> 💡 **알림**: 선택하신 AI 공급자(\`${config.provider || 'AI'}\`)가 비활성화 또는 일시적 응답 불가 상태여서 **[로컬 심층 분석 엔진 (사내 보안 모드)]**으로 자동 전환하여 전체 분석 리포트를 생성했습니다.\n> *(원인: ${err.message})*`;
+    const fallbackAnalysis = buildLocalDiffAnalysisReport({ cr, validDiffs, notice });
 
     return {
-      analysis: fallbackText,
-      provider: 'local-summary (기본 자동전환)',
+      analysis: fallbackAnalysis,
+      provider: '로컬 심층 분석 (자동 전환)',
       isFallback: true,
       fileCount: validDiffs.length
     };
@@ -545,6 +853,18 @@ export async function compareMultipleCRDiffs({ crs, diffMap, config = {} }) {
 
   const overlappingFiles = Object.keys(fileToCRs).filter(f => fileToCRs[f].length > 1);
 
+  // 1. If provider is explicitly 'local', run the built-in cross comparison engine directly
+  if (config.provider === 'local') {
+    const comparisonReport = buildLocalComparisonReport({ crs, diffMap, overlappingFiles });
+    return {
+      analysis: comparisonReport,
+      provider: '로컬 교차 비교 엔진 (사내 보안 모드)',
+      overlappingFiles,
+      crCount: crs.length
+    };
+  }
+
+  // 2. External Provider: format diff and call LLM
   let crsContext = '';
   crs.forEach((cr, idx) => {
     crsContext += `\n--- [CR ${idx + 1}: #${cr.crid}] ---\n`;
@@ -556,7 +876,13 @@ export async function compareMultipleCRDiffs({ crs, diffMap, config = {} }) {
     const valid = diffs.filter(d => d.hasChanges && d.unifiedDiff);
     crsContext += `- 변경 파일(${valid.length}개): ${valid.map(v => v.fileName).join(', ')}\n`;
     valid.forEach(v => {
-      const truncated = v.unifiedDiff.length > 3000 ? v.unifiedDiff.substring(0, 3000) + '\n...(생략)' : v.unifiedDiff;
+      let rawDiff = v.unifiedDiff || '';
+      if (isBinaryDiff(v.fileName, rawDiff)) {
+        crsContext += `  * 파일 \`${v.fileName}\`: (바이너리 파일 변경 - 코드 제외)\n`;
+        return;
+      }
+      rawDiff = sanitizeDiffText(rawDiff);
+      const truncated = rawDiff.length > 3000 ? rawDiff.substring(0, 3000) + '\n...(생략)' : rawDiff;
       crsContext += `  * 파일 \`${v.fileName}\` Diff:\n\`\`\`diff\n${truncated}\n\`\`\`\n`;
     });
   });
@@ -572,7 +898,11 @@ export async function compareMultipleCRDiffs({ crs, diffMap, config = {} }) {
   const userPrompt = `[비교 대상 CR 목록]\n${crsContext}\n\n[공통 수정 파일]\n${overlappingFiles.length > 0 ? overlappingFiles.join(', ') : '공통 수정 파일 없음 (개별 파일 독립 수정)'}\n\n위 CR들의 실제 소스 코드 변경점을 상호 교차 비교하여 한국어 마크다운으로 상세히 분석해 주세요.`;
 
   try {
-    const res = await callLLM({ systemPrompt, userPrompt, config });
+    const res = await callLLM({ 
+      systemPrompt: sanitizeDiffText(systemPrompt), 
+      userPrompt: sanitizeDiffText(userPrompt), 
+      config 
+    });
     return {
       analysis: res.content,
       provider: res.provider,
@@ -581,18 +911,12 @@ export async function compareMultipleCRDiffs({ crs, diffMap, config = {} }) {
     };
   } catch (err) {
     console.warn(`[AI Compare Error] ${config.provider || 'unknown'}:`, err.message);
-    const fallbackText = `> 💡 **알림**: 선택하신 AI 공급자(\`${config.provider || 'AI'}\`)가 비활성화 또는 응답 불가 상태여서 **[로컬 교차 비교 요약 모드]**로 자동 전환되었습니다.\n\n` +
-      `### 📊 비교 대상 CR 목록 (${crs.length}개)\n` +
-      crs.map(c => `- **#${c.crid}**: ${c.cleanSummary || c.summary} (${(c.files || []).length}개 파일)`).join('\n') +
-      `\n\n### 🔄 공통 수정 파일 분석\n` +
-      (overlappingFiles.length > 0 
-        ? `다음 파일이 여러 CR에서 중복 수정되었습니다:\n` + overlappingFiles.map(f => `- \`${f}\``).join('\n')
-        : `- 공통으로 겹치는 수정 파일이 없습니다. (각 CR이 독립된 파일을 수정함)`) +
-      `\n\n*(상세한 AI 심층 분석을 원하실 경우 환경설정에서 활성화된 AI 공급자를 선택하거나 OmniRoute를 실행해 주세요.)*`;
+    const notice = `> 💡 **알림**: 선택하신 AI 공급자(\`${config.provider || 'AI'}\`)가 비활성화 또는 일시적 응답 불가 상태여서 **[로컬 교차 비교 엔진 (사내 보안 모드)]**으로 자동 전환되었습니다.\n> *(원인: ${err.message})*`;
+    const fallbackAnalysis = buildLocalComparisonReport({ crs, diffMap, overlappingFiles, notice });
 
     return {
-      analysis: fallbackText,
-      provider: 'local-summary (기본 자동전환)',
+      analysis: fallbackAnalysis,
+      provider: '로컬 교차 비교 (자동 전환)',
       isFallback: true,
       overlappingFiles,
       crCount: crs.length
@@ -623,8 +947,10 @@ export async function processAiQuery({ query, contextCrs = [], config = {} }) {
         unavailableReason = 'Custom LLM 엔드포인트 URL이 설정되지 않아';
       }
     } else if (provider === 'openai') {
-      if (!config.openaiApiKey || config.openaiApiKey === 'proxy-handled-key') {
-        unavailableReason = 'OpenAI API 키가 설정되지 않아';
+      const hasCodex = hasCommand('codex');
+      const hasKey = Boolean(config.openaiApiKey && config.openaiApiKey !== 'proxy-handled-key');
+      if (!hasCodex && !hasKey) {
+        unavailableReason = 'Codex CLI 또는 OpenAI API 키가 감지되지 않아';
       }
     } else if (provider === 'gemini') {
       const hasAgy = hasCommand('agy');
@@ -634,7 +960,7 @@ export async function processAiQuery({ query, contextCrs = [], config = {} }) {
       }
     } else if (provider === 'claude') {
       const hasClaude = hasCommand('claude');
-      const hasKey = Boolean(config.claudeApiKey && config.claudeApiKey !== 'proxy-handled-key');
+      const hasKey = Boolean((config.claudeApiKey && config.claudeApiKey !== 'proxy-handled-key') || readClaudeToken());
       if (!hasClaude && !hasKey) {
         unavailableReason = 'Claude CLI 또는 Anthropic API 키가 감지되지 않아';
       }

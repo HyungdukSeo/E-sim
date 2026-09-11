@@ -4,6 +4,43 @@ const http = require('http');
 const fs = require('fs');
 const { execSync } = require('child_process');
 const { pathToFileURL } = require('url');
+const os = require('os');
+
+// Augment process.env.PATH for macOS/Linux GUI Electron environment to find claude, agy,
+// codex, node, etc. — GUI apps on those platforms don't inherit the login shell's PATH.
+// Windows GUI apps DO inherit the full user/system PATH (registry-driven, not a shell
+// profile), and splitting/joining it on ':' would corrupt every entry (e.g. "C:\Users\..."
+// splits after the drive letter), so this augmentation is skipped entirely on win32.
+if (process.platform !== 'win32') {
+  const userHome = os.homedir();
+  const commonBinPaths = [
+    path.join(userHome, '.local', 'bin'),
+    '/opt/homebrew/bin',
+    '/opt/homebrew/sbin',
+    '/usr/local/bin',
+    '/usr/local/sbin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin'
+  ];
+  const nvmBase = path.join(userHome, '.nvm', 'versions', 'node');
+  if (fs.existsSync(nvmBase)) {
+    try {
+      const versions = fs.readdirSync(nvmBase);
+      for (const v of versions) {
+        const vBin = path.join(nvmBase, v, 'bin');
+        if (fs.existsSync(vBin)) {
+          commonBinPaths.push(vBin);
+        }
+      }
+    } catch {}
+  }
+  if (process.env.PATH) {
+    commonBinPaths.push(...process.env.PATH.split(path.delimiter));
+  }
+  process.env.PATH = Array.from(new Set(commonBinPaths)).filter(Boolean).join(path.delimiter);
+}
 
 let mainWindow = null;
 let tray = null;

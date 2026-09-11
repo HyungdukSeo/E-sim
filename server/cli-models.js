@@ -10,35 +10,72 @@ import path from 'path';
 // full user/system PATH (set via the registry, not a shell profile), and splitting/joining
 // it on ':' would corrupt every entry (e.g. "C:\Users\..." splits after the drive letter) —
 // so this augmentation is skipped entirely on win32.
+const userHome = os.homedir();
+const commonBinPaths = [];
 if (process.platform !== 'win32') {
-  const userHome = os.homedir();
-  const commonBinPaths = [
+  commonBinPaths.push(
     path.join(userHome, '.local', 'bin'),
-    path.join(userHome, '.nvm', 'versions', 'node', process.version, 'bin'),
     '/opt/homebrew/bin',
+    '/opt/homebrew/sbin',
     '/usr/local/bin',
+    '/usr/local/sbin',
     '/usr/bin',
     '/bin',
     '/usr/sbin',
     '/sbin'
-  ];
+  );
+
+  // Scan all installed NVM Node versions
+  const nvmBase = path.join(userHome, '.nvm', 'versions', 'node');
+  if (fs.existsSync(nvmBase)) {
+    try {
+      const versions = fs.readdirSync(nvmBase);
+      for (const v of versions) {
+        const vBin = path.join(nvmBase, v, 'bin');
+        if (fs.existsSync(vBin)) {
+          commonBinPaths.push(vBin);
+        }
+      }
+    } catch {}
+  }
+
   if (process.env.PATH) {
     commonBinPaths.push(...process.env.PATH.split(path.delimiter));
   }
   process.env.PATH = Array.from(new Set(commonBinPaths)).filter(Boolean).join(path.delimiter);
 }
 
-export function hasCommand(cmd) {
-  try {
-    if (process.platform === 'win32') {
-      execSync(`where ${cmd}`, { stdio: 'pipe' });
-    } else {
-      execSync(`which ${cmd}`, { stdio: 'pipe' });
-    }
-    return true;
-  } catch {
-    return false;
+// Locate a CLI binary's full path. On macOS/Linux this first checks the augmented
+// commonBinPaths list (GUI apps may not have PATH fully populated), then falls back
+// to `which`. On Windows, PATH is already complete (registry-driven), so this goes
+// straight to `where`, which prints one path per line — take the first.
+export function findCommandPath(cmd) {
+  if (process.platform === 'win32') {
+    try {
+      const out = execSync(`where ${cmd}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+      const first = out.split(/\r?\n/)[0]?.trim();
+      if (first && fs.existsSync(first)) return first;
+    } catch {}
+    return null;
   }
+
+  for (const dir of commonBinPaths) {
+    const full = path.join(dir, cmd);
+    if (fs.existsSync(full)) return full;
+  }
+  try {
+    const out = execSync(`which ${cmd}`, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, PATH: process.env.PATH }
+    }).trim();
+    if (out && fs.existsSync(out)) return out;
+  } catch {}
+  return null;
+}
+
+export function hasCommand(cmd) {
+  return Boolean(findCommandPath(cmd));
 }
 
 export function isInvalidOmniRouteKey(key) {
@@ -176,7 +213,7 @@ export async function checkOmniRouteAlive(baseUrl = 'http://localhost:20128/v1',
 /**
  * 1. Claude — REST API 직접 호출 (Keychain / ~/.claude/.credentials.json)
  */
-function readClaudeToken() {
+export function readClaudeToken() {
   let token = null;
 
   // 1) ~/.claude/.credentials.json 확인
@@ -476,45 +513,69 @@ export async function getOmniRouteModels(baseUrl = 'http://localhost:20128/v1', 
 /**
  * 6. Execute AI via Local CLI (Claude Code or Antigravity/Agy)
  */
-export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = '', timeoutMs = 90000 }) {
+export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = '', timeoutMs = 180000 }) {
   return new Promise((resolve, reject) => {
-    const cmd = cmdType === 'gemini' || cmdType === 'agy' ? 'agy' : 'claude';
-    if (!hasCommand(cmd)) {
-      return reject(new Error(`${cmd} CLI가 설치되지 않았거나 PATH에 없습니다.`));
+    let cmdName = 'claude';
+    if (cmdType === 'gemini' || cmdType === 'agy') cmdName = 'agy';
+    else if (cmdType === 'openai' || cmdType === 'codex') cmdName = 'codex';
+    else if (cmdType === 'claude') cmdName = 'claude';
+
+    const cmdBin = findCommandPath(cmdName) || cmdName;
+    if (!hasCommand(cmdName)) {
+      return reject(new Error(`${cmdName} CLI가 설치되지 않았거나 PATH에 없습니다.`));
     }
 
     const fullPrompt = systemPrompt
       ? `${systemPrompt}\n\n[사용자 요청 및 분석 대상 데이터]\n${userPrompt}`
       : userPrompt;
 
-    const args = [];
+    // Remove any null bytes or invalid control characters that break child_process.spawn
+    const sanitizedPrompt = (fullPrompt || '').replace(/\0/g, '');
 
-    if (cmd === 'claude') {
+    const args = [];
+    let outputFile = null;
+
+    if (cmdName === 'claude') {
       if (model) {
         const lower = model.toLowerCase();
         if (lower.includes('opus')) args.push('--model', 'opus');
         else if (lower.includes('haiku')) args.push('--model', 'haiku');
         else if (lower.includes('sonnet')) args.push('--model', 'sonnet');
       }
-      args.push('-p', fullPrompt);
-    } else if (cmd === 'agy') {
+      args.push('-p', sanitizedPrompt);
+    } else if (cmdName === 'agy') {
       if (model && (model.startsWith('gemini') || model.startsWith('claude') || model.startsWith('gpt'))) {
         args.push('--model', model);
       }
-      args.push('-p', fullPrompt);
+      args.push('-p', sanitizedPrompt);
+    } else if (cmdName === 'codex') {
+      outputFile = path.join(os.tmpdir(), `codex_diff_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.txt`);
+      args.push('exec', '--skip-git-repo-check', '--ephemeral', '-s', 'read-only');
+      if (model && !model.includes('default') && !model.includes('auto')) {
+        args.push('-m', model);
+      }
+      args.push('-o', outputFile, sanitizedPrompt);
     }
 
     let stdout = '';
     let stderr = '';
 
-    const proc = spawn(cmd, args, {
+    const proc = spawn(cmdBin, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, PATH: process.env.PATH }
+      env: {
+        ...process.env,
+        PATH: process.env.PATH,
+        HOME: os.homedir(),
+        USER: os.userInfo()?.username || process.env.USER || 'user'
+      }
     });
 
     const timer = setTimeout(() => {
       try { proc.kill('SIGKILL'); } catch {}
-      reject(new Error(`${cmd} CLI 응답 타임아웃 (${Math.round(timeoutMs / 1000)}초 초과)`));
+      if (outputFile && fs.existsSync(outputFile)) {
+        try { fs.unlinkSync(outputFile); } catch {}
+      }
+      reject(new Error(`${cmdName} CLI 응답 타임아웃 (${Math.round(timeoutMs / 1000)}초 초과)`));
     }, timeoutMs);
 
     proc.stdout.on('data', (d) => {
@@ -527,18 +588,37 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
 
     proc.on('error', (err) => {
       clearTimeout(timer);
+      if (outputFile && fs.existsSync(outputFile)) {
+        try { fs.unlinkSync(outputFile); } catch {}
+      }
       reject(err);
     });
 
     proc.on('close', (code) => {
       clearTimeout(timer);
-      if (code === 0) {
+      let finalContent = '';
+      if (outputFile && fs.existsSync(outputFile)) {
+        try {
+          finalContent = fs.readFileSync(outputFile, 'utf8').trim();
+          fs.unlinkSync(outputFile);
+        } catch {}
+      }
+      if (!finalContent) {
+        finalContent = stdout.trim();
+      }
+
+      if (code === 0 && finalContent) {
+        resolve({
+          content: finalContent,
+          provider: `${cmdName.toUpperCase()} CLI (${model || 'default'})`
+        });
+      } else if (code === 0) {
         resolve({
           content: stdout.trim(),
-          provider: `${cmd.toUpperCase()} CLI (${model || 'default'})`
+          provider: `${cmdName.toUpperCase()} CLI (${model || 'default'})`
         });
       } else {
-        reject(new Error(`${cmd} CLI 실패 (코드 ${code}): ${stderr.trim() || stdout.trim()}`));
+        reject(new Error(`${cmdName} CLI 실패 (코드 ${code}): ${stderr.trim() || stdout.trim()}`));
       }
     });
   });
