@@ -331,7 +331,7 @@ export async function batchIndexDiffs(crs, sshConfig, options = {}) {
  */
 class BackgroundDiffIndexer {
   constructor() {
-    this.enabled = true; // User preference (default ON)
+    this.enabled = false; // User preference (default OFF — user opts in via Settings)
     this.isRunning = false;
     this.status = 'idle'; // 'idle' | 'running' | 'completed' | 'paused' | 'waiting_ssh'
     this.concurrency = 3; // 1 ~ 10 parallel workers (default 3)

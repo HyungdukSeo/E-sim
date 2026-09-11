@@ -179,9 +179,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           });
         }
       });
+      // One-shot on open only — no auto-polling. Use the refresh button for
+      // an on-demand re-check instead, same pattern as provider status.
       loadWorkerStatus();
-      const timer = setInterval(loadWorkerStatus, 2500);
-      return () => clearInterval(timer);
     }
   }, [isOpen]);
 
@@ -357,10 +357,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   useEffect(() => {
     if (!isOpen) return;
+    // One-shot check on open only — 3s auto-polling was hammering execSync-based
+    // CLI detection (which/where, sqlite3) on every tick and could hang the UI.
+    // Use the "실시간 감지" refresh button for an on-demand re-check instead.
     refreshProvidersStatus();
-    // Real-time polling every 3 seconds while modal is open
-    const timer = setInterval(refreshProvidersStatus, 3000);
-    return () => clearInterval(timer);
   }, [isOpen, refreshProvidersStatus]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1047,6 +1047,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     앱 실행 중 백그라운드에서 전수 Unified Diff를 자동 수집하여 AI 코드 분석용 데이터셋을 생성합니다.
                   </p>
                 </div>
+                <button
+                  type="button"
+                  onClick={loadWorkerStatus}
+                  className="p-1 rounded-md text-slate-400 hover:text-emerald-300 hover:bg-slate-800 transition-all flex items-center gap-1 text-[11px] cursor-pointer"
+                  title="수집 현황 즉시 새로고침"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                </button>
               </div>
 
               {/* Status Badge & Control Button */}
