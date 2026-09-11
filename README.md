@@ -209,8 +209,13 @@ start.bat
 * 📦 **전체 DB & Diff 캐시 통합 ZIP 백업/복원 (`DB&Cache 내보내기`)**:
   * Mantis CR 메타데이터 DB와 1.38GB 분량의 소스코드 Diff 캐시 전수(5,454건)를 약 250MB 단일 ZIP 번들로 고속 압축 내보내기 및 스트리밍 가져오기 지원
   * 다른 PC의 `데이터 저장 폴더 열기`에 직접 압축을 풀거나 `외부 DB&Cache 가져오기`로 업로드하면, ClearCase SSH 추가 수집 없이 즉시 100% 동일하게 구동
+* 🧠 **전체 6대 AI 공급자(로컬/OmniRoute/Custom/Codex/Antigravity/Claude) 전수 심층 분석 지원**:
+  * **로컬 엔진(사내 보안 격리 모드)**: 외부 인터넷 및 LLM API 연결 없이도 자체 정적 분석 엔진(휴리스틱/AST Diff 파서)이 소스코드 변경점을 직접 파싱하여 4대 섹션(목적 및 원인, 파일별 코드 변경점 상세, 잠재적 부작용/헤더/SQL/동시성 위험도, 테스트 권고사항)을 완전하게 생성
+  * **복수 CR 교차 비교 전수 지원**: 2~3개 CR 선택 시 로컬 엔진 및 모든 AI 공급자가 공통 수정 파일 분석표와 변경 흐름, 충돌 위험도 비교 리포트를 즉시 생성
+  * **무중단 스마트 폴백(Smart Fallback)**: 외부 AI 공급자(Claude, Codex, Antigravity, OmniRoute 등) 일시적 장애 시에도 단순 텍스트 안내가 아닌 로컬 심층 분석 엔진이 작동하여 즉시 완전한 분석 리포트 제공
 * 🤖 **OmniRoute / Claude 등 멀티 AI 안정성 강화 & Null-Byte 오류 완전 해결**:
   * 바이너리 파일(`.so`, `.a`, `.o`, `.bin` 등) 및 널 바이트(`\0`)가 포함된 Diff 데이터를 자동으로 감지·정제(Sanitize)하여 `child_process.spawn` 오류로 인한 로컬 모드 자동전환 현상 원천 해결
+  * macOS GUI 환경(Electron)에서 NVM Node 경로 및 로컬 CLI 경로(`~/.local/bin`, `/opt/homebrew/bin` 등)를 자동 보정하여 Claude, Codex, Antigravity CLI 구동 100% 보장
   * Claude CLI 바이너리 절대 경로 우선 탐색 및 CLI 실패 시 로컬 토큰(`~/.claude/.credentials.json`, Keychain)을 통한 Anthropic REST API 2차 자동 복구 지원
   * 대용량 소스코드 Diff 분석을 위한 AI 엔진 타임아웃 180초 확장
 * 🤖 **OmniRoute 토큰 자동 감지 및 401 자동 복구 Fallback**:

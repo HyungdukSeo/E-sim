@@ -4,6 +4,37 @@ const http = require('http');
 const fs = require('fs');
 const { execSync } = require('child_process');
 const { pathToFileURL } = require('url');
+const os = require('os');
+
+// Augment process.env.PATH for macOS GUI Electron environment to find claude, agy, codex, node, etc.
+const userHome = os.homedir();
+const commonBinPaths = [
+  path.join(userHome, '.local', 'bin'),
+  '/opt/homebrew/bin',
+  '/opt/homebrew/sbin',
+  '/usr/local/bin',
+  '/usr/local/sbin',
+  '/usr/bin',
+  '/bin',
+  '/usr/sbin',
+  '/sbin'
+];
+const nvmBase = path.join(userHome, '.nvm', 'versions', 'node');
+if (fs.existsSync(nvmBase)) {
+  try {
+    const versions = fs.readdirSync(nvmBase);
+    for (const v of versions) {
+      const vBin = path.join(nvmBase, v, 'bin');
+      if (fs.existsSync(vBin)) {
+        commonBinPaths.push(vBin);
+      }
+    }
+  } catch {}
+}
+if (process.env.PATH) {
+  commonBinPaths.push(...process.env.PATH.split(':'));
+}
+process.env.PATH = Array.from(new Set(commonBinPaths)).filter(Boolean).join(':');
 
 let mainWindow = null;
 let tray = null;

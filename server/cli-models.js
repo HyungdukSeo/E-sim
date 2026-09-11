@@ -8,28 +8,48 @@ import path from 'path';
 const userHome = os.homedir();
 const commonBinPaths = [
   path.join(userHome, '.local', 'bin'),
-  path.join(userHome, '.nvm', 'versions', 'node', process.version, 'bin'),
   '/opt/homebrew/bin',
+  '/opt/homebrew/sbin',
   '/usr/local/bin',
+  '/usr/local/sbin',
   '/usr/bin',
   '/bin',
   '/usr/sbin',
   '/sbin'
 ];
+
+// Scan all installed NVM Node versions
+const nvmBase = path.join(userHome, '.nvm', 'versions', 'node');
+if (fs.existsSync(nvmBase)) {
+  try {
+    const versions = fs.readdirSync(nvmBase);
+    for (const v of versions) {
+      const vBin = path.join(nvmBase, v, 'bin');
+      if (fs.existsSync(vBin)) {
+        commonBinPaths.push(vBin);
+      }
+    }
+  } catch {}
+}
+
 if (process.env.PATH) {
   commonBinPaths.push(...process.env.PATH.split(':'));
 }
 process.env.PATH = Array.from(new Set(commonBinPaths)).filter(Boolean).join(':');
 
 export function findCommandPath(cmd) {
-  try {
-    const out = execSync(`which ${cmd}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    if (out && fs.existsSync(out)) return out;
-  } catch {}
   for (const dir of commonBinPaths) {
     const full = path.join(dir, cmd);
     if (fs.existsSync(full)) return full;
   }
+  try {
+    const out = execSync(`which ${cmd}`, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, PATH: process.env.PATH }
+    }).trim();
+    if (out && fs.existsSync(out)) return out;
+  } catch {}
   return null;
 }
 
@@ -468,7 +488,11 @@ export async function getOmniRouteModels(baseUrl = 'http://localhost:20128/v1', 
  */
 export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = '', timeoutMs = 180000 }) {
   return new Promise((resolve, reject) => {
-    const cmdName = cmdType === 'gemini' || cmdType === 'agy' ? 'agy' : 'claude';
+    let cmdName = 'claude';
+    if (cmdType === 'gemini' || cmdType === 'agy') cmdName = 'agy';
+    else if (cmdType === 'openai' || cmdType === 'codex') cmdName = 'codex';
+    else if (cmdType === 'claude') cmdName = 'claude';
+
     const cmdBin = findCommandPath(cmdName) || cmdName;
     if (!hasCommand(cmdName)) {
       return reject(new Error(`${cmdName} CLI가 설치되지 않았거나 PATH에 없습니다.`));
@@ -482,6 +506,7 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
     const sanitizedPrompt = (fullPrompt || '').replace(/\0/g, '');
 
     const args = [];
+    let outputFile = null;
 
     if (cmdName === 'claude') {
       if (model) {
@@ -496,6 +521,13 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
         args.push('--model', model);
       }
       args.push('-p', sanitizedPrompt);
+    } else if (cmdName === 'codex') {
+      outputFile = path.join(os.tmpdir(), `codex_diff_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.txt`);
+      args.push('exec', '--skip-git-repo-check', '--ephemeral', '-s', 'read-only');
+      if (model && !model.includes('default') && !model.includes('auto')) {
+        args.push('-m', model);
+      }
+      args.push('-o', outputFile, sanitizedPrompt);
     }
 
     let stdout = '';
@@ -513,6 +545,9 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
 
     const timer = setTimeout(() => {
       try { proc.kill('SIGKILL'); } catch {}
+      if (outputFile && fs.existsSync(outputFile)) {
+        try { fs.unlinkSync(outputFile); } catch {}
+      }
       reject(new Error(`${cmdName} CLI 응답 타임아웃 (${Math.round(timeoutMs / 1000)}초 초과)`));
     }, timeoutMs);
 
@@ -526,12 +561,31 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
 
     proc.on('error', (err) => {
       clearTimeout(timer);
+      if (outputFile && fs.existsSync(outputFile)) {
+        try { fs.unlinkSync(outputFile); } catch {}
+      }
       reject(err);
     });
 
     proc.on('close', (code) => {
       clearTimeout(timer);
-      if (code === 0) {
+      let finalContent = '';
+      if (outputFile && fs.existsSync(outputFile)) {
+        try {
+          finalContent = fs.readFileSync(outputFile, 'utf8').trim();
+          fs.unlinkSync(outputFile);
+        } catch {}
+      }
+      if (!finalContent) {
+        finalContent = stdout.trim();
+      }
+
+      if (code === 0 && finalContent) {
+        resolve({
+          content: finalContent,
+          provider: `${cmdName.toUpperCase()} CLI (${model || 'default'})`
+        });
+      } else if (code === 0) {
         resolve({
           content: stdout.trim(),
           provider: `${cmdName.toUpperCase()} CLI (${model || 'default'})`
