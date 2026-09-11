@@ -209,6 +209,10 @@ start.bat
 * 📦 **전체 DB & Diff 캐시 통합 ZIP 백업/복원 (`DB&Cache 내보내기`)**:
   * Mantis CR 메타데이터 DB와 1.38GB 분량의 소스코드 Diff 캐시 전수(5,454건)를 약 250MB 단일 ZIP 번들로 고속 압축 내보내기 및 스트리밍 가져오기 지원
   * 다른 PC의 `데이터 저장 폴더 열기`에 직접 압축을 풀거나 `외부 DB&Cache 가져오기`로 업로드하면, ClearCase SSH 추가 수집 없이 즉시 100% 동일하게 구동
+* 🤖 **OmniRoute / Claude 등 멀티 AI 안정성 강화 & Null-Byte 오류 완전 해결**:
+  * 바이너리 파일(`.so`, `.a`, `.o`, `.bin` 등) 및 널 바이트(`\0`)가 포함된 Diff 데이터를 자동으로 감지·정제(Sanitize)하여 `child_process.spawn` 오류로 인한 로컬 모드 자동전환 현상 원천 해결
+  * Claude CLI 바이너리 절대 경로 우선 탐색 및 CLI 실패 시 로컬 토큰(`~/.claude/.credentials.json`, Keychain)을 통한 Anthropic REST API 2차 자동 복구 지원
+  * 대용량 소스코드 Diff 분석을 위한 AI 엔진 타임아웃 180초 확장
 * 🤖 **OmniRoute 토큰 자동 감지 및 401 자동 복구 Fallback**:
   * 로컬 SQLite(`~/.omniroute/storage.sqlite`)에서 API 키 자동 추출
   * `CHANGEME`, `sk-omniroute` 등 플레이스홀더 키 자동 정화 및 401 인증 실패 시 로컬 토큰으로 자동 재시도 복구 탑재
