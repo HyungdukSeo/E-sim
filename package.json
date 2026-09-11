@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "start": "concurrently -k -n \"SERVER,CLIENT\" -c \"blue,green\" \"npm run server\" \"npm run preview\"",
     "electron": "electron electron/main.cjs",
-    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac",
     "dist:win": "npm run build && electron-builder --win nsis",
     "build:mac": "npm run dist:mac",
     "build:mac_dist": "npm run dist:mac",
