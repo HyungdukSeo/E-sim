@@ -439,7 +439,10 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
 
   // 4. Claude Code / Anthropic
   if (provider === 'claude') {
-    const model = config.claudeModel || config.model || 'sonnet';
+    // 'sonnet' alone is a short alias the claude CLI itself understands (used
+    // below in the CLI --model arg), but the direct Anthropic API further down
+    // needs a real model id — falling through to the CLI-only alias there 404s.
+    const model = config.claudeModel || config.model || 'claude-sonnet-4-5-20250929';
     let cliError = null;
     const claudeCliAvailable = await hasCommand('claude');
     console.log('[Claude Provider] claude CLI detected:', claudeCliAvailable, '| model:', model);
@@ -479,15 +482,23 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
         'anthropic-version': '2023-06-01'
       };
       if (isOauthToken) {
+        // Anthropic now rejects the request outright ("Unexpected value(s)
+        // oauth-2024-05-20 for the anthropic-beta header") when this beta flag is
+        // sent — it's no longer a recognized value, so just authenticate with the
+        // bearer token and drop the beta header entirely.
         headers['Authorization'] = `Bearer ${apiKey}`;
-        headers['anthropic-beta'] = 'oauth-2024-05-20';
       } else {
         headers['x-api-key'] = apiKey;
       }
 
       try {
+        // Previously any model containing "sonnet" was force-rewritten to the
+        // (now-404ing) legacy alias 'claude-3-5-sonnet-latest', which clobbered a
+        // perfectly valid, current model id the user actually selected in Settings
+        // (e.g. 'claude-sonnet-5'). Send the model id through unchanged — Anthropic
+        // itself is the source of truth for which ids are valid.
         const resp = await axios.post('https://api.anthropic.com/v1/messages', {
-          model: model.includes('sonnet') ? 'claude-3-5-sonnet-latest' : model,
+          model,
           max_tokens: 4096,
           system: systemPrompt.replace(/\0/g, ''),
           messages: [{ role: 'user', content: userPrompt.replace(/\0/g, '') }]

@@ -90,8 +90,18 @@ async function _findCommandPathUncached(cmd) {
   if (process.platform === 'win32') {
     try {
       const { stdout } = await execAsync(`where ${cmd}`, { encoding: 'utf8', timeout: 5000 });
-      const first = stdout.trim().split(/\r?\n/)[0]?.trim();
-      if (first && fs.existsSync(first)) return first;
+      const candidates = stdout.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      // `where` lists every match on PATH, in PATH order — for an npm-installed CLI
+      // that's typically the extension-less Unix shebang script (meant for Git
+      // Bash/WSL, not directly executable by Windows) ALONGSIDE the real `.cmd`
+      // wrapper npm also generates, and the shebang file can sort first. spawn()ing
+      // that file directly fails with ENOENT (Windows can't execute it, and without
+      // shell:true a bare .cmd would fail too) — so prefer a Windows-executable
+      // extension when one exists among the candidates, over just taking line 1.
+      const winExecutable = candidates.find(c => /\.(cmd|exe|bat|ps1)$/i.test(c) && fs.existsSync(c));
+      if (winExecutable) return winExecutable;
+      const first = candidates.find(c => fs.existsSync(c));
+      if (first) return first;
     } catch {}
     return null;
   }
@@ -439,9 +449,13 @@ export function getCodexModels() {
 
     try {
       const codexBin = (await findCommandPath('codex')) || 'codex';
+      // Windows can't exec a .cmd/.bat directly without going through a shell —
+      // without shell:true, spawn()ing npm's .cmd wrapper fails (ENOENT or similar)
+      // even when codexBin correctly resolved to that wrapper's path.
       const proc = spawn(codexBin, ['app-server'], {
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, PATH: process.env.PATH }
+        env: { ...process.env, PATH: process.env.PATH },
+        shell: process.platform === 'win32'
       });
 
       const timer = setTimeout(() => {
@@ -617,8 +631,14 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
     let stdout = '';
     let stderr = '';
 
+    // Windows can't exec a .cmd/.bat directly without going through a shell — npm
+    // installs claude/codex/agy as .cmd wrappers there, and without shell:true,
+    // spawn()ing cmdBin (even though findCommandPath() correctly resolved its
+    // path) fails with ENOENT. Node still safely quotes each `args` entry for us
+    // in this mode, so passing free-form prompt text as an argument stays safe.
     const proc = spawn(cmdBin, args, {
       stdio: [cmdName === 'codex' ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      shell: process.platform === 'win32',
       env: {
         ...process.env,
         PATH: process.env.PATH,
