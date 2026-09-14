@@ -441,11 +441,17 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
   if (provider === 'claude') {
     const model = config.claudeModel || config.model || 'sonnet';
     let cliError = null;
-    if (await hasCommand('claude')) {
+    const claudeCliAvailable = await hasCommand('claude');
+    console.log('[Claude Provider] claude CLI detected:', claudeCliAvailable, '| model:', model);
+    if (claudeCliAvailable) {
       try {
         return await runCliAI('claude', { systemPrompt, userPrompt, model, timeoutMs: 180000 });
       } catch (err) {
-        console.warn('[Claude CLI execution failed, trying direct API/Token fallback]:', err.message);
+        // err.message alone (e.g. "claude CLI 실패 (코드 1): ...") is usually enough,
+        // but log stack + full message so a failure this deep in the fallback chain
+        // (CLI failed -> API also failed -> local engine used) is fully diagnosable
+        // from server logs alone without needing to reproduce interactively.
+        console.warn('[Claude CLI execution failed, trying direct API/Token fallback]:', err.message, err.stack);
         cliError = err;
       }
     }
@@ -494,18 +500,26 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
         // axios's default err.message ("Request failed with status code 400") hides
         // Anthropic's actual error body (e.g. invalid model id, malformed OAuth token
         // usage) — log it and surface it so failures are diagnosable instead of just
-        // silently falling back to the local engine with no clue why.
-        const anthropicError = apiErr.response?.data?.error;
+        // silently falling back to the local engine with no clue why. Log the FULL
+        // raw response body (not just .error.message) since Anthropic's error shape
+        // can vary and a missing/renamed field must never leave us back at the
+        // generic axios message with no way to tell what actually happened.
+        const status = apiErr.response?.status;
+        const responseData = apiErr.response?.data;
         console.error('[Claude API Error]', {
-          status: apiErr.response?.status,
+          status,
           model,
           isOauthToken,
-          anthropicError
+          apiKeyPrefix: apiKey.slice(0, 14),
+          responseData: JSON.stringify(responseData),
+          rawMessage: apiErr.message
         });
-        if (anthropicError?.message) {
-          throw new Error(`Claude API 오류 (${apiErr.response.status}): ${anthropicError.message}`);
+        const anthropicMessage = responseData?.error?.message || (typeof responseData === 'string' ? responseData : null);
+        if (status) {
+          throw new Error(`Claude API 오류 (HTTP ${status}): ${anthropicMessage || JSON.stringify(responseData) || apiErr.message}`);
         }
-        throw apiErr;
+        // No response at all — network/timeout/DNS failure reaching Anthropic.
+        throw new Error(`Claude API 연결 실패: ${apiErr.message}`);
       }
     }
     if (cliError) throw cliError;
