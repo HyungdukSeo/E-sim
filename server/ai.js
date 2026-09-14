@@ -389,8 +389,12 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
       }
     }
 
-    // 2) Direct OpenAI API
-    const apiKey = config.openaiApiKey || (config.apiKey && config.apiKey.startsWith('sk-') && !config.apiKey.startsWith('sk-ant-') && !config.apiKey.includes('omniroute') ? config.apiKey : null);
+    // 2) Direct OpenAI API. Only the per-provider key is honored here — the UI has
+    // no API key input for this provider (it's CLI-only), so config.apiKey (the
+    // legacy single shared field used by the 'custom' provider's key input) has no
+    // legitimate reason to hold an OpenAI key; falling back to it risked reusing a
+    // leftover value typed in for a different provider.
+    const apiKey = config.openaiApiKey;
     if (apiKey && apiKey !== 'proxy-handled-key') {
       const resp = await axios.post('https://api.openai.com/v1/chat/completions', {
         model: model.startsWith('gpt-') ? model : 'gpt-4o-mini',
@@ -445,10 +449,26 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
         cliError = err;
       }
     }
+    // Prefer the token freshly read from THIS machine's local `claude login` session
+    // (~/.claude/.credentials.json / macOS Keychain) over anything saved in
+    // settings.json. A saved apiKey/claudeApiKey can be a stale or foreign value —
+    // e.g. settings.json copied from another PC still carrying that PC's OAuth
+    // token — which then silently overrides a perfectly valid local login and fails
+    // against Anthropic (device/session-bound tokens don't transfer between
+    // machines). Users who only run `claude login` and never type an API key should
+    // always get their own machine's live token, not a stored artifact.
+    // config.apiKey (the legacy single shared field, only meaningfully populated by
+    // the 'custom' provider's UI key input) is intentionally NOT used as a fallback
+    // here — there is no API key input for Claude in the UI, so it could only ever
+    // hold a leftover value from a different provider or a foreign machine's token.
     const detectedToken = await readClaudeToken();
-    const apiKey = config.claudeApiKey || (config.apiKey && config.apiKey.startsWith('sk-ant-') ? config.apiKey : null) || detectedToken;
+    const apiKey = detectedToken || config.claudeApiKey;
     if (apiKey && apiKey !== 'proxy-handled-key') {
-      const isOauthToken = apiKey.startsWith('oauth_') || apiKey.length > 80;
+      // `sk-ant-oat01-...` is Claude Code's actual OAuth access token format (from
+      // `claude login`); a plain Anthropic API key looks like `sk-ant-api03-...`.
+      // The old `length > 80` heuristic could misclassify either format depending
+      // on incidental length, sending the wrong header shape and auth scheme.
+      const isOauthToken = apiKey.startsWith('sk-ant-oat') || apiKey.startsWith('oauth_');
       const headers = {
         'anthropic-version': '2023-06-01'
       };
@@ -459,16 +479,34 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
         headers['x-api-key'] = apiKey;
       }
 
-      const resp = await axios.post('https://api.anthropic.com/v1/messages', {
-        model: model.includes('sonnet') ? 'claude-3-5-sonnet-latest' : model,
-        max_tokens: 4096,
-        system: systemPrompt.replace(/\0/g, ''),
-        messages: [{ role: 'user', content: userPrompt.replace(/\0/g, '') }]
-      }, {
-        headers,
-        timeout: 120000
-      });
-      return { content: resp.data.content?.[0]?.text || '', provider: `Claude API (${model})` };
+      try {
+        const resp = await axios.post('https://api.anthropic.com/v1/messages', {
+          model: model.includes('sonnet') ? 'claude-3-5-sonnet-latest' : model,
+          max_tokens: 4096,
+          system: systemPrompt.replace(/\0/g, ''),
+          messages: [{ role: 'user', content: userPrompt.replace(/\0/g, '') }]
+        }, {
+          headers,
+          timeout: 120000
+        });
+        return { content: resp.data.content?.[0]?.text || '', provider: `Claude API (${model})` };
+      } catch (apiErr) {
+        // axios's default err.message ("Request failed with status code 400") hides
+        // Anthropic's actual error body (e.g. invalid model id, malformed OAuth token
+        // usage) — log it and surface it so failures are diagnosable instead of just
+        // silently falling back to the local engine with no clue why.
+        const anthropicError = apiErr.response?.data?.error;
+        console.error('[Claude API Error]', {
+          status: apiErr.response?.status,
+          model,
+          isOauthToken,
+          anthropicError
+        });
+        if (anthropicError?.message) {
+          throw new Error(`Claude API 오류 (${apiErr.response.status}): ${anthropicError.message}`);
+        }
+        throw apiErr;
+      }
     }
     if (cliError) throw cliError;
     throw new Error('Claude CLI 또는 Anthropic API 키가 필요합니다.');

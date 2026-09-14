@@ -261,7 +261,16 @@ export async function readClaudeToken() {
   if (fs.existsSync(credFile)) {
     try {
       const data = JSON.parse(fs.readFileSync(credFile, 'utf8'));
-      token = data?.claudeAiOauth?.accessToken;
+      const oauth = data?.claudeAiOauth;
+      // An expired OAuth access token still LOOKS valid (right format, right length)
+      // but Anthropic will reject it — surfacing that as a confusing generic error
+      // later. Treat it as absent here so callers fall through to other auth (or a
+      // clear "please re-login" message) instead of silently sending a dead token.
+      if (oauth?.accessToken && oauth?.expiresAt && Date.now() >= oauth.expiresAt) {
+        console.warn('[Claude Models] Local OAuth token is expired (expiresAt:', new Date(oauth.expiresAt).toISOString(), ') — ignoring, run `claude login` again or let the CLI refresh it.');
+      } else {
+        token = oauth?.accessToken;
+      }
     } catch (e) {
       console.warn('[Claude Models] Failed to read credentials file:', e.message);
     }

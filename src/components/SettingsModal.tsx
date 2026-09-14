@@ -333,19 +333,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const startedAt = Date.now();
     try {
       setIsRefreshingProviders(true);
-      // form.ai.apiKey is a single field holding the key for whichever provider is
-      // CURRENTLY selected — it must only be forwarded to that one provider's check.
-      // Previously it was sent to openai/claude/gemini simultaneously, so having any
-      // one provider's key saved made every other provider falsely report "ready"
-      // (API key set) even when its CLI wasn't installed and no key was actually
-      // configured for it.
+      // form.ai.apiKey is only ever populated by the 'custom' provider's API key
+      // input (openai/gemini/claude have no key input in this UI — they're
+      // CLI/token-only). It must never be forwarded as openaiApiKey/claudeApiKey/
+      // geminiApiKey: doing so previously made every one of those providers falsely
+      // report "ready" off of a key that was actually typed in for 'custom', and
+      // for Claude specifically it could let a stale/foreign OAuth token saved in
+      // settings.json override a valid local `claude login` session.
       const res = await fetchAIProvidersStatus({
         omnirouteUrl: form.ai.omnirouteUrl,
         omnirouteApiKey: form.ai.omnirouteApiKey,
         customUrl: form.ai.customUrl,
-        openaiApiKey: form.ai.provider === 'openai' ? form.ai.apiKey : undefined,
-        claudeApiKey: form.ai.provider === 'claude' ? form.ai.apiKey : undefined,
-        geminiApiKey: form.ai.provider === 'gemini' ? form.ai.apiKey : undefined,
         forceRefresh
       });
       if (res && res.status) {

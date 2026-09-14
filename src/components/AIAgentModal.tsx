@@ -108,17 +108,14 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
     const startedAt = Date.now();
     try {
       setIsCheckingHealth(true);
-      // aiSettings.apiKey is a single field holding the key for whichever provider is
-      // CURRENTLY selected — forwarding it to all three made every provider falsely
-      // report "ready" off of one saved key, regardless of whether its own CLI/key
-      // was actually configured.
+      // aiSettings.apiKey is only ever populated by the 'custom' provider's key
+      // input (openai/gemini/claude have no key input in this UI) — never forward
+      // it as openaiApiKey/claudeApiKey/geminiApiKey, or every one of those
+      // providers falsely reports "ready" off a key meant for 'custom'.
       const res = await fetchAIProvidersStatus({
         omnirouteUrl: aiSettings.omnirouteUrl,
         omnirouteApiKey: aiSettings.omnirouteApiKey,
         customUrl: aiSettings.customUrl,
-        openaiApiKey: aiSettings.provider === 'openai' ? aiSettings.apiKey : undefined,
-        claudeApiKey: aiSettings.provider === 'claude' ? aiSettings.apiKey : undefined,
-        geminiApiKey: aiSettings.provider === 'gemini' ? aiSettings.apiKey : undefined,
         forceRefresh
       });
       if (res && res.status) {
