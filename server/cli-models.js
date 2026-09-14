@@ -86,6 +86,25 @@ export async function findCommandPath(cmd, { forceRefresh = false } = {}) {
   return resolved;
 }
 
+// Well-known install locations to fall back to on Windows when `where` finds
+// nothing. `where` only sees whatever PATH the Electron process itself inherited
+// at launch — and that can genuinely differ between how the app was started
+// (a PowerShell profile that appends to $env:PATH only for that session vs. a
+// plain double-click from Explorer/cmd, a user-scope PATH registry change that
+// hasn't propagated to an already-running shell, etc). npm's global bin dir is a
+// fixed, well-known location regardless of which shell's PATH is in effect, so
+// checking it directly is a reliable fallback that doesn't depend on PATH at all.
+function windowsFallbackDirs() {
+  const home = os.homedir();
+  const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+  const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+  return [
+    path.join(appData, 'npm'),
+    path.join(localAppData, 'Programs', 'claude'),
+    path.join(home, '.local', 'bin'),
+  ];
+}
+
 async function _findCommandPathUncached(cmd) {
   if (process.platform === 'win32') {
     try {
@@ -103,6 +122,14 @@ async function _findCommandPathUncached(cmd) {
       const first = candidates.find(c => fs.existsSync(c));
       if (first) return first;
     } catch {}
+
+    // `where` found nothing (or errored) — PATH-independent fallback.
+    for (const dir of windowsFallbackDirs()) {
+      for (const ext of ['.cmd', '.exe', '.bat', '.ps1', '']) {
+        const full = path.join(dir, cmd + ext);
+        if (fs.existsSync(full)) return full;
+      }
+    }
     return null;
   }
 
