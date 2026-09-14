@@ -99,8 +99,9 @@ function windowsFallbackDirs() {
   const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
   const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
   return [
-    path.join(appData, 'npm'),
+    path.join(appData, 'npm'),                 // claude, codex (npm global installs)
     path.join(localAppData, 'Programs', 'claude'),
+    path.join(localAppData, 'agy', 'bin'),      // agy (Antigravity) has its own installer, not npm
     path.join(home, '.local', 'bin'),
   ];
 }
