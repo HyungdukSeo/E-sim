@@ -633,6 +633,18 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
 
     const args = [];
     let outputFile = null;
+    // Diff prompts are long, multi-line, and full of characters (", %, &, ^, etc.)
+    // that a Windows shell command line reinterprets. Passing such text as a
+    // spawn() ARGUMENT while shell:true is set (required below for claude/codex's
+    // .cmd wrappers) gets it re-parsed by cmd.exe: newlines split it into separate
+    // "commands" and only the first line ever reaches the CLI — this is exactly
+    // what produced the reported symptom (claude started an interactive session
+    // and just greeted the user, because it received a one-line fragment instead
+    // of a real -p prompt, or no prompt argument survived parsing at all). Piping
+    // the prompt through stdin instead sidesteps shell re-parsing entirely.
+    // Verified directly: the same special-character prompt as an argument under
+    // shell:true truncated to its first line; piped via stdin it arrived intact.
+    let stdinPrompt = null;
 
     if (cmdName === 'claude') {
       if (model) {
@@ -641,8 +653,14 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
         else if (lower.includes('haiku')) args.push('--model', 'haiku');
         else if (lower.includes('sonnet')) args.push('--model', 'sonnet');
       }
-      args.push('-p', sanitizedPrompt);
+      args.push('-p');
+      stdinPrompt = sanitizedPrompt;
     } else if (cmdName === 'agy') {
+      // agy takes the prompt as a positional argument, not stdin (verified: `agy
+      // --print` with no prompt just prints its subcommand list). But agy.exe is a
+      // native binary (not a .cmd wrapper), so it never needs shell:true — spawn()
+      // passes argv entries to it directly with no shell re-parsing, so the
+      // newline-truncation problem above doesn't apply here.
       if (model && (model.startsWith('gemini') || model.startsWith('claude') || model.startsWith('gpt'))) {
         args.push('--model', model);
       }
@@ -654,19 +672,23 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
         args.push('-m', model.toLowerCase().trim());
       }
       args.push('-o', outputFile, '-');
+      stdinPrompt = sanitizedPrompt;
     }
 
     let stdout = '';
     let stderr = '';
 
     // Windows can't exec a .cmd/.bat directly without going through a shell — npm
-    // installs claude/codex/agy as .cmd wrappers there, and without shell:true,
+    // installs claude/codex as .cmd wrappers there, and without shell:true,
     // spawn()ing cmdBin (even though findCommandPath() correctly resolved its
-    // path) fails with ENOENT. Node still safely quotes each `args` entry for us
-    // in this mode, so passing free-form prompt text as an argument stays safe.
+    // path) fails with ENOENT. agy.exe is a native binary and never needs this.
+    // Every provider that has a prompt long/special enough to be at risk now sends
+    // it via stdin instead of as an argument, so shell:true no longer gets a
+    // chance to mis-parse it.
+    const needsWindowsShell = process.platform === 'win32' && cmdName !== 'agy';
     const proc = spawn(cmdBin, args, {
-      stdio: [cmdName === 'codex' ? 'pipe' : 'ignore', 'pipe', 'pipe'],
-      shell: process.platform === 'win32',
+      stdio: [stdinPrompt !== null ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      shell: needsWindowsShell,
       env: {
         ...process.env,
         PATH: process.env.PATH,
@@ -675,12 +697,12 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
       }
     });
 
-    if (cmdName === 'codex' && proc.stdin) {
+    if (stdinPrompt !== null && proc.stdin) {
       try {
-        proc.stdin.write(sanitizedPrompt);
+        proc.stdin.write(stdinPrompt);
         proc.stdin.end();
       } catch (err) {
-        console.warn('[Codex Stdin Write Error]:', err.message);
+        console.warn(`[${cmdName} Stdin Write Error]:`, err.message);
       }
     }
 
