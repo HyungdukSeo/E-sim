@@ -333,13 +333,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const startedAt = Date.now();
     try {
       setIsRefreshingProviders(true);
+      // form.ai.apiKey is a single field holding the key for whichever provider is
+      // CURRENTLY selected — it must only be forwarded to that one provider's check.
+      // Previously it was sent to openai/claude/gemini simultaneously, so having any
+      // one provider's key saved made every other provider falsely report "ready"
+      // (API key set) even when its CLI wasn't installed and no key was actually
+      // configured for it.
       const res = await fetchAIProvidersStatus({
         omnirouteUrl: form.ai.omnirouteUrl,
         omnirouteApiKey: form.ai.omnirouteApiKey,
         customUrl: form.ai.customUrl,
-        openaiApiKey: form.ai.apiKey,
-        claudeApiKey: form.ai.apiKey,
-        geminiApiKey: form.ai.apiKey,
+        openaiApiKey: form.ai.provider === 'openai' ? form.ai.apiKey : undefined,
+        claudeApiKey: form.ai.provider === 'claude' ? form.ai.apiKey : undefined,
+        geminiApiKey: form.ai.provider === 'gemini' ? form.ai.apiKey : undefined,
         forceRefresh
       });
       if (res && res.status) {
