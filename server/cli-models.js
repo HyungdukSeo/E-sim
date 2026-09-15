@@ -1,8 +1,11 @@
-import { spawn, execSync } from 'child_process';
+import { spawn, exec } from 'child_process';
+import { promisify } from 'util';
 import axios from 'axios';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+
+const execAsync = promisify(exec);
 
 // Augment PATH for macOS/Linux GUI Electron environment to find claude, agy, codex, omniroute, etc.
 // GUI apps on those platforms don't inherit the login shell's PATH, so common install
@@ -62,26 +65,83 @@ if (process.platform !== 'win32') {
 // Locate a CLI binary's full path. On macOS/Linux this first checks `which <cmd>`
 // against the augmented PATH (which prioritizes active/modern versions), then checks
 // fallback directories. On Windows, it uses `where`.
-export function findCommandPath(cmd) {
+//
+// This shells out to a child process — using the ASYNC exec (not execSync) is
+// important: execSync blocks Node's single event loop thread entirely, so while it
+// runs, the whole server (all other requests, the Electron UI it serves) is frozen.
+// Checking 3-4 CLIs back-to-back (as getAIProvidersStatus does on every Settings/AI
+// modal open) made the UI visibly stall. CLI install state essentially never changes
+// while the app is running, so results are also cached for a few minutes to avoid
+// even the async cost on repeat checks.
+const commandPathCache = new Map();
+const COMMAND_CACHE_TTL_MS = 5 * 60 * 1000;
+
+export async function findCommandPath(cmd, { forceRefresh = false } = {}) {
+  const cached = commandPathCache.get(cmd);
+  if (!forceRefresh && cached && Date.now() - cached.at < COMMAND_CACHE_TTL_MS) {
+    return cached.path;
+  }
+  const resolved = await _findCommandPathUncached(cmd);
+  commandPathCache.set(cmd, { path: resolved, at: Date.now() });
+  return resolved;
+}
+
+// Well-known install locations to fall back to on Windows when `where` finds
+// nothing. `where` only sees whatever PATH the Electron process itself inherited
+// at launch — and that can genuinely differ between how the app was started
+// (a PowerShell profile that appends to $env:PATH only for that session vs. a
+// plain double-click from Explorer/cmd, a user-scope PATH registry change that
+// hasn't propagated to an already-running shell, etc). npm's global bin dir is a
+// fixed, well-known location regardless of which shell's PATH is in effect, so
+// checking it directly is a reliable fallback that doesn't depend on PATH at all.
+function windowsFallbackDirs() {
+  const home = os.homedir();
+  const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+  const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+  return [
+    path.join(appData, 'npm'),                 // claude, codex (npm global installs)
+    path.join(localAppData, 'Programs', 'claude'),
+    path.join(localAppData, 'agy', 'bin'),      // agy (Antigravity) has its own installer, not npm
+    path.join(home, '.local', 'bin'),
+  ];
+}
+
+async function _findCommandPathUncached(cmd) {
   if (process.platform === 'win32') {
     try {
-      const out = execSync(`where ${cmd}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-      const first = out.split(/\r?\n/)[0]?.trim();
-      if (first && fs.existsSync(first)) return first;
+      const { stdout } = await execAsync(`where ${cmd}`, { encoding: 'utf8', timeout: 5000 });
+      const candidates = stdout.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      // `where` lists every match on PATH, in PATH order — for an npm-installed CLI
+      // that's typically the extension-less Unix shebang script (meant for Git
+      // Bash/WSL, not directly executable by Windows) ALONGSIDE the real `.cmd`
+      // wrapper npm also generates, and the shebang file can sort first. spawn()ing
+      // that file directly fails with ENOENT (Windows can't execute it, and without
+      // shell:true a bare .cmd would fail too) — so prefer a Windows-executable
+      // extension when one exists among the candidates, over just taking line 1.
+      const winExecutable = candidates.find(c => /\.(cmd|exe|bat|ps1)$/i.test(c) && fs.existsSync(c));
+      if (winExecutable) return winExecutable;
+      const first = candidates.find(c => fs.existsSync(c));
+      if (first) return first;
     } catch {}
+
+    // `where` found nothing (or errored) — PATH-independent fallback.
+    for (const dir of windowsFallbackDirs()) {
+      for (const ext of ['.cmd', '.exe', '.bat', '.ps1', '']) {
+        const full = path.join(dir, cmd + ext);
+        if (fs.existsSync(full)) return full;
+      }
+    }
     return null;
   }
 
   try {
-    const out = execSync(`which ${cmd}`, {
+    const { stdout } = await execAsync(`which ${cmd}`, {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5000,
       env: { ...process.env, PATH: process.env.PATH }
-    }).trim();
-    if (out) {
-      const firstLine = out.split(/\r?\n/)[0].trim();
-      if (fs.existsSync(firstLine)) return firstLine;
-    }
+    });
+    const firstLine = stdout.trim().split(/\r?\n/)[0]?.trim();
+    if (firstLine && fs.existsSync(firstLine)) return firstLine;
   } catch {}
 
   for (const dir of commonBinPaths) {
@@ -91,8 +151,8 @@ export function findCommandPath(cmd) {
   return null;
 }
 
-export function hasCommand(cmd) {
-  return Boolean(findCommandPath(cmd));
+export async function hasCommand(cmd, opts) {
+  return Boolean(await findCommandPath(cmd, opts));
 }
 
 export function isInvalidOmniRouteKey(key) {
@@ -101,17 +161,18 @@ export function isInvalidOmniRouteKey(key) {
   return !trimmed || trimmed === 'CHANGEME' || trimmed === 'sk-omniroute';
 }
 
-export function readOmniRouteToken() {
+export async function readOmniRouteToken() {
   try {
     const dbPath = path.join(os.homedir(), '.omniroute', 'storage.sqlite');
     // The sqlite3 CLI ships by default on macOS/most Linux distros but not on Windows,
-    // so check for it first rather than letting execSync throw — hasCommand() already
+    // so check for it first rather than letting exec throw — hasCommand() already
     // handles the win32 (`where`) vs. posix (`which`) distinction.
-    if (fs.existsSync(dbPath) && hasCommand('sqlite3')) {
-      const raw = execSync(
+    if (fs.existsSync(dbPath) && await hasCommand('sqlite3')) {
+      const { stdout } = await execAsync(
         `sqlite3 "${dbPath}" "SELECT key FROM api_keys WHERE is_active = 1 AND (revoked_at IS NULL OR revoked_at = '') ORDER BY created_at ASC LIMIT 1;"`,
-        { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }
-      ).trim();
+        { encoding: 'utf8', timeout: 2000 }
+      );
+      const raw = stdout.trim();
       if (raw && raw.startsWith('sk-')) {
         return raw;
       }
@@ -126,7 +187,7 @@ export async function checkOmniRouteStatus(baseUrl = 'http://localhost:20128/v1'
     cleanUrl += '/v1';
   }
 
-  const detectedKey = readOmniRouteToken();
+  const detectedKey = await readOmniRouteToken();
   const effectiveKey = !isInvalidOmniRouteKey(apiKey) ? apiKey.trim() : (detectedKey || 'sk-omniroute');
 
   // 1. Try authenticated /models check with effectiveKey
@@ -230,7 +291,7 @@ export async function checkOmniRouteAlive(baseUrl = 'http://localhost:20128/v1',
 /**
  * 1. Claude — REST API 직접 호출 (Keychain / ~/.claude/.credentials.json)
  */
-export function readClaudeToken() {
+export async function readClaudeToken() {
   let token = null;
 
   // 1) ~/.claude/.credentials.json 확인
@@ -238,7 +299,16 @@ export function readClaudeToken() {
   if (fs.existsSync(credFile)) {
     try {
       const data = JSON.parse(fs.readFileSync(credFile, 'utf8'));
-      token = data?.claudeAiOauth?.accessToken;
+      const oauth = data?.claudeAiOauth;
+      // An expired OAuth access token still LOOKS valid (right format, right length)
+      // but Anthropic will reject it — surfacing that as a confusing generic error
+      // later. Treat it as absent here so callers fall through to other auth (or a
+      // clear "please re-login" message) instead of silently sending a dead token.
+      if (oauth?.accessToken && oauth?.expiresAt && Date.now() >= oauth.expiresAt) {
+        console.warn('[Claude Models] Local OAuth token is expired (expiresAt:', new Date(oauth.expiresAt).toISOString(), ') — ignoring, run `claude login` again or let the CLI refresh it.');
+      } else {
+        token = oauth?.accessToken;
+      }
     } catch (e) {
       console.warn('[Claude Models] Failed to read credentials file:', e.message);
     }
@@ -247,10 +317,11 @@ export function readClaudeToken() {
   // 2) macOS Keychain 조회 (security find-generic-password)
   if (!token && process.platform === 'darwin') {
     try {
-      const raw = execSync('security find-generic-password -s "Claude Code-credentials" -w', {
+      const { stdout } = await execAsync('security find-generic-password -s "Claude Code-credentials" -w', {
         encoding: 'utf8',
         timeout: 5000
-      }).trim();
+      });
+      const raw = stdout.trim();
       try {
         const parsed = JSON.parse(raw);
         token = parsed?.claudeAiOauth?.accessToken || raw;
@@ -266,7 +337,7 @@ export function readClaudeToken() {
 }
 
 export async function getClaudeModels() {
-  let token = readClaudeToken();
+  let token = await readClaudeToken();
 
   const fetchModelsFromApi = async (authToken) => {
     const resp = await axios.get('https://api.anthropic.com/v1/models', {
@@ -298,11 +369,12 @@ export async function getClaudeModels() {
       
       // 토큰 만료 등의 경우 claude cli를 통해 토큰 갱신 시도
       try {
-        // stdio:'ignore' already detaches stdin/stdout/stderr, making the `< /dev/null`
+        // stdio:'ignore' would detach stdin/stdout/stderr, making the `< /dev/null`
         // POSIX redirection unnecessary — and that redirection syntax isn't valid when
-        // execSync shells out via cmd.exe on Windows.
-        execSync('claude -p "ping"', { timeout: 15000, stdio: 'ignore' });
-        const refreshedToken = readClaudeToken();
+        // exec shells out via cmd.exe on Windows. Async exec (not execSync) keeps this
+        // 15s call from freezing the whole server/UI while it runs.
+        await execAsync('claude -p "ping"', { timeout: 15000 });
+        const refreshedToken = await readClaudeToken();
         if (refreshedToken && refreshedToken !== token) {
           const retriedModels = await fetchModelsFromApi(refreshedToken);
           if (retriedModels && retriedModels.length > 0) {
@@ -340,12 +412,12 @@ export async function getClaudeModels() {
  */
 export async function getAntigravityModels() {
   try {
-    const raw = execSync('agy models', {
+    const { stdout } = await execAsync('agy models', {
       encoding: 'utf8',
       timeout: 10000
     });
 
-    const lines = raw.split(/\r?\n/);
+    const lines = stdout.split(/\r?\n/);
     const models = [];
 
     for (const line of lines) {
@@ -384,7 +456,7 @@ export async function getAntigravityModels() {
  * 3. Codex — app-server JSON-RPC (`codex app-server`)
  */
 export function getCodexModels() {
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
     let resolved = false;
     const finish = (models) => {
       if (!resolved) {
@@ -404,10 +476,14 @@ export function getCodexModels() {
     ];
 
     try {
-      const codexBin = findCommandPath('codex') || 'codex';
+      const codexBin = (await findCommandPath('codex')) || 'codex';
+      // Windows can't exec a .cmd/.bat directly without going through a shell —
+      // without shell:true, spawn()ing npm's .cmd wrapper fails (ENOENT or similar)
+      // even when codexBin correctly resolved to that wrapper's path.
       const proc = spawn(codexBin, ['app-server'], {
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, PATH: process.env.PATH }
+        env: { ...process.env, PATH: process.env.PATH },
+        shell: process.platform === 'win32'
       });
 
       const timer = setTimeout(() => {
@@ -486,7 +562,7 @@ export async function getOmniRouteModels(baseUrl = 'http://localhost:20128/v1', 
       cleanUrl += '/v1';
     }
 
-    const detectedKey = readOmniRouteToken();
+    const detectedKey = await readOmniRouteToken();
     let effectiveKey = !isInvalidOmniRouteKey(apiKey) ? apiKey.trim() : (detectedKey || 'sk-omniroute');
 
     let resp;
@@ -536,16 +612,17 @@ export async function getOmniRouteModels(baseUrl = 'http://localhost:20128/v1', 
  * 6. Execute AI via Local CLI (Claude Code or Antigravity/Agy)
  */
 export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = '', timeoutMs = 180000, isRetry = false }) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     let cmdName = 'claude';
     if (cmdType === 'gemini' || cmdType === 'agy') cmdName = 'agy';
     else if (cmdType === 'openai' || cmdType === 'codex') cmdName = 'codex';
     else if (cmdType === 'claude') cmdName = 'claude';
 
-    const cmdBin = findCommandPath(cmdName) || cmdName;
-    if (!hasCommand(cmdName)) {
+    const resolvedPath = await findCommandPath(cmdName);
+    if (!resolvedPath) {
       return reject(new Error(`${cmdName} CLI가 설치되지 않았거나 PATH에 없습니다.`));
     }
+    const cmdBin = resolvedPath;
 
     const fullPrompt = systemPrompt
       ? `${systemPrompt}\n\n[사용자 요청 및 분석 대상 데이터]\n${userPrompt}`
@@ -556,6 +633,18 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
 
     const args = [];
     let outputFile = null;
+    // Diff prompts are long, multi-line, and full of characters (", %, &, ^, etc.)
+    // that a Windows shell command line reinterprets. Passing such text as a
+    // spawn() ARGUMENT while shell:true is set (required below for claude/codex's
+    // .cmd wrappers) gets it re-parsed by cmd.exe: newlines split it into separate
+    // "commands" and only the first line ever reaches the CLI — this is exactly
+    // what produced the reported symptom (claude started an interactive session
+    // and just greeted the user, because it received a one-line fragment instead
+    // of a real -p prompt, or no prompt argument survived parsing at all). Piping
+    // the prompt through stdin instead sidesteps shell re-parsing entirely.
+    // Verified directly: the same special-character prompt as an argument under
+    // shell:true truncated to its first line; piped via stdin it arrived intact.
+    let stdinPrompt = null;
 
     if (cmdName === 'claude') {
       if (model) {
@@ -564,8 +653,14 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
         else if (lower.includes('haiku')) args.push('--model', 'haiku');
         else if (lower.includes('sonnet')) args.push('--model', 'sonnet');
       }
-      args.push('-p', sanitizedPrompt);
+      args.push('-p');
+      stdinPrompt = sanitizedPrompt;
     } else if (cmdName === 'agy') {
+      // agy takes the prompt as a positional argument, not stdin (verified: `agy
+      // --print` with no prompt just prints its subcommand list). But agy.exe is a
+      // native binary (not a .cmd wrapper), so it never needs shell:true — spawn()
+      // passes argv entries to it directly with no shell re-parsing, so the
+      // newline-truncation problem above doesn't apply here.
       if (model && (model.startsWith('gemini') || model.startsWith('claude') || model.startsWith('gpt'))) {
         args.push('--model', model);
       }
@@ -577,13 +672,23 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
         args.push('-m', model.toLowerCase().trim());
       }
       args.push('-o', outputFile, '-');
+      stdinPrompt = sanitizedPrompt;
     }
 
     let stdout = '';
     let stderr = '';
 
+    // Windows can't exec a .cmd/.bat directly without going through a shell — npm
+    // installs claude/codex as .cmd wrappers there, and without shell:true,
+    // spawn()ing cmdBin (even though findCommandPath() correctly resolved its
+    // path) fails with ENOENT. agy.exe is a native binary and never needs this.
+    // Every provider that has a prompt long/special enough to be at risk now sends
+    // it via stdin instead of as an argument, so shell:true no longer gets a
+    // chance to mis-parse it.
+    const needsWindowsShell = process.platform === 'win32' && cmdName !== 'agy';
     const proc = spawn(cmdBin, args, {
-      stdio: [cmdName === 'codex' ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      stdio: [stdinPrompt !== null ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      shell: needsWindowsShell,
       env: {
         ...process.env,
         PATH: process.env.PATH,
@@ -592,12 +697,12 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
       }
     });
 
-    if (cmdName === 'codex' && proc.stdin) {
+    if (stdinPrompt !== null && proc.stdin) {
       try {
-        proc.stdin.write(sanitizedPrompt);
+        proc.stdin.write(stdinPrompt);
         proc.stdin.end();
       } catch (err) {
-        console.warn('[Codex Stdin Write Error]:', err.message);
+        console.warn(`[${cmdName} Stdin Write Error]:`, err.message);
       }
     }
 
@@ -664,12 +769,19 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
 /**
  * 7. Comprehensive AI Providers Availability Checker
  */
-export async function getAIProvidersStatus(aiSettings = {}) {
-  const omniStatus = await checkOmniRouteStatus(aiSettings.omnirouteUrl, aiSettings.omnirouteApiKey);
-  const claudeToken = readClaudeToken();
-  const hasClaudeCli = hasCommand('claude');
-  const hasCodexCli = hasCommand('codex');
-  const hasAgyCli = hasCommand('agy');
+export async function getAIProvidersStatus(aiSettings = {}, { forceRefresh = false } = {}) {
+  // All of these shell out or hit the network — run them concurrently instead of
+  // sequentially so the total wait is the slowest single check, not the sum of all.
+  // forceRefresh bypasses the CLI-path cache — used by the Settings modal's manual
+  // "실시간 감지" button so it actually re-checks instead of instantly returning a
+  // cached result (which made the click look like it did nothing).
+  const [omniStatus, claudeToken, hasClaudeCli, hasCodexCli, hasAgyCli] = await Promise.all([
+    checkOmniRouteStatus(aiSettings.omnirouteUrl, aiSettings.omnirouteApiKey),
+    readClaudeToken(),
+    hasCommand('claude', { forceRefresh }),
+    hasCommand('codex', { forceRefresh }),
+    hasCommand('agy', { forceRefresh })
+  ]);
 
   return {
     local: {

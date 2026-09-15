@@ -31,6 +31,30 @@ const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const CLI_SETTINGS_DIR = path.join(os.homedir(), '.mantis_cr_hub');
 const CLI_SETTINGS_FILE = path.join(CLI_SETTINGS_DIR, 'settings.json');
 
+// In the packaged Electron app there is no visible console — console.error/warn
+// normally vanish into nowhere, making server-side failures (like an AI provider
+// call failing) impossible for a user to report beyond "it didn't work". Mirror
+// them into a plain log file next to the persistent data dir so `server.log` can
+// just be asked for and attached, the same way electron/main.cjs already does for
+// its own startup errors via logErrorToFile() / app.log.
+try {
+  const serverLogFile = path.join(DATA_DIR, 'server.log');
+  const origError = console.error.bind(console);
+  const origWarn = console.warn.bind(console);
+  const appendLog = (level, args) => {
+    try {
+      const line = args.map(a => {
+        if (a instanceof Error) return a.stack || a.message;
+        if (typeof a === 'object') { try { return JSON.stringify(a); } catch { return String(a); } }
+        return String(a);
+      }).join(' ');
+      fs.appendFileSync(serverLogFile, `[${new Date().toISOString()}] [${level}] ${line}\n`);
+    } catch {}
+  };
+  console.error = (...args) => { origError(...args); appendLog('ERROR', args); };
+  console.warn = (...args) => { origWarn(...args); appendLog('WARN', args); };
+} catch {}
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -549,8 +573,9 @@ app.post('/api/ai/query', async (req, res) => {
 app.get('/api/ai/providers-status', async (req, res) => {
   try {
     const disk = loadDiskSettings()?.settings || {};
-    const aiConfig = { ...(disk.ai || {}), ...(req.query || {}) };
-    const status = await getAIProvidersStatus(aiConfig);
+    const { forceRefresh, ...queryRest } = req.query || {};
+    const aiConfig = { ...(disk.ai || {}), ...queryRest };
+    const status = await getAIProvidersStatus(aiConfig, { forceRefresh: forceRefresh === 'true' });
     res.json({ ok: true, status });
   } catch (err) {
     console.error('[AI Providers Status Error]', err.message);

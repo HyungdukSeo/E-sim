@@ -99,16 +99,24 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
   const [providersStatus, setProvidersStatus] = useState<Record<string, AIProviderStatusItem>>({});
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
 
-  const checkHealth = React.useCallback(async () => {
+  // forceRefresh bypasses the server-side CLI-path cache (server/cli-models.js) so the
+  // manual refresh buttons below actually re-check instead of near-instantly returning
+  // a cached result right after the modal's own auto-check (which made clicking the
+  // button look like nothing happened). Floors the spinner at ~400ms so a forced
+  // refresh always reads as having done something.
+  const checkHealth = React.useCallback(async (forceRefresh = false) => {
+    const startedAt = Date.now();
     try {
       setIsCheckingHealth(true);
+      // aiSettings.apiKey is only ever populated by the 'custom' provider's key
+      // input (openai/gemini/claude have no key input in this UI) — never forward
+      // it as openaiApiKey/claudeApiKey/geminiApiKey, or every one of those
+      // providers falsely reports "ready" off a key meant for 'custom'.
       const res = await fetchAIProvidersStatus({
         omnirouteUrl: aiSettings.omnirouteUrl,
         omnirouteApiKey: aiSettings.omnirouteApiKey,
         customUrl: aiSettings.customUrl,
-        openaiApiKey: aiSettings.apiKey,
-        claudeApiKey: aiSettings.apiKey,
-        geminiApiKey: aiSettings.apiKey
+        forceRefresh
       });
       if (res && res.status) {
         setProvidersStatus(res.status);
@@ -116,16 +124,32 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
     } catch {
       // ignore
     } finally {
+      if (forceRefresh) {
+        const elapsed = Date.now() - startedAt;
+        const MIN_SPINNER_MS = 400;
+        if (elapsed < MIN_SPINNER_MS) {
+          await new Promise(r => setTimeout(r, MIN_SPINNER_MS - elapsed));
+        }
+      }
       setIsCheckingHealth(false);
     }
   }, [aiSettings]);
+
+  // Route the "on open" call through a ref so the effect below depends on isOpen
+  // ONLY. checkHealth's identity changes whenever `aiSettings` (a prop, possibly
+  // re-created on every parent render) changes — if the parent doesn't memoize it,
+  // depending on checkHealth directly here would re-run this "one-shot" check on
+  // every parent re-render while the modal stays open, silently reintroducing the
+  // repeated CLI-check hammering the earlier "remove auto-polling" fix eliminated.
+  const checkHealthRef = React.useRef(checkHealth);
+  checkHealthRef.current = checkHealth;
 
   React.useEffect(() => {
     if (!isOpen) return;
     // One-shot check on open only — 3s auto-polling hammered execSync-based CLI
     // detection (which/where, sqlite3) on every tick and could stall the UI.
-    checkHealth();
-  }, [isOpen, checkHealth]);
+    checkHealthRef.current();
+  }, [isOpen]);
 
   // Auto fetch details for previewCR if not yet fetched
   React.useEffect(() => {
@@ -232,32 +256,40 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                 <h2 className="text-base font-bold text-main">Mantis CR AI 지능형 분석 & 실시간 뷰어</h2>
                 {(() => {
                   const currentStatus = providersStatus[aiSettings.provider];
-                  const isCurrentReady = aiSettings.provider === 'local' ? true : (currentStatus ? currentStatus.ready : false);
+                  // Distinguish "still loading" (currentStatus undefined — the status
+                  // fetch hasn't resolved yet) from "checked and not ready" (ready:
+                  // false). Previously this treated "loading" as "not ready," which
+                  // flashed the amber "미구동" badge for a provider that was actually
+                  // fine, for as long as the initial check was in flight.
+                  const isLoadingStatus = aiSettings.provider !== 'local' && !currentStatus;
+                  const isCurrentReady = aiSettings.provider === 'local' ? true : Boolean(currentStatus?.ready);
                   return (
                     <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-950/80 border border-slate-300 dark:border-slate-700/70 text-xs">
-                      <span 
+                      <span
                         className={`w-2 h-2 rounded-full shrink-0 ${
-                          isCurrentReady 
-                            ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' 
+                          isLoadingStatus
+                            ? 'bg-slate-400 dark:bg-slate-600 animate-pulse'
+                            : isCurrentReady
+                            ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50'
                             : 'bg-amber-500 animate-pulse'
-                        }`} 
-                        title={isCurrentReady ? '실시간 정상 구동 중' : '미구동 / 미설정 (로컬 NLP로 자동 대체)'}
+                        }`}
+                        title={isLoadingStatus ? '상태 확인 중...' : isCurrentReady ? '실시간 정상 구동 중' : '미구동 / 미설정 (로컬 NLP로 자동 대체)'}
                       />
                       <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200">
-                        {aiSettings.provider === 'local' 
-                          ? '고도화 로컬 NLP' 
-                          : aiSettings.provider === 'omniroute' 
-                          ? `OmniRoute (${aiSettings.model || 'auto'})` 
+                        {aiSettings.provider === 'local'
+                          ? '고도화 로컬 NLP'
+                          : aiSettings.provider === 'omniroute'
+                          ? `OmniRoute (${aiSettings.model || 'auto'})`
                           : `${aiSettings.provider} (${aiSettings.model})`}
                       </span>
-                      {!isCurrentReady && (
+                      {!isLoadingStatus && !isCurrentReady && (
                         <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/15 dark:bg-amber-500/25 text-amber-800 dark:text-amber-300 font-mono font-bold">
                           미구동 → 로컬 NLP 대체
                         </span>
                       )}
-                      <button 
+                      <button
                         type="button"
-                        onClick={checkHealth}
+                        onClick={() => checkHealth(true)}
                         title="실시간 공급자 구동 상태 즉시 새로고침"
                         className="ml-0.5 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-300 cursor-pointer p-0.5"
                       >
@@ -548,8 +580,14 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
               {/* Real-time Unready Provider Alert Banner */}
               {(() => {
                 const currentStatus = providersStatus[aiSettings.provider];
-                const isCurrentReady = aiSettings.provider === 'local' ? true : (currentStatus ? currentStatus.ready : true);
-                if (isCurrentReady || aiSettings.provider === 'local') return null;
+                // Same loading/not-ready distinction as the header badge above: while
+                // the status check is still in flight (currentStatus undefined), stay
+                // quiet rather than asserting "ready" — this used to default to `true`
+                // here (the opposite default from the header badge's `false`), so the
+                // two indicators could contradict each other for the same instant.
+                const isLoadingStatus = aiSettings.provider !== 'local' && !currentStatus;
+                const isCurrentReady = aiSettings.provider === 'local' ? true : Boolean(currentStatus?.ready);
+                if (isLoadingStatus || isCurrentReady || aiSettings.provider === 'local') return null;
 
                 return (
                   <div className="p-2.5 px-3 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between text-xs text-amber-900 dark:text-amber-200">
@@ -562,7 +600,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                     <div className="flex items-center gap-2 shrink-0 ml-2">
                       <button
                         type="button"
-                        onClick={checkHealth}
+                        onClick={() => checkHealth(true)}
                         className="text-[10px] text-amber-800 dark:text-amber-300 hover:text-amber-950 dark:hover:text-amber-100 flex items-center gap-1 cursor-pointer bg-amber-500/15 dark:bg-amber-500/20 px-2 py-0.5 rounded-md border border-amber-500/30 font-medium"
                         title="실시간 상태 다시 확인"
                       >

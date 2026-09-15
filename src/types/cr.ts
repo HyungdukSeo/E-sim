@@ -77,9 +77,14 @@ export interface SyncMeta {
 
 export interface AISettings {
   provider: 'local' | 'custom' | 'openai' | 'gemini' | 'claude' | 'omniroute';
+  /** API key for the 'custom' provider only. openai/gemini/claude are CLI- or
+   * OAuth-token-only (no key input in the UI) and must never read this field —
+   * doing so previously let a key typed in for 'custom' leak into their status
+   * checks and calls, making them falsely report "ready". */
   apiKey: string;
   customUrl: string;
   model: string;
+  /** API key for the 'omniroute' provider only. */
   omnirouteUrl?: string;
   omnirouteApiKey?: string;
   providerModels?: Record<string, string>;

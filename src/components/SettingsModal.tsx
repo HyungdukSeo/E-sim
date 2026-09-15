@@ -323,16 +323,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
 
-  const refreshProvidersStatus = React.useCallback(async () => {
+  // forceRefresh bypasses the server-side CLI-path cache (see server/cli-models.js).
+  // Without it, clicking "실시간 감지" right after the modal's own auto-check almost
+  // always hits the cache and returns near-instantly — the spinner flashes so briefly
+  // it looks like the button did nothing. The manual button always forces a real
+  // re-check, and we also floor the spinner at ~400ms so the click always reads as
+  // having done something even when the result truly is unchanged.
+  const refreshProvidersStatus = React.useCallback(async (forceRefresh = false) => {
+    const startedAt = Date.now();
     try {
       setIsRefreshingProviders(true);
+      // form.ai.apiKey is only ever populated by the 'custom' provider's API key
+      // input (openai/gemini/claude have no key input in this UI — they're
+      // CLI/token-only). It must never be forwarded as openaiApiKey/claudeApiKey/
+      // geminiApiKey: doing so previously made every one of those providers falsely
+      // report "ready" off of a key that was actually typed in for 'custom', and
+      // for Claude specifically it could let a stale/foreign OAuth token saved in
+      // settings.json override a valid local `claude login` session.
       const res = await fetchAIProvidersStatus({
         omnirouteUrl: form.ai.omnirouteUrl,
         omnirouteApiKey: form.ai.omnirouteApiKey,
         customUrl: form.ai.customUrl,
-        openaiApiKey: form.ai.apiKey,
-        claudeApiKey: form.ai.apiKey,
-        geminiApiKey: form.ai.apiKey
+        forceRefresh
       });
       if (res && res.status) {
         setProvidersStatus(res.status);
@@ -351,17 +363,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     } catch {
       // ignore
     } finally {
+      if (forceRefresh) {
+        const elapsed = Date.now() - startedAt;
+        const MIN_SPINNER_MS = 400;
+        if (elapsed < MIN_SPINNER_MS) {
+          await new Promise(r => setTimeout(r, MIN_SPINNER_MS - elapsed));
+        }
+      }
       setIsRefreshingProviders(false);
     }
-  }, [form.ai.omnirouteUrl, form.ai.omnirouteApiKey, form.ai.customUrl, form.ai.apiKey]);
+  }, [form.ai.omnirouteUrl, form.ai.omnirouteApiKey, form.ai.customUrl]);
+
+  // Always call the latest refreshProvidersStatus without making it an effect
+  // dependency — refreshProvidersStatus's identity changes on every keystroke in
+  // the omnirouteUrl/omnirouteApiKey/customUrl fields (its own useCallback deps),
+  // and an effect depending on it directly re-ran on every one of those keystrokes
+  // for as long as the modal stayed open, hammering the CLI-check pipeline exactly
+  // like the 3s auto-polling this was meant to replace. Routing the call through a
+  // ref means the "on open" effect below depends on isOpen ONLY, so it truly fires
+  // once per open instead of once per keystroke in an unrelated field.
+  const refreshProvidersStatusRef = useRef(refreshProvidersStatus);
+  refreshProvidersStatusRef.current = refreshProvidersStatus;
 
   useEffect(() => {
     if (!isOpen) return;
     // One-shot check on open only — 3s auto-polling was hammering execSync-based
     // CLI detection (which/where, sqlite3) on every tick and could hang the UI.
     // Use the "실시간 감지" refresh button for an on-demand re-check instead.
-    refreshProvidersStatus();
-  }, [isOpen, refreshProvidersStatus]);
+    refreshProvidersStatusRef.current();
+  }, [isOpen]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -592,7 +622,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <label className="block font-semibold text-slate-300">AI 공급자 (Provider)</label>
                   <button
                     type="button"
-                    onClick={refreshProvidersStatus}
+                    onClick={() => refreshProvidersStatus(true)}
                     className="p-1 rounded-md text-slate-400 hover:text-indigo-300 hover:bg-slate-800 transition-all flex items-center gap-1 text-[11px] cursor-pointer"
                     title="실시간 공급자 구동 상태 즉시 새로고침"
                   >
@@ -601,11 +631,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </button>
                 </div>
                 <span className="text-[11px] text-slate-400">
-                  {providersStatus[form.ai.provider]?.ready 
-                    ? <span className="text-emerald-400 font-medium">● 정상 작동 준비됨</span> 
-                    : form.ai.provider === 'local' 
-                    ? <span className="text-emerald-400 font-medium">● 상시 사용 가능</span> 
-                    : <span className="text-amber-400 font-medium">▲ 미구동 (로컬 NLP로 자동 대체)</span>}
+                  {(() => {
+                    const currentStatus = providersStatus[form.ai.provider];
+                    // "loading" (status fetch not resolved yet) must not read as
+                    // "not ready" — previously this defaulted an unresolved status to
+                    // false, showing "미구동" for a provider that just hadn't been
+                    // checked yet (e.g. right after opening the modal or switching
+                    // providers, before the request completes).
+                    if (form.ai.provider === 'local') {
+                      return <span className="text-emerald-400 font-medium">● 상시 사용 가능</span>;
+                    }
+                    if (!currentStatus) {
+                      return <span className="text-slate-400 font-medium">● 상태 확인 중...</span>;
+                    }
+                    return currentStatus.ready
+                      ? <span className="text-emerald-400 font-medium">● 정상 작동 준비됨</span>
+                      : <span className="text-amber-400 font-medium">▲ 미구동 (로컬 NLP로 자동 대체)</span>;
+                  })()}
                 </span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
@@ -618,7 +660,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   { key: 'claude', label: 'Claude' }
                 ].map(item => {
                   const status = providersStatus[item.key];
-                  const isReady = item.key === 'local' ? true : (status ? status.ready : false);
+                  const isLoadingStatus = item.key !== 'local' && !status;
+                  const isReady = item.key === 'local' ? true : Boolean(status?.ready);
                   const isSelected = form.ai.provider === item.key;
 
                   return (
@@ -626,7 +669,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       key={item.key}
                       type="button"
                       onClick={() => handleProviderChange(item.key as any)}
-                      title={status?.reason || (isReady ? '정상 사용 가능' : '미구동/설정 필요')}
+                      title={status?.reason || (isLoadingStatus ? '상태 확인 중...' : isReady ? '정상 사용 가능' : '미구동/설정 필요')}
                       className={`relative py-2 px-1 rounded-xl border text-xs font-semibold transition-all text-center flex flex-col items-center justify-between min-h-[66px] cursor-pointer select-none ${
                         isSelected
                           ? 'bg-indigo-50 dark:bg-indigo-950/60 border-2 border-indigo-600 dark:border-indigo-400 shadow-md ring-2 ring-indigo-500/40 font-bold'
@@ -637,12 +680,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     >
                       {/* Top row: Status Dot + Label */}
                       <div className="flex items-center justify-center gap-1 w-full px-0.5">
-                        <span 
+                        <span
                           className={`w-2 h-2 rounded-full shrink-0 ${
-                            isReady 
-                              ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' 
+                            isReady
+                              ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50'
+                              : isLoadingStatus
+                              ? 'bg-slate-400 dark:bg-slate-600 animate-pulse'
                               : 'bg-slate-400 dark:bg-slate-600'
-                          }`} 
+                          }`}
                         />
                         <span className={`font-extrabold text-[10.5px] sm:text-[11px] tracking-tight leading-tight whitespace-nowrap overflow-hidden text-ellipsis ${
                           isSelected

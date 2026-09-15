@@ -380,7 +380,7 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
     let cliError = null;
 
     // 1) Codex CLI
-    if (hasCommand('codex')) {
+    if (await hasCommand('codex')) {
       try {
         return await runCliAI('codex', { systemPrompt, userPrompt, model, timeoutMs: 180000 });
       } catch (err) {
@@ -389,8 +389,12 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
       }
     }
 
-    // 2) Direct OpenAI API
-    const apiKey = config.openaiApiKey || (config.apiKey && config.apiKey.startsWith('sk-') && !config.apiKey.startsWith('sk-ant-') && !config.apiKey.includes('omniroute') ? config.apiKey : null);
+    // 2) Direct OpenAI API. Only the per-provider key is honored here — the UI has
+    // no API key input for this provider (it's CLI-only), so config.apiKey (the
+    // legacy single shared field used by the 'custom' provider's key input) has no
+    // legitimate reason to hold an OpenAI key; falling back to it risked reusing a
+    // leftover value typed in for a different provider.
+    const apiKey = config.openaiApiKey;
     if (apiKey && apiKey !== 'proxy-handled-key') {
       const resp = await axios.post('https://api.openai.com/v1/chat/completions', {
         model: model.startsWith('gpt-') ? model : 'gpt-4o-mini',
@@ -413,7 +417,7 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
   if (provider === 'gemini') {
     const model = config.geminiModel || config.model || 'gemini-3.7-flash-high';
     let cliError = null;
-    if (hasCommand('agy')) {
+    if (await hasCommand('agy')) {
       try {
         return await runCliAI('agy', { systemPrompt, userPrompt, model, timeoutMs: 180000 });
       } catch (err) {
@@ -435,40 +439,99 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
 
   // 4. Claude Code / Anthropic
   if (provider === 'claude') {
-    const model = config.claudeModel || config.model || 'sonnet';
+    // 'sonnet' alone is a short alias the claude CLI itself understands (used
+    // below in the CLI --model arg), but the direct Anthropic API further down
+    // needs a real model id — falling through to the CLI-only alias there 404s.
+    const model = config.claudeModel || config.model || 'claude-sonnet-4-5-20250929';
     let cliError = null;
-    if (hasCommand('claude')) {
+    const claudeCliAvailable = await hasCommand('claude');
+    console.log('[Claude Provider] claude CLI detected:', claudeCliAvailable, '| model:', model);
+    if (claudeCliAvailable) {
       try {
         return await runCliAI('claude', { systemPrompt, userPrompt, model, timeoutMs: 180000 });
       } catch (err) {
-        console.warn('[Claude CLI execution failed, trying direct API/Token fallback]:', err.message);
+        // err.message alone (e.g. "claude CLI 실패 (코드 1): ...") is usually enough,
+        // but log stack + full message so a failure this deep in the fallback chain
+        // (CLI failed -> API also failed -> local engine used) is fully diagnosable
+        // from server logs alone without needing to reproduce interactively.
+        console.warn('[Claude CLI execution failed, trying direct API/Token fallback]:', err.message, err.stack);
         cliError = err;
       }
     }
-    const detectedToken = readClaudeToken();
-    const apiKey = config.claudeApiKey || (config.apiKey && config.apiKey.startsWith('sk-ant-') ? config.apiKey : null) || detectedToken;
+    // Prefer the token freshly read from THIS machine's local `claude login` session
+    // (~/.claude/.credentials.json / macOS Keychain) over anything saved in
+    // settings.json. A saved apiKey/claudeApiKey can be a stale or foreign value —
+    // e.g. settings.json copied from another PC still carrying that PC's OAuth
+    // token — which then silently overrides a perfectly valid local login and fails
+    // against Anthropic (device/session-bound tokens don't transfer between
+    // machines). Users who only run `claude login` and never type an API key should
+    // always get their own machine's live token, not a stored artifact.
+    // config.apiKey (the legacy single shared field, only meaningfully populated by
+    // the 'custom' provider's UI key input) is intentionally NOT used as a fallback
+    // here — there is no API key input for Claude in the UI, so it could only ever
+    // hold a leftover value from a different provider or a foreign machine's token.
+    const detectedToken = await readClaudeToken();
+    const apiKey = detectedToken || config.claudeApiKey;
     if (apiKey && apiKey !== 'proxy-handled-key') {
-      const isOauthToken = apiKey.startsWith('oauth_') || apiKey.length > 80;
+      // `sk-ant-oat01-...` is Claude Code's actual OAuth access token format (from
+      // `claude login`); a plain Anthropic API key looks like `sk-ant-api03-...`.
+      // The old `length > 80` heuristic could misclassify either format depending
+      // on incidental length, sending the wrong header shape and auth scheme.
+      const isOauthToken = apiKey.startsWith('sk-ant-oat') || apiKey.startsWith('oauth_');
       const headers = {
         'anthropic-version': '2023-06-01'
       };
       if (isOauthToken) {
+        // Anthropic now rejects the request outright ("Unexpected value(s)
+        // oauth-2024-05-20 for the anthropic-beta header") when this beta flag is
+        // sent — it's no longer a recognized value, so just authenticate with the
+        // bearer token and drop the beta header entirely.
         headers['Authorization'] = `Bearer ${apiKey}`;
-        headers['anthropic-beta'] = 'oauth-2024-05-20';
       } else {
         headers['x-api-key'] = apiKey;
       }
 
-      const resp = await axios.post('https://api.anthropic.com/v1/messages', {
-        model: model.includes('sonnet') ? 'claude-3-5-sonnet-latest' : model,
-        max_tokens: 4096,
-        system: systemPrompt.replace(/\0/g, ''),
-        messages: [{ role: 'user', content: userPrompt.replace(/\0/g, '') }]
-      }, {
-        headers,
-        timeout: 120000
-      });
-      return { content: resp.data.content?.[0]?.text || '', provider: `Claude API (${model})` };
+      try {
+        // Previously any model containing "sonnet" was force-rewritten to the
+        // (now-404ing) legacy alias 'claude-3-5-sonnet-latest', which clobbered a
+        // perfectly valid, current model id the user actually selected in Settings
+        // (e.g. 'claude-sonnet-5'). Send the model id through unchanged — Anthropic
+        // itself is the source of truth for which ids are valid.
+        const resp = await axios.post('https://api.anthropic.com/v1/messages', {
+          model,
+          max_tokens: 4096,
+          system: systemPrompt.replace(/\0/g, ''),
+          messages: [{ role: 'user', content: userPrompt.replace(/\0/g, '') }]
+        }, {
+          headers,
+          timeout: 120000
+        });
+        return { content: resp.data.content?.[0]?.text || '', provider: `Claude API (${model})` };
+      } catch (apiErr) {
+        // axios's default err.message ("Request failed with status code 400") hides
+        // Anthropic's actual error body (e.g. invalid model id, malformed OAuth token
+        // usage) — log it and surface it so failures are diagnosable instead of just
+        // silently falling back to the local engine with no clue why. Log the FULL
+        // raw response body (not just .error.message) since Anthropic's error shape
+        // can vary and a missing/renamed field must never leave us back at the
+        // generic axios message with no way to tell what actually happened.
+        const status = apiErr.response?.status;
+        const responseData = apiErr.response?.data;
+        console.error('[Claude API Error]', {
+          status,
+          model,
+          isOauthToken,
+          apiKeyPrefix: apiKey.slice(0, 14),
+          responseData: JSON.stringify(responseData),
+          rawMessage: apiErr.message
+        });
+        const anthropicMessage = responseData?.error?.message || (typeof responseData === 'string' ? responseData : null);
+        if (status) {
+          throw new Error(`Claude API 오류 (HTTP ${status}): ${anthropicMessage || JSON.stringify(responseData) || apiErr.message}`);
+        }
+        // No response at all — network/timeout/DNS failure reaching Anthropic.
+        throw new Error(`Claude API 연결 실패: ${apiErr.message}`);
+      }
     }
     if (cliError) throw cliError;
     throw new Error('Claude CLI 또는 Anthropic API 키가 필요합니다.');
@@ -490,7 +553,7 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
     const endpoint = baseUrl.endsWith('/chat/completions') ? baseUrl : `${baseUrl}/chat/completions`;
     const apiKey = !isInvalidOmniRouteKey(config.omnirouteApiKey)
       ? config.omnirouteApiKey.trim()
-      : (omniStatus.effectiveKey || readOmniRouteToken() || 'sk-omniroute');
+      : (omniStatus.effectiveKey || (await readOmniRouteToken()) || 'sk-omniroute');
     const model = config.model || config.omnirouteModel || 'auto';
 
     const resp = await axios.post(endpoint, {
@@ -947,20 +1010,20 @@ export async function processAiQuery({ query, contextCrs = [], config = {} }) {
         unavailableReason = 'Custom LLM 엔드포인트 URL이 설정되지 않아';
       }
     } else if (provider === 'openai') {
-      const hasCodex = hasCommand('codex');
+      const hasCodex = await hasCommand('codex');
       const hasKey = Boolean(config.openaiApiKey && config.openaiApiKey !== 'proxy-handled-key');
       if (!hasCodex && !hasKey) {
         unavailableReason = 'Codex CLI 또는 OpenAI API 키가 감지되지 않아';
       }
     } else if (provider === 'gemini') {
-      const hasAgy = hasCommand('agy');
+      const hasAgy = await hasCommand('agy');
       const hasKey = Boolean(config.geminiApiKey && config.geminiApiKey !== 'proxy-handled-key');
       if (!hasAgy && !hasKey) {
         unavailableReason = 'Antigravity(agy) CLI 또는 Gemini API 키가 감지되지 않아';
       }
     } else if (provider === 'claude') {
-      const hasClaude = hasCommand('claude');
-      const hasKey = Boolean((config.claudeApiKey && config.claudeApiKey !== 'proxy-handled-key') || readClaudeToken());
+      const hasClaude = await hasCommand('claude');
+      const hasKey = Boolean((config.claudeApiKey && config.claudeApiKey !== 'proxy-handled-key') || (await readClaudeToken()));
       if (!hasClaude && !hasKey) {
         unavailableReason = 'Claude CLI 또는 Anthropic API 키가 감지되지 않아';
       }
