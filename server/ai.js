@@ -1,5 +1,8 @@
 import axios from 'axios';
 import path from 'path';
+// exec/promisify and findCommandPath back the OmniRoute auto-start branch below
+// (callLLM's 'omniroute' case) — both were referenced there without being
+// imported, which crashed with ReferenceError on the very first real use.
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { checkOmniRouteAlive, checkOmniRouteStatus, readOmniRouteToken, readClaudeToken, isInvalidOmniRouteKey, hasCommand, runCliAI, findCommandPath } from './cli-models.js';
