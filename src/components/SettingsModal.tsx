@@ -591,7 +591,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-150">
       <div 
-        className="w-full max-w-2xl max-h-[90vh] glass-panel rounded-3xl border border-slate-700/80 shadow-2xl overflow-hidden flex flex-col"
+        className="w-full max-w-3xl max-h-[90vh] glass-panel rounded-3xl border border-slate-700/80 shadow-2xl overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -634,15 +634,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               &nbsp;<strong>'DB&Cache 내보내기'</strong>로 전체 데이터셋을 하나의 압축 파일(.zip)로 백업하여 다른 PC의 데이터 저장 폴더에 넣거나 가져오기하면, <strong className="text-cyan-300">ClearCase SSH 추가 수집 없이 즉시 100% 동일하게 사용</strong>할 수 있습니다.
             </p>
 
-            <div className="flex flex-wrap items-center gap-2.5 pt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1 text-xs">
               {/* Open Data Directory Button */}
               <button
                 type="button"
                 onClick={handleOpenDataFolder}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-200 border border-emerald-700/60 font-semibold transition-all cursor-pointer shadow-sm"
+                className="flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-200 border border-emerald-700/60 font-semibold transition-all cursor-pointer shadow-sm whitespace-nowrap"
                 title="앱 재설치 시에도 보존되는 OS 영구 데이터 폴더를 엽니다"
               >
-                <FolderOpen className="w-3.5 h-3.5 text-emerald-400" />
+                <FolderOpen className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                 <span>데이터 저장 폴더 열기 (영구 보존)</span>
               </button>
 
@@ -651,13 +651,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 type="button"
                 onClick={handleExportDB}
                 disabled={isExporting}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                className="flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold transition-all cursor-pointer shadow-sm disabled:opacity-50 whitespace-nowrap"
                 title="Mantis CR DB와 전체 소스코드 Diff 캐시(데이터셋)를 하나의 .zip 파일로 압축하여 다운로드합니다."
               >
                 {isExporting ? (
-                  <RefreshCw className="w-3.5 h-3.5 text-mantis-400 animate-spin" />
+                  <RefreshCw className="w-3.5 h-3.5 text-mantis-400 animate-spin shrink-0" />
                 ) : (
-                  <Download className="w-3.5 h-3.5 text-mantis-400" />
+                  <Download className="w-3.5 h-3.5 text-mantis-400 shrink-0" />
                 )}
                 <span>{isExporting ? 'DB&Cache 압축 중...' : 'DB&Cache 내보내기 (.zip)'}</span>
               </button>
@@ -673,10 +673,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold transition-all cursor-pointer shadow-sm"
+                className="flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold transition-all cursor-pointer shadow-sm whitespace-nowrap"
                 title="내보낸 .zip 번들 파일 또는 .json 파일을 선택하여 즉시 복원합니다."
               >
-                <Upload className="w-3.5 h-3.5 text-blue-400" />
+                <Upload className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                 <span>외부 DB&Cache 가져오기 (.zip/.json)</span>
               </button>
             </div>
