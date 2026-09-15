@@ -1,6 +1,10 @@
 import axios from 'axios';
 import path from 'path';
-import { checkOmniRouteAlive, checkOmniRouteStatus, readOmniRouteToken, readClaudeToken, isInvalidOmniRouteKey, hasCommand, runCliAI } from './cli-models.js';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import { checkOmniRouteAlive, checkOmniRouteStatus, readOmniRouteToken, readClaudeToken, isInvalidOmniRouteKey, hasCommand, runCliAI, findCommandPath } from './cli-models.js';
+
+const execAsync = promisify(exec);
 
 function isBinaryDiff(fileName, content) {
   if (!fileName) return false;
@@ -546,7 +550,13 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
       if (omnirouteBin) {
         console.log('[OmniRoute Auto-Start] OmniRoute daemon not running, attempting background start...');
         try {
-          execSync(`"${omnirouteBin}" serve --daemon --no-open`, {
+          // execSync (used here originally) blocks Node's single event loop thread
+          // for the full duration of the child process — the same class of bug
+          // fixed earlier for CLI detection (server/cli-models.js). Blocking here
+          // would freeze every other in-flight request (and the Electron UI this
+          // server serves) for up to 8s any time a user queries OmniRoute while its
+          // daemon is down. Async exec keeps the server responsive while it waits.
+          await execAsync(`"${omnirouteBin}" serve --daemon --no-open`, {
             env: { ...process.env, PATH: process.env.PATH },
             timeout: 8000
           });
