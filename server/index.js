@@ -599,8 +599,10 @@ app.get('/api/ai/models', async (req, res) => {
       models = await getOmniRouteModels(req.query.baseUrl, req.query.apiKey);
     }
 
+    if (res.writableEnded || req.destroyed) return;
     res.json({ ok: true, models });
   } catch (err) {
+    if (res.writableEnded || req.destroyed) return;
     console.error(`[AI Models Error - ${provider}]`, err.message);
     res.status(500).json({ ok: false, error: err.message, models: [] });
   }

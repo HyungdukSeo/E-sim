@@ -224,11 +224,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const [availableModels, setAvailableModels] = useState<any[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const modelsAbortControllerRef = useRef<AbortController | null>(null);
+  const activeProviderRef = useRef<string>(form.ai.provider);
+  const providerModelsCacheRef = useRef<Record<string, any[]>>({});
 
   const fetchModelsForProvider = async (provider: string, omnirouteUrl?: string, omnirouteApiKey?: string) => {
     if (provider !== 'openai' && provider !== 'gemini' && provider !== 'claude' && provider !== 'omniroute') {
+      setAvailableModels([]);
+      setIsLoadingModels(false);
       return;
     }
+
+    // 1. Cancel previous in-flight model request immediately
+    if (modelsAbortControllerRef.current) {
+      modelsAbortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    modelsAbortControllerRef.current = controller;
+    activeProviderRef.current = provider;
+
+    // 2. Instant cache view: if models for this provider were already fetched, display them right away
+    const cached = providerModelsCacheRef.current[provider];
+    if (cached && cached.length > 0) {
+      setAvailableModels(cached);
+    } else {
+      setAvailableModels([]);
+    }
+
     setIsLoadingModels(true);
     try {
       let url = `/api/ai/models?provider=${provider}`;
@@ -241,9 +263,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         url += `&baseUrl=${encodeURIComponent(cleanBaseUrl)}&apiKey=${encodeURIComponent(cleanApiKey)}`;
       }
 
-      const res = await axios.get(url);
+      const res = await axios.get(url, { signal: controller.signal });
+
+      // 3. Race condition guard: discard result if aborted or user already switched to another provider
+      if (controller.signal.aborted || activeProviderRef.current !== provider) {
+        return;
+      }
+
       if (res.data && res.data.models && Array.isArray(res.data.models)) {
         const list = res.data.models;
+        providerModelsCacheRef.current[provider] = list;
         setAvailableModels(list);
 
         const modelIds = list.map((m: any) => typeof m === 'string' ? m : m.id);
@@ -268,14 +297,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           };
         });
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (axios.isCancel(err) || err.name === 'CanceledError' || err.name === 'AbortError' || controller.signal.aborted) {
+        return;
+      }
       console.error('Failed to fetch models:', err);
     } finally {
-      setIsLoadingModels(false);
+      if (modelsAbortControllerRef.current === controller) {
+        setIsLoadingModels(false);
+      }
     }
   };
 
   const handleProviderChange = (newProvider: 'local' | 'custom' | 'openai' | 'gemini' | 'claude' | 'omniroute') => {
+    // 1. Immediately abort any in-flight model request from previous provider
+    if (modelsAbortControllerRef.current) {
+      modelsAbortControllerRef.current.abort();
+      modelsAbortControllerRef.current = null;
+    }
+    activeProviderRef.current = newProvider;
+
+    // 2. Switch model choices immediately from cache, or show loading
+    const cached = providerModelsCacheRef.current[newProvider];
+    if (cached && cached.length > 0) {
+      setAvailableModels(cached);
+      setIsLoadingModels(false);
+    } else if (newProvider === 'openai' || newProvider === 'gemini' || newProvider === 'claude' || newProvider === 'omniroute') {
+      setAvailableModels([]);
+      setIsLoadingModels(true);
+    } else {
+      setAvailableModels([]);
+      setIsLoadingModels(false);
+    }
+
     setForm(prev => {
       const currentProvider = prev.ai.provider;
       const currentModel = prev.ai.model;
@@ -318,10 +372,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   useEffect(() => {
+    if (!isOpen) {
+      if (modelsAbortControllerRef.current) {
+        modelsAbortControllerRef.current.abort();
+        modelsAbortControllerRef.current = null;
+      }
+      return;
+    }
+
     if (form.ai.provider === 'openai' || form.ai.provider === 'gemini' || form.ai.provider === 'claude' || form.ai.provider === 'omniroute') {
       fetchModelsForProvider(form.ai.provider, form.ai.omnirouteUrl, form.ai.omnirouteApiKey);
+    } else {
+      setAvailableModels([]);
+      setIsLoadingModels(false);
     }
-  }, [form.ai.provider]);
+
+    return () => {
+      if (modelsAbortControllerRef.current) {
+        modelsAbortControllerRef.current.abort();
+      }
+    };
+  }, [form.ai.provider, isOpen]);
 
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
 
@@ -400,6 +471,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       }
       await refreshProvidersStatus(true);
       if (form.ai.provider === 'omniroute') {
+        delete providerModelsCacheRef.current['omniroute'];
         fetchModelsForProvider('omniroute', form.ai.omnirouteUrl, form.ai.omnirouteApiKey);
       }
     } catch (err: any) {
@@ -908,7 +980,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     {(form.ai.provider === 'openai' || form.ai.provider === 'gemini' || form.ai.provider === 'claude' || form.ai.provider === 'omniroute') && (
                       <button
                         type="button"
-                        onClick={() => fetchModelsForProvider(form.ai.provider, form.ai.omnirouteUrl, form.ai.omnirouteApiKey)}
+                        onClick={() => {
+                          delete providerModelsCacheRef.current[form.ai.provider];
+                          fetchModelsForProvider(form.ai.provider, form.ai.omnirouteUrl, form.ai.omnirouteApiKey);
+                        }}
                         disabled={isLoadingModels}
                         className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors font-medium cursor-pointer"
                       >
