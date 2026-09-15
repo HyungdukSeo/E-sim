@@ -193,6 +193,7 @@ export interface AIProviderStatusItem {
   hint?: string;
   detectedKey?: string | null;
   effectiveKey?: string | null;
+  hasOmnirouteCli?: boolean;
 }
 
 export async function fetchAIProvidersStatus(aiConfig?: any): Promise<{ ok: boolean; status: Record<string, AIProviderStatusItem> }> {
@@ -215,7 +216,7 @@ export async function queryAI(
       useDeepAnalysis,
       sshConfig
     }
-  }, { timeout: 120000 }); // Increase timeout to 120s for deep SSH diff fetching
+  }, { timeout: 300000 }); // Increased timeout to 300s (5min) for deep reasoning / OmniRoute Diff models
   return resp.data.result;
 }
 
@@ -287,7 +288,7 @@ export async function analyzeCRDiffAPI(
     sshConfig,
     sshServers: sshServers || sshConfig?.servers || localServers,
     config: aiConfig
-  }, { timeout: 120000 });
+  }, { timeout: 300000 });
   return resp.data;
 }
 
@@ -303,8 +304,18 @@ export async function compareCRsAPI(
     sshConfig,
     sshServers: sshServers || sshConfig?.servers || localServers,
     config: aiConfig
-  }, { timeout: 120000 });
+  }, { timeout: 300000 });
   return resp.data;
+}
+
+export async function startOmniRouteDaemonAPI(): Promise<{ ok: boolean; message?: string; status?: any }> {
+  try {
+    const resp = await axios.post(`${API_BASE}/ai/omniroute/start`, {}, { timeout: 15000 });
+    return resp.data;
+  } catch (err: any) {
+    const msg = err.response?.data?.error || err.response?.data?.message || err.message;
+    throw new Error(msg);
+  }
 }
 
 export interface DiffWorkerStatus {

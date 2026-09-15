@@ -539,9 +539,26 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
 
   // 5. OmniRoute Gateway
   if (provider === 'omniroute') {
-    const omniStatus = await checkOmniRouteStatus(config.omnirouteUrl, config.omnirouteApiKey);
+    let omniStatus = await checkOmniRouteStatus(config.omnirouteUrl, config.omnirouteApiKey);
     if (!omniStatus.alive) {
-      throw new Error('OmniRoute 서비스가 로컬(localhost:20128)에서 실행 중이지 않습니다.');
+      // If omniroute CLI is installed on this machine, attempt background auto-start
+      const omnirouteBin = await findCommandPath('omniroute');
+      if (omnirouteBin) {
+        console.log('[OmniRoute Auto-Start] OmniRoute daemon not running, attempting background start...');
+        try {
+          execSync(`"${omnirouteBin}" serve --daemon --no-open`, {
+            env: { ...process.env, PATH: process.env.PATH },
+            timeout: 8000
+          });
+          await new Promise(r => setTimeout(r, 2000));
+          omniStatus = await checkOmniRouteStatus(config.omnirouteUrl, config.omnirouteApiKey);
+        } catch (startErr) {
+          console.warn('[OmniRoute Auto-Start Failed]:', startErr.message);
+        }
+      }
+    }
+    if (!omniStatus.alive) {
+      throw new Error('OmniRoute 서비스가 로컬(localhost:20128)에서 실행 중이지 않습니다. 터미널에서 `omniroute serve`를 실행해 주세요.');
     }
     if (!omniStatus.ready) {
       throw new Error('OmniRoute API 토큰 인증에 실패했습니다. 설정에서 올바른 API 키를 입력해 주세요.');
@@ -556,23 +573,41 @@ export async function callLLM({ systemPrompt, userPrompt, config = {} }) {
       : (omniStatus.effectiveKey || (await readOmniRouteToken()) || 'sk-omniroute');
     const model = config.model || config.omnirouteModel || 'auto';
 
-    const resp = await axios.post(endpoint, {
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ]
-    }, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: 120000
-    });
-    return {
-      content: resp.data.choices?.[0]?.message?.content || '',
-      provider: `OmniRoute (${model})`
-    };
+    try {
+      const resp = await axios.post(endpoint, {
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ]
+      }, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 300000 // 5 minutes (300s) for deep reasoning/diff analysis
+      });
+      return {
+        content: resp.data.choices?.[0]?.message?.content || '',
+        provider: `OmniRoute (${model})`
+      };
+    } catch (postErr) {
+      const status = postErr.response?.status;
+      const data = postErr.response?.data;
+      console.error('[OmniRoute Completion Error]', {
+        status,
+        model,
+        data: JSON.stringify(data),
+        message: postErr.message
+      });
+      if (status) {
+        throw new Error(`OmniRoute 오류 (HTTP ${status}): ${data?.error?.message || JSON.stringify(data) || postErr.message}`);
+      }
+      if (postErr.code === 'ECONNABORTED' || postErr.message?.includes('timeout')) {
+        throw new Error(`OmniRoute 응답 타임아웃 (${model} 모델 300초 초과)`);
+      }
+      throw new Error(`OmniRoute 연결 실패: ${postErr.message}`);
+    }
   }
 
   // Local fallback explanation

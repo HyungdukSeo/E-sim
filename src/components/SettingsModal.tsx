@@ -26,7 +26,8 @@ import {
   Server,
   Plus,
   Trash2,
-  FolderOpen
+  FolderOpen,
+  Loader2
 } from 'lucide-react';
 import { AppSettings, SyncMeta } from '../types/cr';
 import { 
@@ -38,7 +39,8 @@ import {
   DiffWorkerStatus, 
   openDataDirectory,
   fetchAIProvidersStatus,
-  AIProviderStatusItem
+  AIProviderStatusItem,
+  startOmniRouteDaemonAPI
 } from '../services/api';
 import axios from 'axios';
 
@@ -384,6 +386,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // once per open instead of once per keystroke in an unrelated field.
   const refreshProvidersStatusRef = useRef(refreshProvidersStatus);
   refreshProvidersStatusRef.current = refreshProvidersStatus;
+
+  const [isStartingOmniroute, setIsStartingOmniroute] = useState(false);
+  const [omnirouteStartMessage, setOmnirouteStartMessage] = useState<string | null>(null);
+
+  const handleStartOmniRoute = async () => {
+    setIsStartingOmniroute(true);
+    setOmnirouteStartMessage(null);
+    try {
+      const res = await startOmniRouteDaemonAPI();
+      if (res.message) {
+        setOmnirouteStartMessage(res.message);
+      }
+      await refreshProvidersStatus(true);
+      if (form.ai.provider === 'omniroute') {
+        fetchModelsForProvider('omniroute', form.ai.omnirouteUrl, form.ai.omnirouteApiKey);
+      }
+    } catch (err: any) {
+      setOmnirouteStartMessage(`실행 실패: ${err.message}`);
+    } finally {
+      setIsStartingOmniroute(false);
+    }
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -806,12 +830,43 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   </div>
 
-                  <div className="p-2.5 rounded-lg bg-indigo-950/30 border border-indigo-500/20 text-[11px] text-slate-300 space-y-1">
+                  {/* Status / Start Server Action */}
+                  {providersStatus.omniroute && (!providersStatus.omniroute.ready || !providersStatus.omniroute.available) && (
+                    <div className="flex items-center justify-between p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs gap-2">
+                      <div className="space-y-0.5">
+                        <div className="text-amber-300 font-medium text-[11px]">
+                          {providersStatus.omniroute.reason || 'OmniRoute 서비스가 실행 중이지 않습니다.'}
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          {providersStatus.omniroute.hint || '서비스를 시작하거나 로컬 포트 20128을 확인해 주세요.'}
+                        </div>
+                      </div>
+                      {providersStatus.omniroute.hasOmnirouteCli && (
+                        <button
+                          type="button"
+                          disabled={isStartingOmniroute}
+                          onClick={handleStartOmniRoute}
+                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium rounded-lg text-xs transition flex items-center gap-1.5 shadow flex-shrink-0"
+                        >
+                          {isStartingOmniroute ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                          {isStartingOmniroute ? '서버 시작 중...' : 'OmniRoute 서버 시작'}
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {omnirouteStartMessage && (
+                    <div className="p-2 rounded bg-indigo-950/60 border border-indigo-500/30 text-[11px] text-indigo-300">
+                      {omnirouteStartMessage}
+                    </div>
+                  )}
+
+                  <div className="p-2.5 rounded-lg bg-indigo-950/30 border border-indigo-500/20 text-[11px] text-slate-300 space-y-1.5">
                     <p className="leading-relaxed">
-                      💡 로컬 터미널에서 <code className="text-indigo-300 bg-slate-900 px-1 py-0.5 rounded font-mono">npx omniroute</code> 또는 <code className="text-indigo-300 bg-slate-900 px-1 py-0.5 rounded font-mono">omniroute start</code>를 실행하면 20128 포트에서 Anthropic Claude, OpenAI, Gemini, Ollama 등의 공급자를 하나로 묶어 자동 라우팅합니다.
+                      💡 로컬 터미널에서 <code className="text-indigo-300 bg-slate-900 px-1 py-0.5 rounded font-mono">omniroute serve --daemon</code> 또는 <code className="text-indigo-300 bg-slate-900 px-1 py-0.5 rounded font-mono">npx omniroute</code>를 실행하면 20128 포트에서 여러 AI Provider를 하나로 묶어 자동 라우팅합니다.
                     </p>
-                    <p className="text-slate-400 text-[10px]">
-                      추천 가상 모델: <code className="text-emerald-400 font-mono">auto</code> (스마트 분기), <code className="text-emerald-400 font-mono">auto/coding</code> (Diff 코드 분석 최적화), <code className="text-emerald-400 font-mono">auto/fast</code> (최고속 응답)
+                    <p className="text-slate-400 text-[10px] leading-relaxed">
+                      ⚡ <strong>타임아웃 안내:</strong> OmniRoute 기본 <code className="text-emerald-400 font-mono">auto</code>는 Diff 코드 분석 시 <code className="text-indigo-300 font-mono">gpt-5.6-sol</code> 등 심층 추론 모델로 라우팅되어 응답에 60~120초 이상 소요될 수 있습니다 (타임아웃 300초 적용). 초고속 응답을 원하시면 모델을 <code className="text-emerald-400 font-mono">auto/fast</code> 또는 <code className="text-emerald-400 font-mono">auto/best-coding-fast</code>로 선택하세요.
                     </p>
                   </div>
                 </div>

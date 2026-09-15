@@ -190,11 +190,11 @@ export async function checkOmniRouteStatus(baseUrl = 'http://localhost:20128/v1'
   const detectedKey = await readOmniRouteToken();
   const effectiveKey = !isInvalidOmniRouteKey(apiKey) ? apiKey.trim() : (detectedKey || 'sk-omniroute');
 
-  // 1. Try authenticated /models check with effectiveKey
+  // 1. Try authenticated /models check with effectiveKey (allow 6s for upstream syncing)
   try {
     const resp = await axios.get(`${cleanUrl}/models`, {
       headers: { Authorization: `Bearer ${effectiveKey}` },
-      timeout: 2500
+      timeout: 6000
     });
     if (resp.status === 200) {
       return {
@@ -213,7 +213,7 @@ export async function checkOmniRouteStatus(baseUrl = 'http://localhost:20128/v1'
       try {
         const retryResp = await axios.get(`${cleanUrl}/models`, {
           headers: { Authorization: `Bearer ${detectedKey}` },
-          timeout: 2500
+          timeout: 6000
         });
         if (retryResp.status === 200) {
           return {
@@ -246,12 +246,12 @@ export async function checkOmniRouteStatus(baseUrl = 'http://localhost:20128/v1'
     }
   }
 
-  // 2. Try root host ping (e.g. http://localhost:20128/)
+  // 2. Try root host ping (e.g. http://localhost:20128/) with 4s timeout
   try {
     const parsed = new URL(cleanUrl);
     const rootUrl = `${parsed.protocol}//${parsed.host}/`;
     const resp = await axios.get(rootUrl, {
-      timeout: 1500,
+      timeout: 4000,
       maxRedirects: 3,
       validateStatus: () => true
     });
@@ -279,7 +279,7 @@ export async function checkOmniRouteStatus(baseUrl = 'http://localhost:20128/v1'
     detectedKey: null,
     effectiveKey: null,
     reason: 'OmniRoute 서비스 미구동 (localhost:20128)',
-    hint: '터미널에서 omniroute 실행 필요'
+    hint: '터미널에서 omniroute serve 실행 필요'
   };
 }
 
@@ -549,8 +549,10 @@ export function getCodexModels() {
 export async function getOmniRouteModels(baseUrl = 'http://localhost:20128/v1', apiKey = '') {
   const fallback = [
     { id: 'auto', displayName: 'auto (OmniRoute 스마트 자동 라우팅)' },
-    { id: 'auto/coding', displayName: 'auto/coding (코딩 및 Diff 분석 특화)' },
-    { id: 'auto/fast', displayName: 'auto/fast (초고속 응답 라우팅)' },
+    { id: 'auto/fast', displayName: 'auto/fast (초고속 즉답 라우팅)' },
+    { id: 'auto/best-coding-fast', displayName: 'auto/best-coding-fast (고속 코딩 특화)' },
+    { id: 'auto/coding', displayName: 'auto/coding (코딩/Diff 심층 분석)' },
+    { id: 'auto/best-reasoning', displayName: 'auto/best-reasoning (추론 특화)' },
     { id: 'auto/cheap', displayName: 'auto/cheap (최저 비용 라우팅)' },
     { id: 'claude-3-5-sonnet-latest', displayName: 'claude-3-5-sonnet-latest' },
     { id: 'gpt-4o', displayName: 'gpt-4o' }
@@ -571,7 +573,7 @@ export async function getOmniRouteModels(baseUrl = 'http://localhost:20128/v1', 
         headers: {
           Authorization: `Bearer ${effectiveKey}`
         },
-        timeout: 5000
+        timeout: 15000
       });
     } catch (reqErr) {
       if (detectedKey && effectiveKey !== detectedKey && reqErr.response && (reqErr.response.status === 401 || reqErr.response.status === 403)) {
@@ -579,7 +581,7 @@ export async function getOmniRouteModels(baseUrl = 'http://localhost:20128/v1', 
           headers: {
             Authorization: `Bearer ${detectedKey}`
           },
-          timeout: 5000
+          timeout: 15000
         });
       } else {
         throw reqErr;
@@ -775,12 +777,13 @@ export async function getAIProvidersStatus(aiSettings = {}, { forceRefresh = fal
   // forceRefresh bypasses the CLI-path cache — used by the Settings modal's manual
   // "실시간 감지" button so it actually re-checks instead of instantly returning a
   // cached result (which made the click look like it did nothing).
-  const [omniStatus, claudeToken, hasClaudeCli, hasCodexCli, hasAgyCli] = await Promise.all([
+  const [omniStatus, claudeToken, hasClaudeCli, hasCodexCli, hasAgyCli, hasOmnirouteCli] = await Promise.all([
     checkOmniRouteStatus(aiSettings.omnirouteUrl, aiSettings.omnirouteApiKey),
     readClaudeToken(),
     hasCommand('claude', { forceRefresh }),
     hasCommand('codex', { forceRefresh }),
-    hasCommand('agy', { forceRefresh })
+    hasCommand('agy', { forceRefresh }),
+    hasCommand('omniroute', { forceRefresh })
   ]);
 
   return {
@@ -797,10 +800,11 @@ export async function getAIProvidersStatus(aiSettings = {}, { forceRefresh = fal
       label: 'OmniRoute',
       available: omniStatus.alive,
       ready: omniStatus.ready,
+      hasOmnirouteCli,
       badge: 'Gateway',
       detectedKey: omniStatus.detectedKey,
       reason: omniStatus.reason,
-      hint: omniStatus.hint
+      hint: omniStatus.hint || (hasOmnirouteCli && !omniStatus.ready ? 'OmniRoute 서버 시작 가능' : '')
     },
     custom: {
       key: 'custom',

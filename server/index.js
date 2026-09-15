@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 import { syncMantisData, getLocalDatabase, reloadDatabase, importDatabase, fetchCRPageDetails, DB_FILE, META_FILE, DATA_DIR } from './sync.js';
 import { processAiQuery, analyzeSingleCRDiff, compareMultipleCRDiffs } from './ai.js';
 import { testSSHConnection, fetchFileDiffSSH } from './ssh.js';
-import { getClaudeModels, getAntigravityModels, getCodexModels, getOmniRouteModels, getAIProvidersStatus } from './cli-models.js';
+import { getClaudeModels, getAntigravityModels, getCodexModels, getOmniRouteModels, getAIProvidersStatus, checkOmniRouteStatus, findCommandPath } from './cli-models.js';
 import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, initCacheIndex, batchIndexDiffs, backgroundDiffIndexer } from './diff-cache.js';
 import { sshPool } from './ssh-pool.js';
 
@@ -603,6 +603,50 @@ app.get('/api/ai/models', async (req, res) => {
   } catch (err) {
     console.error(`[AI Models Error - ${provider}]`, err.message);
     res.status(500).json({ ok: false, error: err.message, models: [] });
+  }
+});
+
+// 8.6 OmniRoute Daemon Launcher
+app.post('/api/ai/omniroute/start', async (req, res) => {
+  try {
+    const omnirouteBin = await findCommandPath('omniroute');
+    if (!omnirouteBin) {
+      return res.status(400).json({ ok: false, error: 'omniroute CLI 명령어가 시스템 PATH에 설치되어 있지 않습니다. 터미널에서 npm install -g omniroute 등을 확인해 주세요.' });
+    }
+
+    const disk = loadDiskSettings()?.settings || {};
+    const aiConfig = disk.ai || {};
+    let status = await checkOmniRouteStatus(aiConfig.omnirouteUrl, aiConfig.omnirouteApiKey);
+
+    if (status.alive && status.ready) {
+      return res.json({ ok: true, message: 'OmniRoute 서비스가 이미 정상 작동 중입니다.', status });
+    }
+
+    // Launch daemon in background
+    console.log(`[OmniRoute Start] Spawning daemon via: ${omnirouteBin} serve --daemon --no-open`);
+    exec(`"${omnirouteBin}" serve --daemon --no-open`, {
+      env: { ...process.env, PATH: process.env.PATH }
+    }, (err, stdout, stderr) => {
+      if (err) {
+        console.warn('[OmniRoute Start Daemon Warn]', err.message);
+      }
+      if (stdout) console.log('[OmniRoute Daemon stdout]', stdout.trim());
+      if (stderr) console.warn('[OmniRoute Daemon stderr]', stderr.trim());
+    });
+
+    // Poll for up to 6 seconds for daemon to initialize
+    for (let i = 0; i < 12; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      status = await checkOmniRouteStatus(aiConfig.omnirouteUrl, aiConfig.omnirouteApiKey);
+      if (status.alive) {
+        return res.json({ ok: true, message: 'OmniRoute 서비스가 성공적으로 시작되었습니다.', status });
+      }
+    }
+
+    res.json({ ok: status.alive, status, message: status.alive ? 'OmniRoute 서비스 시작됨' : 'OmniRoute 서비스 기동 대기 중입니다. 잠시 후 새로고침해 주세요.' });
+  } catch (err) {
+    console.error('[OmniRoute Start Error]', err);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
