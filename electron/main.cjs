@@ -96,6 +96,18 @@ function logErrorToFile(msg) {
   } catch (e) {}
 }
 
+// Global exception safety net to prevent non-fatal stream/pipe errors (like EPIPE)
+// from displaying native Electron crash dialogs
+process.on('uncaughtException', (err) => {
+  logErrorToFile(`[Uncaught Exception]: ${err?.stack || err?.message || err}`);
+  console.error('[Main Uncaught Exception]', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  logErrorToFile(`[Unhandled Rejection]: ${reason?.stack || reason}`);
+  console.error('[Main Unhandled Rejection]', reason);
+});
+
 // Only these process images are ever safe to auto-kill — the app's own
 // leftover Node/Electron instance from a previous crash. Never kill an
 // arbitrary PID just because it happens to occupy our port: on a shared

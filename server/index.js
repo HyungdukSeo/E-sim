@@ -64,6 +64,13 @@ try {
   };
   console.error = (...args) => { origError(...args); appendLog('ERROR', args); };
   console.warn = (...args) => { origWarn(...args); appendLog('WARN', args); };
+
+  process.on('uncaughtException', (err) => {
+    console.error('[Server Uncaught Exception]', err);
+  });
+  process.on('unhandledRejection', (reason) => {
+    console.error('[Server Unhandled Rejection]', reason);
+  });
 } catch {}
 
 const app = express();

@@ -491,6 +491,29 @@ export function getCodexModels() {
         finish(fallback);
       }, 8000);
 
+      // Safe stdin writer to prevent unhandled EPIPE if process terminates early
+      const safeSend = (obj) => {
+        if (!proc.stdin || proc.stdin.destroyed || !proc.stdin.writable) return;
+        try {
+          proc.stdin.write(JSON.stringify(obj) + '\n');
+        } catch (e) {
+          console.warn('[Codex Models] stdin write error (ignored):', e.message);
+        }
+      };
+
+      if (proc.stdin) {
+        proc.stdin.on('error', (err) => {
+          // EPIPE is normal when child process closes stdin pipe or exits early
+          console.warn('[Codex Models] stdin stream error (ignored):', err.message);
+        });
+      }
+      if (proc.stdout) {
+        proc.stdout.on('error', () => {});
+      }
+      if (proc.stderr) {
+        proc.stderr.on('error', () => {});
+      }
+
       let buffer = '';
 
       proc.stdout.on('data', (chunk) => {
@@ -504,7 +527,7 @@ export function getCodexModels() {
             const msg = JSON.parse(line.trim());
             if (msg.id === 1) {
               // initialize 완료 -> model/list 요청
-              proc.stdin.write(JSON.stringify({ id: 2, method: 'model/list', params: {} }) + '\n');
+              safeSend({ id: 2, method: 'model/list', params: {} });
             } else if (msg.id === 2) {
               clearTimeout(timer);
               try { proc.kill(); } catch {}
@@ -529,12 +552,17 @@ export function getCodexModels() {
         finish(fallback);
       });
 
+      proc.on('close', () => {
+        clearTimeout(timer);
+        finish(fallback);
+      });
+
       // 1) Initialize 전송
-      proc.stdin.write(JSON.stringify({
+      safeSend({
         id: 1,
         method: 'initialize',
         params: { clientInfo: { name: 'esim', version: '1.0' } }
-      }) + '\n');
+      });
 
     } catch (e) {
       console.warn('[Codex Models] Spawn error:', e.message);
@@ -699,7 +727,19 @@ export function runCliAI(cmdType, { systemPrompt = '', userPrompt = '', model = 
       }
     });
 
-    if (stdinPrompt !== null && proc.stdin) {
+    if (proc.stdin) {
+      proc.stdin.on('error', (err) => {
+        console.warn(`[${cmdName} Stdin Error (ignored)]:`, err.message);
+      });
+    }
+    if (proc.stdout) {
+      proc.stdout.on('error', () => {});
+    }
+    if (proc.stderr) {
+      proc.stderr.on('error', () => {});
+    }
+
+    if (stdinPrompt !== null && proc.stdin && !proc.stdin.destroyed && proc.stdin.writable) {
       try {
         proc.stdin.write(stdinPrompt);
         proc.stdin.end();
