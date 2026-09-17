@@ -41,6 +41,7 @@ try {
   const serverLogFile = path.join(DATA_DIR, 'server.log');
   const origError = console.error.bind(console);
   const origWarn = console.warn.bind(console);
+  const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB cap
   const appendLog = (level, args) => {
     try {
       const line = args.map(a => {
@@ -48,6 +49,16 @@ try {
         if (typeof a === 'object') { try { return JSON.stringify(a); } catch { return String(a); } }
         return String(a);
       }).join(' ');
+
+      // Rotate log if size exceeds 5MB
+      try {
+        if (fs.existsSync(serverLogFile) && fs.statSync(serverLogFile).size > MAX_LOG_SIZE) {
+          const oldLog = path.join(DATA_DIR, 'server.log.old');
+          try { if (fs.existsSync(oldLog)) fs.unlinkSync(oldLog); } catch {}
+          fs.renameSync(serverLogFile, oldLog);
+        }
+      } catch {}
+
       fs.appendFileSync(serverLogFile, `[${new Date().toISOString()}] [${level}] ${line}\n`);
     } catch {}
   };
@@ -978,6 +989,7 @@ export function startServer(defaultPort = PORT) {
 
 export function stopServer() {
   return new Promise((resolve) => {
+    try { backgroundDiffIndexer.pause(); } catch (e) {}
     try { sshPool.destroyAll(); } catch (e) {}
     if (!serverInstance) return resolve();
     serverInstance.close(() => {

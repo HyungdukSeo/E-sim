@@ -343,6 +343,27 @@ class BackgroundDiffIndexer {
     this.lastProcessedAt = null;
     this.processedCount = 0;
     this.allCrsProvider = null;
+    this._wakeResolve = null;
+  }
+
+  _sleep(ms) {
+    return new Promise(res => {
+      const timer = setTimeout(() => {
+        this._wakeResolve = null;
+        res();
+      }, ms);
+      this._wakeResolve = () => {
+        clearTimeout(timer);
+        this._wakeResolve = null;
+        res();
+      };
+    });
+  }
+
+  wake() {
+    if (typeof this._wakeResolve === 'function') {
+      this._wakeResolve();
+    }
   }
 
   setConcurrency(val) {
@@ -366,11 +387,13 @@ class BackgroundDiffIndexer {
 
   updateSSHConfig(sshConfig) {
     this.sshConfig = sshConfig;
+    this.wake();
   }
 
   queuePriority(crid) {
     if (!this.priorityQueue.includes(crid)) {
       this.priorityQueue.unshift(crid);
+      this.wake();
     }
   }
 
@@ -382,6 +405,7 @@ class BackgroundDiffIndexer {
         this.priorityQueue.push(crid);
       }
     }
+    this.wake();
   }
 
   start() {
@@ -394,12 +418,15 @@ class BackgroundDiffIndexer {
   pause() {
     this.enabled = false;
     this.status = 'paused';
+    this.wake();
   }
 
   resume() {
     this.enabled = true;
     if (!this.isRunning) {
       this.start();
+    } else {
+      this.wake();
     }
   }
 
@@ -463,11 +490,13 @@ class BackgroundDiffIndexer {
         return cr;
       }
 
-      // Check if stale (Mantis lastUpdated > cachedAt)
-      if (cr.lastUpdated && meta.cachedAt) {
-        const crTime = new Date(cr.lastUpdated).getTime();
-        const cacheTime = new Date(meta.cachedAt).getTime();
-        if (!isNaN(crTime) && !isNaN(cacheTime) && crTime > cacheTime) {
+      // Check if stale using pre-cached millisecond timestamp (0 Date object allocations per tick)
+      if (cr.lastUpdated && meta.mtimeMs) {
+        if (!cr._lastUpdatedMs) {
+          const t = new Date(cr.lastUpdated).getTime();
+          cr._lastUpdatedMs = isNaN(t) ? 0 : t;
+        }
+        if (cr._lastUpdatedMs > meta.mtimeMs) {
           return cr;
         }
       }
@@ -499,18 +528,16 @@ class BackgroundDiffIndexer {
   }
 
   async _runLoop() {
-    const sleep = (ms) => new Promise(res => setTimeout(res, ms));
-
     while (this.isRunning) {
       if (!this.enabled) {
         this.status = 'paused';
-        await sleep(1000);
+        await this._sleep(1000);
         continue;
       }
 
       // Yield if user is actively interacting with UI (clicking, viewing diffs)
       if (sshPool.isUserActive()) {
-        await sleep(1000);
+        await this._sleep(1000);
         continue;
       }
 
@@ -520,14 +547,14 @@ class BackgroundDiffIndexer {
       const hasValidServer = servers.some(s => s && s.host && s.enabled !== false);
       if (!hasValidServer) {
         this.status = 'waiting_ssh';
-        await sleep(2500);
+        await this._sleep(2500);
         continue;
       }
 
       const allCrs = typeof this.allCrsProvider === 'function' ? this.allCrsProvider() : [];
       if (!allCrs || allCrs.length === 0) {
         this.status = 'idle';
-        await sleep(3000);
+        await this._sleep(3000);
         continue;
       }
 
@@ -552,14 +579,19 @@ class BackgroundDiffIndexer {
 
         if (!anyRemaining && this.priorityQueue.length === 0) {
           this.status = 'completed';
+          // All CRs 100% cached: sleep 30 seconds (wakes immediately on priorityQueue/queueUpdates/resume)
+          await this._sleep(30000);
+          continue;
         } else {
           this.status = 'idle';
+          // Idle with no eligible targets: sleep 5 seconds
+          await this._sleep(5000);
+          continue;
         }
       } else {
         this.status = 'running';
+        await this._sleep(600);
       }
-
-      await sleep(600);
     }
   }
 }

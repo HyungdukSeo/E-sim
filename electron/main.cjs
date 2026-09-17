@@ -82,6 +82,16 @@ function logErrorToFile(msg) {
     }
     if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
     const logFile = path.join(logDir, 'app.log');
+
+    // Auto-rotate if log exceeds 5MB
+    try {
+      if (fs.existsSync(logFile) && fs.statSync(logFile).size > 5 * 1024 * 1024) {
+        const oldLog = path.join(logDir, 'app.log.old');
+        try { if (fs.existsSync(oldLog)) fs.unlinkSync(oldLog); } catch {}
+        fs.renameSync(logFile, oldLog);
+      }
+    } catch {}
+
     fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${msg}\n`);
   } catch (e) {}
 }
