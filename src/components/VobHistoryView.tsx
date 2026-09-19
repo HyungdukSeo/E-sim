@@ -11,9 +11,21 @@ import {
   RefreshCw,
   Download,
   ChevronLeft,
-  Layers
+  Layers,
+  History,
+  CloudDownload
 } from 'lucide-react';
-import { fetchVobList, fetchVobHistory, collectVobUncachedCRs, VobListItem, VobHistoryEntry } from '../services/api';
+import {
+  fetchVobList,
+  fetchVobHistory,
+  collectVobUncachedCRs,
+  fetchFileVersionChain,
+  fetchFileVersionsSSH,
+  VobListItem,
+  VobHistoryEntry,
+  FileVersionChainItem
+} from '../services/api';
+import { SSHConfig } from '../types/cr';
 
 // Renders a unified diff exactly like DiffViewerModal's own unified view, so a
 // VOB history entry looks identical to what the user already sees per-CR.
@@ -32,6 +44,143 @@ const UnifiedDiffBlock: React.FC<{ diff: string }> = ({ diff }) => {
         return (
           <div key={idx} className={`whitespace-pre ${cls}`}>
             {line}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// Shows the FULL version chain (0..latest) for one file, independent of any
+// single CR. Versions already in the local diff cache render immediately;
+// versions with no cache show a "버전별 로드하기" button that hits ClearCase
+// directly over SSH for just that one version, on demand — never an automatic
+// bulk fetch, since a VOB's file can easily have dozens of versions.
+const FileVersionChainPanel: React.FC<{
+  filePath: string;
+  checkinLog?: string;
+  sshConfig?: SSHConfig;
+}> = ({ filePath, checkinLog, sshConfig }) => {
+  const [chain, setChain] = useState<FileVersionChainItem[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingVersions, setLoadingVersions] = useState<Set<number>>(new Set());
+  const [liveContent, setLiveContent] = useState<Record<number, { content: string; error?: string }>>({});
+  const [expandedVersion, setExpandedVersion] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetchFileVersionChain(filePath)
+      .then(res => {
+        if (!cancelled && res.ok) setChain(res.chain);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [filePath]);
+
+  const handleLoadVersion = async (version: number) => {
+    setLoadingVersions(prev => new Set(prev).add(version));
+    setExpandedVersion(version);
+    try {
+      const res = await fetchFileVersionsSSH(sshConfig, undefined, filePath, checkinLog, [version]);
+      const r = res.results?.[0];
+      if (r) {
+        setLiveContent(prev => ({ ...prev, [version]: { content: r.content } }));
+      }
+    } catch (err: any) {
+      setLiveContent(prev => ({
+        ...prev,
+        [version]: { content: '', error: err.response?.data?.error || err.message || '조회 실패' }
+      }));
+    } finally {
+      setLoadingVersions(prev => {
+        const next = new Set(prev);
+        next.delete(version);
+        return next;
+      });
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="p-4 flex items-center gap-2 text-slate-500 text-xs">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        버전 이력 확인 중...
+      </div>
+    );
+  }
+  if (!chain || chain.length === 0) {
+    return <div className="p-4 text-xs text-slate-500">이 파일의 버전 이력을 찾을 수 없습니다.</div>;
+  }
+
+  return (
+    <div className="p-3 space-y-1.5 bg-slate-950/40 rounded-xl border border-slate-800/80">
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-300 px-1 pb-1">
+        <History className="w-3.5 h-3.5 text-mantis-400" />
+        전체 버전 이력 (0 ~ {chain.length - 1})
+      </div>
+      {chain.map(item => {
+        const isExpanded = expandedVersion === item.version;
+        const isLoadingThis = loadingVersions.has(item.version);
+        const live = liveContent[item.version];
+        return (
+          <div key={item.version} className="rounded-lg border border-slate-800/60 bg-slate-900/50 overflow-hidden">
+            <button
+              onClick={() => setExpandedVersion(isExpanded ? null : item.version)}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 hover:bg-slate-800/40 transition-colors text-left cursor-pointer"
+            >
+              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-800 text-mantis-400 shrink-0">
+                v{item.version}
+              </span>
+              {item.crid ? (
+                <span className="text-[10px] font-mono text-slate-400 truncate">CR #{item.crid}</span>
+              ) : (
+                <span className="text-[10px] text-slate-600 italic">연결된 CR 정보 없음</span>
+              )}
+              <span className="ml-auto shrink-0">
+                {item.cached ? (
+                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
+                    캐시됨
+                  </span>
+                ) : live ? (
+                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-cyan-500/15 text-cyan-400 border border-cyan-500/25">
+                    실시간 조회됨
+                  </span>
+                ) : (
+                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-500 border border-slate-700">
+                    미수집
+                  </span>
+                )}
+              </span>
+            </button>
+
+            {isExpanded && (
+              <div className="px-2.5 pb-2.5 pt-1 border-t border-slate-800/60">
+                {item.cached ? (
+                  <UnifiedDiffBlock diff={item.cached.unifiedDiff} />
+                ) : live?.error ? (
+                  <div className="p-2.5 rounded-lg bg-rose-950/30 border border-rose-800/40 text-rose-300 text-[10px] flex items-center gap-1.5">
+                    <AlertCircle className="w-3 h-3 shrink-0" />
+                    {live.error}
+                  </div>
+                ) : live ? (
+                  <div className="p-2.5 font-mono text-[10px] whitespace-pre-wrap bg-slate-950 rounded-lg border border-slate-800 max-h-64 overflow-y-auto text-slate-300">
+                    {live.content || '(빈 파일 또는 삭제된 버전)'}
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleLoadVersion(item.version)}
+                    disabled={isLoadingThis}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-[10px] font-medium transition-colors"
+                  >
+                    {isLoadingThis ? <Loader2 className="w-3 h-3 animate-spin" /> : <CloudDownload className="w-3 h-3" />}
+                    {isLoadingThis ? 'ClearCase에서 조회 중...' : `버전 ${item.version} 서버에서 바로 로드하기`}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         );
       })}
@@ -106,9 +255,10 @@ const VobListPanel: React.FC<{
 
 interface VobHistoryViewProps {
   onSelectCR?: (crid: string) => void;
+  sshConfig?: SSHConfig;
 }
 
-export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR }) => {
+export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshConfig }) => {
   const [vobs, setVobs] = useState<VobListItem[]>([]);
   const [loadingVobs, setLoadingVobs] = useState(true);
   const [selectedVob, setSelectedVob] = useState<string | null>(null);
@@ -122,6 +272,7 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR }) =>
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [fileQuery, setFileQuery] = useState('');
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [versionChainIdx, setVersionChainIdx] = useState<number | null>(null);
   const [isCollecting, setIsCollecting] = useState(false);
   const [collectMessage, setCollectMessage] = useState<string | null>(null);
 
@@ -295,6 +446,7 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR }) =>
               ) : (
                 filteredEntries.map((entry, idx) => {
                   const isExpanded = expandedIdx === idx;
+                  const isChainOpen = versionChainIdx === idx;
                   return (
                     <div
                       key={`${entry.crid}-${entry.filePath}-${idx}`}
@@ -344,6 +496,21 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR }) =>
                             </div>
                           ) : (
                             <UnifiedDiffBlock diff={entry.unifiedDiff} />
+                          )}
+
+                          <button
+                            onClick={() => setVersionChainIdx(isChainOpen ? null : idx)}
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-300 text-[10px] font-medium transition-colors"
+                          >
+                            <History className="w-3 h-3" />
+                            {isChainOpen ? '전체 버전 이력 닫기' : '전체 버전 이력 보기'}
+                          </button>
+
+                          {isChainOpen && (
+                            <FileVersionChainPanel
+                              filePath={entry.filePath}
+                              sshConfig={sshConfig}
+                            />
                           )}
                         </div>
                       )}

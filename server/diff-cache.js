@@ -290,6 +290,42 @@ export function extractVobFromPath(filePath) {
 }
 
 /**
+ * For one file path, scan every CR's checkinLog to find which CR produced which
+ * ClearCase version number. Unlike server/ssh.js's single-diff version parser
+ * (which only needs ONE version per CR and stops at the first matching line),
+ * this collects EVERY matching line per CR, because a checkinLog can record the
+ * same file checked in multiple times within one CR (e.g. "...main/6,...
+ * crdb00016126,..." then later "...main/7,...crdb00016126,..." after a second
+ * fix pass on the same ticket) — all of those version bumps belong to that CR.
+ *
+ * Returns a Map<versionNumber, { crid, checkinLine }> for quick lookup when
+ * rendering a version-history timeline.
+ */
+export function mapFileVersionsToCRs(filePath, allCrs) {
+  const baseFileName = filePath.split('/').pop() || filePath;
+  const versionToCr = new Map();
+
+  for (const cr of allCrs || []) {
+    if (!cr.checkinLog) continue;
+    const lines = cr.checkinLog.split(/\r?\n/);
+    for (const l of lines) {
+      if (!l.includes(filePath) && !(baseFileName && l.includes(baseFileName))) continue;
+      const vMatch = l.match(/(_|@@)(\/[a-zA-Z0-9_\-\.\/]+)\/(\d+)/);
+      if (!vMatch) continue;
+      const verNum = parseInt(vMatch[3], 10);
+      // If multiple CRs somehow claim the same version number (shouldn't happen
+      // in practice — ClearCase versions are immutable/unique), keep the first
+      // one found rather than silently overwriting with a later, likely-wrong match.
+      if (!versionToCr.has(verNum)) {
+        versionToCr.set(verNum, { crid: cr.crid, checkinLine: l.trim() });
+      }
+    }
+  }
+
+  return versionToCr;
+}
+
+/**
  * List all distinct VOBs (derived from real file paths, not the free-text CR.vob
  * title tag) with CR/file counts, sorted by CR count descending. 0ms — reduces
  * over the already-in-memory CR list, same cost class as /api/stats's byProject.

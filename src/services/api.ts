@@ -307,6 +307,56 @@ export async function collectVobUncachedCRs(vob: string, crids: string[]): Promi
   return resp.data;
 }
 
+// Full ClearCase version chain (0..latest) for one file, with per-version CR
+// attribution and cached-diff content when already collected.
+export interface FileVersionChainItem {
+  version: number;
+  crid: string | null;
+  cached: { unifiedDiff: string; oldVersion: string; newVersion: string } | null;
+}
+
+export async function fetchFileVersionChain(filePath: string): Promise<{
+  ok: boolean;
+  filePath: string;
+  latestVersion: number | null;
+  chain: FileVersionChainItem[];
+}> {
+  const resp = await axios.get(`${API_BASE}/diff-cache/file-version-chain`, { params: { filePath } });
+  return resp.data;
+}
+
+// Live ClearCase SSH lookups for a specific set of version numbers of one file —
+// used both to list what versions exist and to load one on demand when it isn't
+// already in the local diff cache.
+export interface FileVersionResult {
+  version: number;
+  versionSuffix: string;
+  content: string;
+  base64: string;
+  byteLength: number;
+}
+
+export async function fetchFileVersionHistorySSH(
+  sshConfig: SSHConfig | undefined,
+  sshServers: SSHConfig[] | undefined,
+  filePath: string,
+  checkinLog?: string
+): Promise<{ ok: boolean; filePath: string; versions: number[]; latestVersion: number }> {
+  const resp = await axios.post(`${API_BASE}/ssh/file-version-history`, { sshConfig, sshServers, filePath, checkinLog }, { timeout: 30000 });
+  return resp.data;
+}
+
+export async function fetchFileVersionsSSH(
+  sshConfig: SSHConfig | undefined,
+  sshServers: SSHConfig[] | undefined,
+  filePath: string,
+  checkinLog: string | undefined,
+  versions: number[]
+): Promise<{ ok: boolean; filePath: string; fileName: string; branchPath: string; results: FileVersionResult[] }> {
+  const resp = await axios.post(`${API_BASE}/ssh/file-versions`, { sshConfig, sshServers, filePath, checkinLog, versions }, { timeout: 60000 });
+  return resp.data;
+}
+
 export async function fetchAndCacheCRDiffAPI(
   cr: CRItem, 
   sshConfig?: SSHConfig,

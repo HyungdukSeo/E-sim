@@ -346,6 +346,7 @@ export function App() {
                   const cr = allCrs.find(c => c.crid === crid);
                   if (cr) setSelectedCR(cr);
                 }}
+                sshConfig={settings.ssh}
               />
             )}
           </>

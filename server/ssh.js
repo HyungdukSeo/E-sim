@@ -276,6 +276,268 @@ async function fetchOneVersion(conn, vobSubPath, versionSuffix, candidateViews) 
 }
 
 /**
+ * Normalize a configOrServers argument (single config, {servers}, or array) into
+ * a filtered, enabled server list. Shared by fetchFileDiffSSH and the new
+ * multi-version helpers below so they all accept the same calling conventions.
+ */
+function normalizeServerList(configOrServers) {
+  let servers = [];
+  if (Array.isArray(configOrServers)) {
+    servers = configOrServers;
+  } else if (configOrServers && Array.isArray(configOrServers.servers)) {
+    servers = configOrServers.servers;
+  } else if (configOrServers && configOrServers.host) {
+    servers = [configOrServers, ...(configOrServers.fallbackServers || [])];
+  }
+  return servers.filter(s => s && s.host && s.enabled !== false);
+}
+
+/**
+ * Resolve a raw filePath (possibly /view/<tag>/vobs/... or already @@-suffixed)
+ * down to its bare vobSubPath (e.g. /vobs/REL/SSW_KTC4_41A/.../UEnc.h) plus the
+ * ClearCase branch path (e.g. /main), mirroring the normalization logic embedded
+ * in _fetchFileDiffSSHImpl so the version-history/multi-version helpers agree
+ * with the existing single-diff path on exactly what "the file" refers to.
+ */
+function resolveVobSubPath(filePath, checkinLog, config) {
+  let branchPath = '/main';
+  let detectedViewTag = '';
+  let exactVobPathFromLog = '';
+  const baseFileName = filePath.split('/').pop() || filePath;
+
+  if (checkinLog) {
+    const viewMatch = checkinLog.match(/\/view\/([a-zA-Z0-9_\-\.]+)\/vobs/);
+    if (viewMatch) {
+      detectedViewTag = viewMatch[1];
+    } else {
+      const fieldMatch = checkinLog.match(/,([a-zA-Z0-9_\-\.]+_view),/i);
+      if (fieldMatch) detectedViewTag = fieldMatch[1];
+    }
+
+    const lines = checkinLog.split(/\r?\n/);
+    for (const l of lines) {
+      if (l.includes(filePath) || (baseFileName && l.includes(baseFileName))) {
+        const pathMatch = l.match(/(\/vobs\/[a-zA-Z0-9_\-\.\/]+)/);
+        if (pathMatch) {
+          const extracted = pathMatch[1].replace(/(_|@@)\/.*$/, '');
+          if (extracted.endsWith(baseFileName) || extracted.includes(baseFileName)) {
+            exactVobPathFromLog = extracted;
+          }
+        }
+        const vMatch = l.match(/(_|@@)(\/[a-zA-Z0-9_\-\.\/]+)\/(\d+)/);
+        if (vMatch) branchPath = vMatch[2];
+        break;
+      }
+    }
+  }
+
+  let cleanFilePath = exactVobPathFromLog || filePath.replace(/(_|@@)\/.*$/, '');
+  let vobSubPath = cleanFilePath;
+  if (vobSubPath.startsWith('/view/')) {
+    const parts = vobSubPath.split('/');
+    if (parts.length >= 4 && parts[3] === 'vobs') {
+      if (!detectedViewTag) detectedViewTag = parts[2];
+      vobSubPath = '/' + parts.slice(3).join('/');
+    }
+  } else if (!vobSubPath.startsWith('/vobs/')) {
+    vobSubPath = '/vobs/' + vobSubPath.replace(/^\/+/, '');
+  }
+
+  const candidateViews = [];
+  if (detectedViewTag) candidateViews.push(detectedViewTag);
+  candidateViews.push('hyungduk_view', 'hdseo_view', 'hdseo');
+  if (config && config.username) {
+    candidateViews.push(`${config.username}_view`);
+    candidateViews.push(config.username);
+  }
+  const uniqueViews = Array.from(new Set(candidateViews)).filter(Boolean);
+
+  return { vobSubPath, branchPath, uniqueViews };
+}
+
+/**
+ * Same pre-flight view-detection probe used by _fetchFileDiffSSHImpl, factored
+ * out so the version-history/multi-version helpers get identical view discovery
+ * without duplicating the shell probe script itself.
+ */
+async function probeEffectiveViews(conn, vobSubPath, uniqueViews) {
+  const vobTags = getVobTags(vobSubPath);
+  const primaryVobTag = vobTags[0] || '/vobs';
+  const parentDir = path.posix.dirname(vobSubPath);
+
+  const startViewParts = uniqueViews.map(v => `cleartool startview "${v}" 2>/dev/null || true`).join('; ');
+  const checkViewParts = uniqueViews.map(v => `if [ -e "/view/${v}${vobSubPath}" ] || [ -f "/view/${v}${vobSubPath}" ]; then echo "FOUND_VIEW:${v}"; exit 0; elif [ -d "/view/${v}${parentDir}" ] || [ -d "/view/${v}${primaryVobTag}" ]; then echo "FOUND_VIEW_DIR:${v}"; exit 0; fi`).join('; ');
+  const lsvobParts = vobTags.map(tag => `if cleartool lsvob "${tag}" 2>/dev/null | grep -q "${tag}"; then cleartool mount "${tag}" 2>/dev/null || true; echo "LSVOB_FOUND:${tag}"; exit 0; fi`).join('; ');
+
+  const probeCmd = `/bin/sh -c 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH; ${startViewParts}; ${checkViewParts}; if [ -e "${vobSubPath}" ] || [ -f "${vobSubPath}" ]; then echo "FOUND_DIRECT"; exit 0; fi; ${lsvobParts}; echo "NOT_FOUND_ON_SERVER"; exit 2'`;
+
+  let probeOutput = '';
+  try {
+    const { buffer } = await execSSHBuffer(conn, probeCmd, 2500);
+    probeOutput = buffer.toString('utf8').trim();
+  } catch (e) {}
+
+  if (probeOutput.includes('NOT_FOUND_ON_SERVER')) {
+    throw new Error(`VOB(${primaryVobTag}) 또는 파일이 서버에 존재하지 않습니다.`);
+  }
+
+  let effectiveViews = [...uniqueViews];
+  const matchFoundView = probeOutput.match(/FOUND_VIEW(?:_DIR)?:([a-zA-Z0-9_\-\.]+)/);
+  if (matchFoundView && matchFoundView[1]) {
+    const preferred = matchFoundView[1];
+    effectiveViews = [preferred, ...uniqueViews.filter(v => v !== preferred)];
+  }
+  return effectiveViews;
+}
+
+/**
+ * List every /main/N version number ClearCase has recorded for one file, via
+ * `cleartool lshistory -fmt "%Vn\n"`. Tries each candidate view (same
+ * view-detection order as the diff path) until one returns a non-empty result.
+ * Used by the "compare N versions side-by-side" feature to offer the user a
+ * pickable version list instead of only ever showing N vs N-1.
+ */
+export async function fetchFileVersionHistorySSH(configOrServers, filePath, checkinLog = '', options = {}) {
+  const servers = normalizeServerList(configOrServers);
+  if (servers.length === 0) {
+    throw new Error('설정된 유효한 ClearCase SSH 서버가 없습니다.');
+  }
+
+  const attemptedErrors = [];
+  for (let i = 0; i < servers.length; i++) {
+    const server = servers[i];
+    const serverLabel = server.name ? `${server.name} (${server.host})` : server.host;
+    let handle;
+    try {
+      const { vobSubPath, uniqueViews } = resolveVobSubPath(filePath, checkinLog, server);
+      handle = await sshPool.acquire(server, { priority: options.priority || 'normal', timeout: 15000 });
+      const conn = handle.conn;
+      const effectiveViews = await probeEffectiveViews(conn, vobSubPath, uniqueViews);
+
+      await execSSHBuffer(conn, `/bin/sh -c 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH; cleartool startview "${effectiveViews[0]}" 2>/dev/null || true'`, 2500);
+
+      const envPrefix = 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:/usr/local/bin:/usr/bin:/bin:$PATH;';
+      let versions = [];
+      for (const v of effectiveViews.length ? effectiveViews : [null]) {
+        const target = v ? `/view/${v}${vobSubPath}` : vobSubPath;
+        const cmd = `/bin/sh -c '${envPrefix} cleartool lshistory -fmt "%Vn\\n" "${target}" 2>/dev/null'`;
+        const { buffer } = await execSSHBuffer(conn, cmd, 6000);
+        const out = buffer.toString('utf8').trim();
+        if (!out) continue;
+        // %Vn prints each version's branch-relative number, e.g. "/main/8" — keep only the trailing integer.
+        versions = out.split(/\r?\n/)
+          .map(line => {
+            const m = line.trim().match(/(\d+)\s*$/);
+            return m ? parseInt(m[1], 10) : null;
+          })
+          .filter(n => n !== null);
+        if (versions.length > 0) break;
+      }
+
+      if (versions.length === 0) {
+        throw new Error(`버전 이력을 찾을 수 없습니다(${vobSubPath}).`);
+      }
+
+      versions = Array.from(new Set(versions)).sort((a, b) => a - b);
+      return {
+        ok: true,
+        filePath: vobSubPath,
+        versions,
+        latestVersion: versions[versions.length - 1],
+        serverHost: server.host,
+        serverName: server.name || server.host
+      };
+    } catch (err) {
+      attemptedErrors.push(`${serverLabel}: ${err.message}`);
+    } finally {
+      if (handle) { try { handle.release(); } catch (e) {} }
+    }
+  }
+
+  throw new Error(
+    `등록된 ${servers.length}대 ClearCase 서버에서 파일(${filePath})의 버전 이력을 가져오지 못했습니다:\n` +
+    attemptedErrors.map(e => `• ${e}`).join('\n')
+  );
+}
+
+/**
+ * Fetch raw content for an ARBITRARY set of version numbers of one file (not
+ * just a consecutive N/N-1 pair), so the caller can render e.g. versions
+ * 3,4,7,8 side-by-side in one screen. Reuses fetchOneVersion exactly as
+ * _fetchFileDiffSSHImpl does for its two-version case, just looped over
+ * `versionNumbers` with one pooled connection per version (the pool's own
+ * MAX_CONNECTIONS_PER_HOST queues any excess rather than failing).
+ */
+export async function fetchFileVersionsSSH(configOrServers, filePath, checkinLog = '', versionNumbers = [], options = {}) {
+  const servers = normalizeServerList(configOrServers);
+  if (servers.length === 0) {
+    throw new Error('설정된 유효한 ClearCase SSH 서버가 없습니다.');
+  }
+  const uniqueVersions = Array.from(new Set((versionNumbers || []).map(n => parseInt(n, 10)).filter(n => !isNaN(n)))).sort((a, b) => a - b);
+  if (uniqueVersions.length === 0) {
+    throw new Error('조회할 버전 번호가 없습니다.');
+  }
+
+  const attemptedErrors = [];
+  for (let i = 0; i < servers.length; i++) {
+    const server = servers[i];
+    const serverLabel = server.name ? `${server.name} (${server.host})` : server.host;
+    const handles = [];
+    try {
+      const { vobSubPath, branchPath, uniqueViews } = resolveVobSubPath(filePath, checkinLog, server);
+      const probeHandle = await sshPool.acquire(server, { priority: options.priority || 'normal', timeout: 15000 });
+      handles.push(probeHandle);
+      const effectiveViews = await probeEffectiveViews(probeHandle.conn, vobSubPath, uniqueViews);
+
+      await execSSHBuffer(probeHandle.conn, `/bin/sh -c 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH; cleartool startview "${effectiveViews[0]}" 2>/dev/null || true'`, 2500);
+
+      // Acquire one connection per version (pool queues beyond MAX_CONNECTIONS_PER_HOST).
+      const versionHandles = await Promise.all(
+        uniqueVersions.map(() => sshPool.acquire(server, { priority: options.priority || 'normal', timeout: 15000 }))
+      );
+      handles.push(...versionHandles);
+
+      const results = await Promise.all(
+        uniqueVersions.map((versionNum, idx) => {
+          const suffix = `@@${branchPath}/${versionNum}`;
+          return fetchOneVersion(versionHandles[idx].conn, vobSubPath, suffix, effectiveViews).then(res => ({
+            version: versionNum,
+            versionSuffix: suffix,
+            content: smartDecode(res.buffer),
+            base64: res.buffer.toString('base64'),
+            byteLength: res.buffer.length
+          }));
+        })
+      );
+
+      const anyContent = results.some(r => r.byteLength > 0);
+      if (!anyContent) {
+        throw new Error(`요청한 버전(${uniqueVersions.join(', ')})의 소스를 읽지 못했습니다(${vobSubPath}).`);
+      }
+
+      return {
+        ok: true,
+        filePath: vobSubPath,
+        fileName: vobSubPath.split('/').pop() || vobSubPath,
+        branchPath,
+        results,
+        serverHost: server.host,
+        serverName: server.name || server.host
+      };
+    } catch (err) {
+      attemptedErrors.push(`${serverLabel}: ${err.message}`);
+    } finally {
+      for (const h of handles) { try { h.release(); } catch (e) {} }
+    }
+  }
+
+  throw new Error(
+    `등록된 ${servers.length}대 ClearCase 서버에서 파일(${filePath})의 버전(${uniqueVersions.join(', ')})을 가져오지 못했습니다:\n` +
+    attemptedErrors.map(e => `• ${e}`).join('\n')
+  );
+}
+
+/**
  * Fetch Line-by-Line Diff for ClearCase Element with Multi-Server Auto-Fallback
  * (VOB Affinity Learning + Fast Shell Pre-Flight Probe + Dynamic Fast Failover Across Servers)
  */

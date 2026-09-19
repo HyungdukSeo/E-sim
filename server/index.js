@@ -9,9 +9,9 @@ import { exec } from 'child_process';
 import { fileURLToPath } from 'url';
 import { syncMantisData, getLocalDatabase, reloadDatabase, importDatabase, fetchCRPageDetails, DB_FILE, META_FILE, DATA_DIR } from './sync.js';
 import { processAiQuery, analyzeSingleCRDiff, compareMultipleCRDiffs } from './ai.js';
-import { testSSHConnection, fetchFileDiffSSH } from './ssh.js';
+import { testSSHConnection, fetchFileDiffSSH, fetchFileVersionHistorySSH, fetchFileVersionsSSH } from './ssh.js';
 import { getClaudeModels, getAntigravityModels, getCodexModels, getOmniRouteModels, getAIProvidersStatus, checkOmniRouteStatus, findCommandPath } from './cli-models.js';
-import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, initCacheIndex, batchIndexDiffs, backgroundDiffIndexer, getVobList, getVobHistory } from './diff-cache.js';
+import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, initCacheIndex, batchIndexDiffs, backgroundDiffIndexer, getVobList, getVobHistory, mapFileVersionsToCRs } from './diff-cache.js';
 import { sshPool } from './ssh-pool.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -729,6 +729,44 @@ app.post('/api/ssh/diff', async (req, res) => {
   }
 });
 
+// List every ClearCase /main/N version number recorded for one file, so the UI
+// can offer a multi-version picker instead of only ever showing N vs N-1.
+app.post('/api/ssh/file-version-history', async (req, res) => {
+  try {
+    const { sshConfig, sshServers, filePath, checkinLog } = req.body;
+    if (!filePath) {
+      return res.status(400).json({ ok: false, error: '파일 경로가 필요합니다.' });
+    }
+    const servers = resolveAllSSHServers(sshServers, sshConfig);
+    const result = await fetchFileVersionHistorySSH(servers, filePath, checkinLog || '', { priority: 'vip' });
+    res.json(result);
+  } catch (err) {
+    console.error('[SSH Version History Error]', err.message);
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+// Fetch raw content for an arbitrary set of version numbers of one file (e.g.
+// [3,4,7,8]) so they can be shown side-by-side in one screen instead of just
+// one N-vs-(N-1) pair at a time.
+app.post('/api/ssh/file-versions', async (req, res) => {
+  try {
+    const { sshConfig, sshServers, filePath, checkinLog, versions } = req.body;
+    if (!filePath) {
+      return res.status(400).json({ ok: false, error: '파일 경로가 필요합니다.' });
+    }
+    if (!Array.isArray(versions) || versions.length === 0) {
+      return res.status(400).json({ ok: false, error: '조회할 버전 번호 배열(versions)이 필요합니다.' });
+    }
+    const servers = resolveAllSSHServers(sshServers, sshConfig);
+    const result = await fetchFileVersionsSSH(servers, filePath, checkinLog || '', versions, { priority: 'vip' });
+    res.json(result);
+  } catch (err) {
+    console.error('[SSH File Versions Error]', err.message);
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
 // 12. Local Diff Dataset & Cache APIs
 app.get('/api/diff-cache/stats', (req, res) => {
   try {
@@ -786,6 +824,50 @@ app.get('/api/diff-cache/vobs/:vob/history', (req, res) => {
     const { crs } = getLocalDatabase();
     const history = getVobHistory(req.params.vob, crs);
     res.json({ ok: true, ...history });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Full version chain for one file (0..latest), with each version's producing CR
+// (if any, cross-referenced from checkinLog) and whether that version's diff is
+// already cached from any CR that touched it. Cache lookup is by-crid, so this
+// scans the small set of CRs whose checkinLog actually mentions the file rather
+// than the whole diff cache index.
+app.get('/api/diff-cache/file-version-chain', (req, res) => {
+  try {
+    const filePath = req.query.filePath;
+    if (!filePath) {
+      return res.status(400).json({ ok: false, error: 'filePath 쿼리 파라미터가 필요합니다.' });
+    }
+    const { crs } = getLocalDatabase();
+    const versionToCr = mapFileVersionsToCRs(filePath, crs);
+    const versionNumbers = Array.from(versionToCr.keys()).sort((a, b) => a - b);
+    const latestVersion = versionNumbers.length ? versionNumbers[versionNumbers.length - 1] : null;
+
+    const chain = [];
+    for (let v = 0; v <= (latestVersion ?? -1); v++) {
+      const match = versionToCr.get(v);
+      let cached = null;
+      if (match) {
+        const cachedDiff = getCRDiffCache(match.crid);
+        const fileEntry = cachedDiff?.files?.find(f => f.filePath === filePath);
+        if (fileEntry && fileEntry.status === 'success') {
+          cached = {
+            unifiedDiff: fileEntry.unifiedDiff,
+            oldVersion: fileEntry.oldVersion,
+            newVersion: fileEntry.newVersion
+          };
+        }
+      }
+      chain.push({
+        version: v,
+        crid: match?.crid || null,
+        cached
+      });
+    }
+
+    res.json({ ok: true, filePath, latestVersion, chain });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }

@@ -23,6 +23,8 @@ import {
 import { diffLines, diffWordsWithSpace } from 'diff';
 import { SSHConfig, DiffResult } from '../types/cr';
 import { fetchFileDiff } from '../services/api';
+import { MultiVersionCompareModal } from './MultiVersionCompareModal';
+import { Layers } from 'lucide-react';
 
 interface DiffViewerModalProps {
   isOpen: boolean;
@@ -57,6 +59,7 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
   const [diffData, setDiffData] = useState<DiffResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'split' | 'unified'>('split');
+  const [isMultiVersionOpen, setIsMultiVersionOpen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
   const [copiedVimdiff, setCopiedVimdiff] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -89,22 +92,33 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
     }
   };
 
-  // Compute default fallback vimdiff command
+  // Compute default fallback vimdiff command, and separately collect EVERY
+  // version number this checkinLog records for this file (not just the first
+  // match) — a single CR can check the same file in more than once (e.g. two
+  // fix passes on the same ticket), and the user wants to see that whole chain
+  // (3-4-7-8) side by side rather than only ever the latest N vs N-1 pair.
   let fallbackVimdiff = `vimdiff ${cleanFilePath}@@/main/0 ${cleanFilePath}@@/main/1`;
+  const allVersionsForFile: number[] = [];
   if (checkinLog) {
     const lines = checkinLog.split(/\r?\n/);
+    let firstMatchUsed = false;
     for (const l of lines) {
       if (l.includes(filePath) || l.includes(fileName)) {
         const vMatch = l.match(/(_|@@)(\/[a-zA-Z0-9_\-\.\/]+)\/(\d+)/);
         if (vMatch) {
           const branch = vMatch[2];
           const ver = parseInt(vMatch[3], 10);
-          fallbackVimdiff = `vimdiff ${cleanFilePath}@@${branch}/${Math.max(0, ver - 1)} ${cleanFilePath}@@${branch}/${ver}`;
+          allVersionsForFile.push(ver);
+          if (!firstMatchUsed) {
+            fallbackVimdiff = `vimdiff ${cleanFilePath}@@${branch}/${Math.max(0, ver - 1)} ${cleanFilePath}@@${branch}/${ver}`;
+            firstMatchUsed = true;
+          }
         }
-        break;
       }
     }
   }
+  const uniqueFileVersions = Array.from(new Set(allVersionsForFile)).sort((a, b) => a - b);
+  const hasMultipleVersions = uniqueFileVersions.length > 1;
 
   // Guards against a stale response landing after the modal has moved on to a
   // different file (or closed) — only the most recently issued request may setState.
@@ -485,9 +499,22 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Render Modal via React Portal to document.body
-  return createPortal(
-    <div 
+  // Render Modal via React Portal to document.body. MultiVersionCompareModal
+  // renders its own separate portal on top when opened, so it's just a sibling
+  // here rather than nested inside this modal's DOM.
+  return (
+    <>
+      <MultiVersionCompareModal
+        isOpen={isMultiVersionOpen}
+        onClose={() => setIsMultiVersionOpen(false)}
+        filePath={cleanFilePath}
+        checkinLog={checkinLog}
+        versions={uniqueFileVersions}
+        sshConfig={sshConfig}
+        sshServers={sshServers}
+      />
+      {createPortal(
+    <div
       className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-6 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-150"
       onClick={onClose}
     >
@@ -564,6 +591,20 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
               {copiedVimdiff ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Terminal className="w-3.5 h-3.5 text-mantis-400" />}
               <span>{copiedVimdiff ? '복사됨!' : 'vimdiff 복사'}</span>
             </button>
+
+            {/* Multi-Version Compare — only shown when this CR checked this file
+                in more than once (e.g. 3-4-7-8), so the whole revision chain can
+                be viewed side-by-side instead of only the latest N vs N-1 pair. */}
+            {hasMultipleVersions && (
+              <button
+                onClick={() => setIsMultiVersionOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold font-mono transition-all bg-amber-500/15 hover:bg-amber-500/25 border-amber-500/40 text-amber-300"
+                title={`이 CR이 이 파일을 ${uniqueFileVersions.length}번 수정했습니다 — 전체 버전(${uniqueFileVersions.join(', ')})을 한 화면에서 비교`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>버전 {uniqueFileVersions.length}개 한번에 비교</span>
+              </button>
+            )}
 
             {/* Split / Unified View Mode Toggle */}
             <div className="flex items-center p-0.5 bg-slate-950 rounded-xl border border-slate-800">
@@ -785,5 +826,7 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
       </div>
     </div>,
     document.body
+      )}
+    </>
   );
 };
