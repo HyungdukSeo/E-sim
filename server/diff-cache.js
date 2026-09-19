@@ -274,6 +274,123 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = 10, forceRef
   return cachePayload;
 }
 
+// Matches the VOB directory name segment right after /vobs/<category>/, e.g.
+// "/vobs/REL/POTS_KT_34A/SSW/src/..." -> "POTS_KT_34A". This is the ground-truth
+// VOB per file — far more reliable than CRItem.vob, which is free-text parsed out
+// of the Mantis title tag and can be stale, missing, or (for ~19 CRs) a
+// comma-joined list of multiple values. A single CR's filePaths frequently span
+// more than one real VOB (~62% of CRs with filePaths in the production dataset),
+// so VOB membership must be computed per FILE, not per CR.
+const VOB_PATH_RE = /\/vobs\/[^/]+\/([^/]+)\//;
+
+export function extractVobFromPath(filePath) {
+  if (!filePath) return null;
+  const m = VOB_PATH_RE.exec(filePath);
+  return m ? m[1] : null;
+}
+
+/**
+ * List all distinct VOBs (derived from real file paths, not the free-text CR.vob
+ * title tag) with CR/file counts, sorted by CR count descending. 0ms — reduces
+ * over the already-in-memory CR list, same cost class as /api/stats's byProject.
+ */
+export function getVobList(allCrs) {
+  const vobMap = new Map(); // vobName -> { crids: Set, fileCount }
+
+  for (const cr of allCrs || []) {
+    if (!cr.filePaths || cr.filePaths.length === 0) continue;
+    const vobsInThisCR = new Set();
+    for (const fp of cr.filePaths) {
+      const vob = extractVobFromPath(fp);
+      if (!vob) continue;
+      vobsInThisCR.add(vob);
+      if (!vobMap.has(vob)) vobMap.set(vob, { crids: new Set(), fileCount: 0 });
+      vobMap.get(vob).fileCount++;
+    }
+    for (const vob of vobsInThisCR) {
+      vobMap.get(vob).crids.add(cr.crid);
+    }
+  }
+
+  const list = Array.from(vobMap.entries()).map(([vob, data]) => ({
+    vob,
+    crCount: data.crids.size,
+    fileCount: data.fileCount
+  }));
+  list.sort((a, b) => b.crCount - a.crCount);
+  return list;
+}
+
+/**
+ * Change history for one VOB: every cached file-diff, across every CR, whose
+ * filePath falls under that VOB — sorted newest-first by the CR's report date so
+ * the user sees "how has this VOB evolved" as a timeline, not grouped by CR.
+ *
+ * Cache-only by design: scanning hundreds of CRs' files over SSH on every request
+ * would be far too slow for an interactive view. CRs touching this VOB that have
+ * no cached diff yet are reported separately (uncachedCrids) so the caller can
+ * show "N건 아직 수집되지 않음" and optionally queue them via
+ * backgroundDiffIndexer.queuePriority() rather than block the response on them.
+ */
+export function getVobHistory(vobName, allCrs) {
+  if (!isIndexInitialized) initCacheIndex();
+
+  const matchingCrs = (allCrs || []).filter(cr =>
+    (cr.filePaths || []).some(fp => extractVobFromPath(fp) === vobName)
+  );
+
+  const entries = [];
+  const uncachedCrids = [];
+
+  for (const cr of matchingCrs) {
+    if (!hasCRDiffCache(cr.crid)) {
+      uncachedCrids.push(cr.crid);
+      continue;
+    }
+    const cached = getCRDiffCache(cr.crid);
+    if (!cached || !Array.isArray(cached.files)) continue;
+
+    for (const f of cached.files) {
+      if (extractVobFromPath(f.filePath) !== vobName) continue; // this CR's other files may be in a different VOB
+      entries.push({
+        crid: cr.crid,
+        id: cr.id,
+        summary: cr.cleanSummary || cr.summary || '',
+        customer: cr.customer || '',
+        module: cr.module || '',
+        dateSubmitted: cr.dateSubmitted || '',
+        lastUpdated: cr.lastUpdated || '',
+        reporter: cr.reporter || '',
+        fileName: f.fileName,
+        filePath: f.filePath,
+        status: f.status,
+        hasChanges: f.hasChanges,
+        error: f.error || null,
+        oldVersion: f.oldVersion,
+        newVersion: f.newVersion,
+        unifiedDiff: f.unifiedDiff,
+        fetchedAt: f.fetchedAt
+      });
+    }
+  }
+
+  // Newest first — prefer the CR's actual report date over cache fetch time, so
+  // the timeline reflects when the change actually happened in Mantis/ClearCase.
+  entries.sort((a, b) => {
+    const ta = new Date(a.dateSubmitted || a.lastUpdated || 0).getTime() || 0;
+    const tb = new Date(b.dateSubmitted || b.lastUpdated || 0).getTime() || 0;
+    return tb - ta;
+  });
+
+  return {
+    vob: vobName,
+    totalCrs: matchingCrs.length,
+    cachedCrs: matchingCrs.length - uncachedCrids.length,
+    uncachedCrids,
+    entries
+  };
+}
+
 /**
  * Get global stats about local diff cache (0ms in-memory query, 0 sync disk I/O)
  */

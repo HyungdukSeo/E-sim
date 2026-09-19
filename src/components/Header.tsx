@@ -1,15 +1,16 @@
 import React from 'react';
-import { 
-  Database, 
-  RefreshCw, 
-  Search, 
-  BarChart3, 
-  Bot, 
-  Bookmark, 
-  Settings, 
+import {
+  Database,
+  RefreshCw,
+  Search,
+  BarChart3,
+  Bot,
+  Bookmark,
+  Settings,
   ExternalLink,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  GitBranch
 } from 'lucide-react';
 import { SyncMeta, ActiveTab } from '../types/cr';
 import { ThemeSwitcher } from './ThemeSwitcher';
@@ -119,6 +120,19 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <BarChart3 className="w-3.5 h-3.5" />
             통계 대시보드
+          </button>
+
+          <button
+            onClick={() => setActiveTab('vobHistory')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              activeTab === 'vobHistory'
+                ? 'bg-mantis-500 text-slate-950 shadow-md shadow-mantis-500/30'
+                : 'text-slate-300 hover:text-main hover:bg-slate-800/60'
+            }`}
+            title="CR 번호와 무관하게 VOB(소스 저장소) 단위로 코드 변경 흐름을 시간순으로 조회합니다"
+          >
+            <GitBranch className="w-3.5 h-3.5" />
+            VOB 변경 이력
           </button>
 
           <button

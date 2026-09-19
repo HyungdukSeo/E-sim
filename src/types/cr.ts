@@ -146,4 +146,4 @@ export interface StatsData {
 }
 
 export type ViewMode = 'table' | 'grid' | 'split';
-export type ActiveTab = 'search' | 'analytics' | 'ai' | 'bookmarks';
+export type ActiveTab = 'search' | 'analytics' | 'ai' | 'bookmarks' | 'vobHistory';

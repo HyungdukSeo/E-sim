@@ -257,6 +257,56 @@ export async function fetchCRDiffCache(crid: string): Promise<{ ok: boolean; cac
   return resp.data;
 }
 
+// VOB-centric change history — browse cached diffs across all CRs touching one
+// VOB, independent of any single CR number.
+export interface VobListItem {
+  vob: string;
+  crCount: number;
+  fileCount: number;
+}
+
+export interface VobHistoryEntry {
+  crid: string;
+  id?: number;
+  summary: string;
+  customer: string;
+  module: string;
+  dateSubmitted: string;
+  lastUpdated: string;
+  reporter: string;
+  fileName: string;
+  filePath: string;
+  status: string;
+  hasChanges: boolean;
+  error?: string | null;
+  oldVersion: string;
+  newVersion: string;
+  unifiedDiff: string;
+  fetchedAt: string;
+}
+
+export async function fetchVobList(): Promise<{ ok: boolean; vobs: VobListItem[] }> {
+  const resp = await axios.get(`${API_BASE}/diff-cache/vobs`);
+  return resp.data;
+}
+
+export async function fetchVobHistory(vob: string): Promise<{
+  ok: boolean;
+  vob: string;
+  totalCrs: number;
+  cachedCrs: number;
+  uncachedCrids: string[];
+  entries: VobHistoryEntry[];
+}> {
+  const resp = await axios.get(`${API_BASE}/diff-cache/vobs/${encodeURIComponent(vob)}/history`);
+  return resp.data;
+}
+
+export async function collectVobUncachedCRs(vob: string, crids: string[]): Promise<{ ok: boolean; queued: number }> {
+  const resp = await axios.post(`${API_BASE}/diff-cache/vobs/${encodeURIComponent(vob)}/collect`, { crids });
+  return resp.data;
+}
+
 export async function fetchAndCacheCRDiffAPI(
   cr: CRItem, 
   sshConfig?: SSHConfig,

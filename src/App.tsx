@@ -26,6 +26,7 @@ import { CRCardGrid } from './components/CRCardGrid';
 import { CRDetailModal } from './components/CRDetailModal';
 import { CRComparisonModal } from './components/CRComparisonModal';
 import { Dashboard } from './components/Dashboard';
+import { VobHistoryView } from './components/VobHistoryView';
 import { AIAgentModal } from './components/AIAgentModal';
 import { SettingsModal } from './components/SettingsModal';
 import { Loader2, RefreshCw, AlertCircle, Bookmark } from 'lucide-react';
@@ -335,6 +336,16 @@ export function App() {
                 allCrs={allCrs}
                 onApplyFilter={setFilterState}
                 onSwitchToSearch={() => setActiveTab('search')}
+              />
+            )}
+
+            {/* VOB HISTORY TAB: CR-number-agnostic change history browsed by VOB */}
+            {activeTab === 'vobHistory' && (
+              <VobHistoryView
+                onSelectCR={crid => {
+                  const cr = allCrs.find(c => c.crid === crid);
+                  if (cr) setSelectedCR(cr);
+                }}
               />
             )}
           </>

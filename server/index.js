@@ -11,7 +11,7 @@ import { syncMantisData, getLocalDatabase, reloadDatabase, importDatabase, fetch
 import { processAiQuery, analyzeSingleCRDiff, compareMultipleCRDiffs } from './ai.js';
 import { testSSHConnection, fetchFileDiffSSH } from './ssh.js';
 import { getClaudeModels, getAntigravityModels, getCodexModels, getOmniRouteModels, getAIProvidersStatus, checkOmniRouteStatus, findCommandPath } from './cli-models.js';
-import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, initCacheIndex, batchIndexDiffs, backgroundDiffIndexer } from './diff-cache.js';
+import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, initCacheIndex, batchIndexDiffs, backgroundDiffIndexer, getVobList, getVobHistory } from './diff-cache.js';
 import { sshPool } from './ssh-pool.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -762,6 +762,49 @@ app.post('/api/diff-cache/worker-control', (req, res) => {
       }
     }
     res.json({ ok: true, status: backgroundDiffIndexer.getStatus() });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// VOB-centric change history (independent of any one CR): browse how a VOB's
+// source has evolved across every CR that has touched it, based on cached diffs.
+// Registered BEFORE the /:crid catch-all route below so "vobs" is never captured
+// as a crid path param.
+app.get('/api/diff-cache/vobs', (req, res) => {
+  try {
+    const { crs } = getLocalDatabase();
+    const vobs = getVobList(crs);
+    res.json({ ok: true, vobs });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/api/diff-cache/vobs/:vob/history', (req, res) => {
+  try {
+    const { crs } = getLocalDatabase();
+    const history = getVobHistory(req.params.vob, crs);
+    res.json({ ok: true, ...history });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Queue the uncached CRs a VOB history view found (getVobHistory's
+// uncachedCrids) onto the background indexer's priority queue, so the user can
+// ask "collect the missing ones now" instead of waiting for the indexer's normal
+// full-database sweep to reach them.
+app.post('/api/diff-cache/vobs/:vob/collect', (req, res) => {
+  try {
+    const { crids } = req.body || {};
+    if (!Array.isArray(crids) || crids.length === 0) {
+      return res.status(400).json({ ok: false, error: 'crids 배열이 필요합니다.' });
+    }
+    for (const crid of crids) {
+      backgroundDiffIndexer.queuePriority(crid);
+    }
+    res.json({ ok: true, queued: crids.length });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
