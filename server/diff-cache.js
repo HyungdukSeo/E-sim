@@ -302,14 +302,16 @@ export function extractVobFromPath(filePath) {
  * rendering a version-history timeline.
  */
 export function mapFileVersionsToCRs(filePath, allCrs) {
-  const baseFileName = filePath.split('/').pop() || filePath;
   const versionToCr = new Map();
 
   for (const cr of allCrs || []) {
     if (!cr.checkinLog) continue;
     const lines = cr.checkinLog.split(/\r?\n/);
     for (const l of lines) {
-      if (!l.includes(filePath) && !(baseFileName && l.includes(baseFileName))) continue;
+      // Require the full VOB-qualified path, not just the bare filename — many
+      // same-named files (e.g. CsbUtil.c) exist under different VOBs/directories,
+      // and a basename-only match cross-pollutes their version histories.
+      if (!l.includes(filePath)) continue;
       const vMatch = l.match(/(_|@@)(\/[a-zA-Z0-9_\-\.\/]+)\/(\d+)/);
       if (!vMatch) continue;
       const verNum = parseInt(vMatch[3], 10);

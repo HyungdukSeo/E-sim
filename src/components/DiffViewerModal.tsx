@@ -103,7 +103,9 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
     const lines = checkinLog.split(/\r?\n/);
     let firstMatchUsed = false;
     for (const l of lines) {
-      if (l.includes(filePath) || l.includes(fileName)) {
+      // Require the full VOB-qualified path — a bare filename match would also
+      // pick up same-named files under other VOBs/directories in this CR's log.
+      if (l.includes(filePath)) {
         const vMatch = l.match(/(_|@@)(\/[a-zA-Z0-9_\-\.\/]+)\/(\d+)/);
         if (vMatch) {
           const branch = vMatch[2];
