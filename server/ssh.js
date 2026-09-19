@@ -463,10 +463,12 @@ export async function fetchFileVersionHistorySSH(configOrServers, filePath, chec
 /**
  * Fetch raw content for an ARBITRARY set of version numbers of one file (not
  * just a consecutive N/N-1 pair), so the caller can render e.g. versions
- * 3,4,7,8 side-by-side in one screen. Reuses fetchOneVersion exactly as
- * _fetchFileDiffSSHImpl does for its two-version case, just looped over
- * `versionNumbers` with one pooled connection per version (the pool's own
- * MAX_CONNECTIONS_PER_HOST queues any excess rather than failing).
+ * 3,4,7,8 — or an entire 0..latest chain — side-by-side in one screen.
+ * Reuses fetchOneVersion exactly as _fetchFileDiffSSHImpl does for its
+ * two-version case, fetched in batches sized to the pool's per-host
+ * connection limit so a file with many versions doesn't request more
+ * connections at once than the pool can ever grant, which would otherwise
+ * queue and time out before any connection is freed.
  */
 export async function fetchFileVersionsSSH(configOrServers, filePath, checkinLog = '', versionNumbers = [], options = {}) {
   const servers = normalizeServerList(configOrServers);
@@ -482,33 +484,52 @@ export async function fetchFileVersionsSSH(configOrServers, filePath, checkinLog
   for (let i = 0; i < servers.length; i++) {
     const server = servers[i];
     const serverLabel = server.name ? `${server.name} (${server.host})` : server.host;
-    const handles = [];
     try {
       const { vobSubPath, branchPath, uniqueViews } = resolveVobSubPath(filePath, checkinLog, server);
+
+      // Probe on its own connection, released immediately — holding it through
+      // the version fetches below would burn one of the pool's few slots for
+      // no reason and make the queueing math below worse.
       const probeHandle = await sshPool.acquire(server, { priority: options.priority || 'normal', timeout: 15000 });
-      handles.push(probeHandle);
-      const effectiveViews = await probeEffectiveViews(probeHandle.conn, vobSubPath, uniqueViews);
+      let effectiveViews;
+      try {
+        effectiveViews = await probeEffectiveViews(probeHandle.conn, vobSubPath, uniqueViews);
+        await execSSHBuffer(probeHandle.conn, `/bin/sh -c 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH; cleartool startview "${effectiveViews[0]}" 2>/dev/null || true'`, 2500);
+      } finally {
+        try { probeHandle.release(); } catch (e) {}
+      }
 
-      await execSSHBuffer(probeHandle.conn, `/bin/sh -c 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH; cleartool startview "${effectiveViews[0]}" 2>/dev/null || true'`, 2500);
-
-      // Acquire one connection per version (pool queues beyond MAX_CONNECTIONS_PER_HOST).
-      const versionHandles = await Promise.all(
-        uniqueVersions.map(() => sshPool.acquire(server, { priority: options.priority || 'normal', timeout: 15000 }))
-      );
-      handles.push(...versionHandles);
-
-      const results = await Promise.all(
-        uniqueVersions.map((versionNum, idx) => {
-          const suffix = `@@${branchPath}/${versionNum}`;
-          return fetchOneVersion(versionHandles[idx].conn, vobSubPath, suffix, effectiveViews).then(res => ({
-            version: versionNum,
-            versionSuffix: suffix,
-            content: smartDecode(res.buffer),
-            base64: res.buffer.toString('base64'),
-            byteLength: res.buffer.length
-          }));
-        })
-      );
+      // Fetch versions in batches sized to the pool's actual per-host capacity
+      // instead of requesting one connection per version up front — requesting
+      // more than maxPerHost at once just queues the excess behind connections
+      // that this same call is holding, and can time out well before any of
+      // them are freed. Each connection is released as soon as ITS OWN fetch
+      // finishes rather than held until the whole batch completes, so later
+      // batches (and other concurrent requests) get it back sooner.
+      const batchSize = Math.max(1, sshPool.maxPerHost || 3);
+      const results = [];
+      for (let start = 0; start < uniqueVersions.length; start += batchSize) {
+        const batch = uniqueVersions.slice(start, start + batchSize);
+        const batchResults = await Promise.all(
+          batch.map(async versionNum => {
+            const suffix = `@@${branchPath}/${versionNum}`;
+            const handle = await sshPool.acquire(server, { priority: options.priority || 'normal', timeout: 15000 });
+            try {
+              const res = await fetchOneVersion(handle.conn, vobSubPath, suffix, effectiveViews);
+              return {
+                version: versionNum,
+                versionSuffix: suffix,
+                content: smartDecode(res.buffer),
+                base64: res.buffer.toString('base64'),
+                byteLength: res.buffer.length
+              };
+            } finally {
+              try { handle.release(); } catch (e) {}
+            }
+          })
+        );
+        results.push(...batchResults);
+      }
 
       const anyContent = results.some(r => r.byteLength > 0);
       if (!anyContent) {
@@ -526,8 +547,6 @@ export async function fetchFileVersionsSSH(configOrServers, filePath, checkinLog
       };
     } catch (err) {
       attemptedErrors.push(`${serverLabel}: ${err.message}`);
-    } finally {
-      for (const h of handles) { try { h.release(); } catch (e) {} }
     }
   }
 
