@@ -529,6 +529,7 @@ const FileVersionChainPanel: React.FC<{
               onDownloadVersion={v => {
                 downloadTextFile(`${fileName}.v${v}`, getDecodedContent(v));
               }}
+              scrollRef={inlineScrollRef}
             />
           </div>
         )}
@@ -708,6 +709,7 @@ const FileVersionChainPanel: React.FC<{
                       onDownloadVersion={v => {
                         downloadTextFile(`${fileName}.v${v}`, getDecodedContent(v));
                       }}
+                      scrollRef={modalScrollRef}
                     />
                   </div>
                 )}
