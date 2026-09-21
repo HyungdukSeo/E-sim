@@ -94,6 +94,7 @@ function formatVobSubPath(filePath: string, vobName: string) {
     file: sub.slice(lastSlash + 1)
   };
 }
+import JSZip from 'jszip';
 import {
   fetchVobList,
   fetchVobHistory,
@@ -107,6 +108,49 @@ import {
 } from '../services/api';
 import { SSHConfig } from '../types/cr';
 
+function downloadTextFile(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function downloadAllVersionsZip(fileName: string, chain: FileVersionChainItem[], getDecodedContent: (v: number) => string) {
+  const zip = new JSZip();
+  const folder = zip.folder(`${fileName}_versions`) || zip;
+  
+  let infoText = `=== ClearCase File Version History ===\n`;
+  infoText += `File: ${fileName}\n`;
+  infoText += `Exported: ${new Date().toLocaleString()}\n`;
+  infoText += `Total Versions: ${chain.length}\n\n`;
+
+  for (const item of chain) {
+    const content = getDecodedContent(item.version);
+    const verName = `${fileName}.v${item.version}`;
+    folder.file(verName, content);
+    infoText += `Version: @@/main/${item.version}\n`;
+    infoText += `File: ${verName}\n`;
+    infoText += `CR: ${item.crid ? '#' + item.crid : '(No CR)'}\n`;
+    infoText += `----------------------------------------\n`;
+  }
+  folder.file('version_summary.txt', infoText);
+
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(zipBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${fileName}_all_versions.zip`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 // One version's content, line-diffed against the PREVIOUS column's content
 const VersionColumn: React.FC<{
   version: number;
@@ -117,8 +161,9 @@ const VersionColumn: React.FC<{
   wrapLines?: boolean;
   isModal?: boolean;
   encoding?: string;
+  fileName?: string;
   onEncodingChange?: (enc: string) => void;
-}> = ({ version, crid, content, prevContent, error, wrapLines, isModal, encoding = 'euc-kr', onEncodingChange }) => {
+}> = ({ version, crid, content, prevContent, error, wrapLines, isModal, encoding = 'euc-kr', fileName = 'file', onEncodingChange }) => {
   const lines = useMemo(() => {
     if (error) return [];
     if (prevContent === null) {
@@ -138,7 +183,7 @@ const VersionColumn: React.FC<{
   return (
     <div
       className={`flex-1 ${
-        isModal ? 'min-w-[460px] max-w-[680px]' : 'min-w-[360px] max-w-[520px]'
+        isModal ? 'min-w-[360px] max-w-none' : 'min-w-[360px] max-w-[520px]'
       } shrink-0 flex flex-col border-r border-slate-800 last:border-r-0`}
     >
       <div className="px-2.5 py-1.5 bg-slate-900/95 border-b border-slate-800 flex items-center gap-1.5 sticky top-0 z-10 select-none">
@@ -165,6 +210,20 @@ const VersionColumn: React.FC<{
             <option value="windows-949">CP949</option>
             <option value="iso-8859-1">Latin-1</option>
           </select>
+        )}
+
+        {/* Single version download button */}
+        {content && !content.includes('[DIRECTORY:') && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              downloadTextFile(`${fileName}.v${version}`, content);
+            }}
+            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-mantis-300 transition-colors ml-0.5 cursor-pointer"
+            title={`이 버전(${fileName}.v${version}) 다운로드`}
+          >
+            <Download className="w-3 h-3" />
+          </button>
         )}
 
         {crid ? (
@@ -222,6 +281,7 @@ const FileVersionChainPanel: React.FC<{
   const [wrapLines, setWrapLines] = useState(false);
   const [globalEncoding, setGlobalEncoding] = useState<string>('euc-kr');
   const [columnEncodings, setColumnEncodings] = useState<Record<number, string>>({});
+  const [isZipping, setIsZipping] = useState(false);
 
   const inlineScrollRef = useRef<HTMLDivElement>(null);
   const modalScrollRef = useRef<HTMLDivElement>(null);
@@ -237,6 +297,21 @@ const FileVersionChainPanel: React.FC<{
     if (!raw) return '';
     const enc = columnEncodings[version] || globalEncoding;
     return raw.base64 ? decodeBase64WithEncoding(raw.base64, raw.content, enc) : raw.content;
+  };
+
+  const fileName = filePath.split('/').pop() || filePath;
+
+  const handleDownloadZip = async () => {
+    if (!chain || chain.length === 0 || isZipping) return;
+    try {
+      setIsZipping(true);
+      await downloadAllVersionsZip(fileName, chain, getDecodedContent);
+    } catch (err) {
+      console.error('Failed to create zip', err);
+      alert('ZIP 파일 생성 중 오류가 발생했습니다.');
+    } finally {
+      setIsZipping(false);
+    }
   };
 
   useEffect(() => {
@@ -312,8 +387,6 @@ const FileVersionChainPanel: React.FC<{
     return <div className="p-4 text-xs text-slate-500">이 파일의 버전 이력을 찾을 수 없습니다.</div>;
   }
 
-  const fileName = filePath.split('/').pop() || filePath;
-
   return (
     <>
       <div className="space-y-1.5 bg-slate-950/40 rounded-xl border border-slate-800/80 overflow-hidden">
@@ -359,6 +432,17 @@ const FileVersionChainPanel: React.FC<{
               <span>{wrapLines ? '줄바꿈 켜짐' : '줄바꿈'}</span>
             </button>
 
+            {/* Download All Versions ZIP */}
+            <button
+              onClick={handleDownloadZip}
+              disabled={isZipping || loadingContent}
+              className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-mantis-300 border border-slate-800 text-[10px] font-sans transition-colors cursor-pointer disabled:opacity-50"
+              title="모든 버전을 ZIP 파일로 한 번에 다운로드"
+            >
+              {isZipping ? <Loader2 className="w-3 h-3 animate-spin text-mantis-400" /> : <Download className="w-3 h-3 text-mantis-400" />}
+              <span>ZIP 다운로드</span>
+            </button>
+
             {/* Scroll navigation buttons */}
             <div className="flex items-center rounded-lg bg-slate-900 border border-slate-800 overflow-hidden">
               <button
@@ -382,7 +466,7 @@ const FileVersionChainPanel: React.FC<{
             <button
               onClick={() => setIsModalOpen(true)}
               className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-mantis-400 hover:text-mantis-300 border border-slate-700 text-[10px] font-sans transition-all cursor-pointer shadow-sm"
-              title="설정창처럼 전체화면 팝업으로 크게 보기"
+              title="화면 가득 채워 크게 보기"
             >
               <Maximize2 className="w-3 h-3" />
               <span>크게 보기</span>
@@ -423,6 +507,7 @@ const FileVersionChainPanel: React.FC<{
                     wrapLines={wrapLines}
                     isModal={false}
                     encoding={colEnc}
+                    fileName={fileName}
                     onEncodingChange={enc => {
                       setColumnEncodings(prev => ({ ...prev, [item.version]: enc }));
                     }}
@@ -434,13 +519,13 @@ const FileVersionChainPanel: React.FC<{
         )}
       </div>
 
-      {/* Full-Screen / Large Modal for Version Compare */}
+      {/* Full-Screen Modal for Version Compare */}
       {isModalOpen &&
         createPortal(
-          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-200">
-            <div className="w-[98vw] max-w-[1700px] h-[94vh] rounded-2xl bg-slate-950 border border-slate-700 shadow-2xl flex flex-col overflow-hidden">
+          <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-1 sm:p-2 animate-in fade-in duration-200">
+            <div className="w-[99.5vw] h-[98vh] max-w-none rounded-xl bg-slate-950 border border-slate-700/80 shadow-2xl flex flex-col overflow-hidden">
               {/* Modal Header */}
-              <div className="p-3.5 bg-slate-900/95 border-b border-slate-800 flex items-center justify-between gap-3 shrink-0">
+              <div className="p-3 bg-slate-900/95 border-b border-slate-800 flex items-center justify-between gap-3 shrink-0">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="p-1.5 rounded-lg bg-mantis-500/15 border border-mantis-500/30 text-mantis-400 shrink-0">
                     <History className="w-4 h-4" />
@@ -459,6 +544,17 @@ const FileVersionChainPanel: React.FC<{
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
+                  {/* Download All Versions ZIP in Modal */}
+                  <button
+                    onClick={handleDownloadZip}
+                    disabled={isZipping || loadingContent}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-mantis-600/20 hover:bg-mantis-600/30 text-mantis-300 border border-mantis-500/40 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50 shadow-sm"
+                    title="모든 버전을 ZIP 파일로 한 번에 다운로드"
+                  >
+                    {isZipping ? <Loader2 className="w-3.5 h-3.5 animate-spin text-mantis-400" /> : <Download className="w-3.5 h-3.5" />}
+                    <span>전체 버전 다운로드 (ZIP)</span>
+                  </button>
+
                   {/* Global Encoding in Modal */}
                   <div className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1 text-xs">
                     <Globe className="w-3.5 h-3.5 text-mantis-400 shrink-0" />
@@ -558,6 +654,7 @@ const FileVersionChainPanel: React.FC<{
                           wrapLines={wrapLines}
                           isModal={true}
                           encoding={colEnc}
+                          fileName={fileName}
                           onEncodingChange={enc => {
                             setColumnEncodings(prev => ({ ...prev, [item.version]: enc }));
                           }}
