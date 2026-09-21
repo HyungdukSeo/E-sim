@@ -30,8 +30,11 @@ import {
   WrapText,
   X,
   Globe,
-  Binary
+  Binary,
+  Split,
+  Columns
 } from 'lucide-react';
+import { SideBySideDiffViewer } from './SideBySideDiffViewer';
 
 export const BINARY_FILE_RE = /\.(so|a|o|exe|dll|dylib|bin|dat|class|jar|war|ear|tar|gz|tgz|zip|7z|rar|iso|img|rpm|deb|png|jpg|jpeg|gif|bmp|ico|pdf)(\.\d+)*$/i;
 
@@ -283,6 +286,11 @@ const FileVersionChainPanel: React.FC<{
   const [columnEncodings, setColumnEncodings] = useState<Record<number, string>>({});
   const [isZipping, setIsZipping] = useState(false);
 
+  // View mode: 'side-by-side' (Beyond Compare style, default) vs 'strip' (All versions columns)
+  const [viewMode, setViewMode] = useState<'side-by-side' | 'strip'>('side-by-side');
+  const [leftVersion, setLeftVersion] = useState<number | null>(null);
+  const [rightVersion, setRightVersion] = useState<number | null>(null);
+
   const inlineScrollRef = useRef<HTMLDivElement>(null);
   const modalScrollRef = useRef<HTMLDivElement>(null);
 
@@ -319,7 +327,16 @@ const FileVersionChainPanel: React.FC<{
     setLoadingChain(true);
     fetchFileVersionChain(filePath)
       .then(res => {
-        if (!cancelled && res.ok) setChain(res.chain);
+        if (!cancelled && res.ok && res.chain) {
+          setChain(res.chain);
+          if (res.chain.length > 1) {
+            setLeftVersion(res.chain[res.chain.length - 2].version);
+            setRightVersion(res.chain[res.chain.length - 1].version);
+          } else if (res.chain.length === 1) {
+            setLeftVersion(res.chain[0].version);
+            setRightVersion(res.chain[0].version);
+          }
+        }
       })
       .finally(() => {
         if (!cancelled) setLoadingChain(false);
@@ -387,14 +404,139 @@ const FileVersionChainPanel: React.FC<{
     return <div className="p-4 text-xs text-slate-500">이 파일의 버전 이력을 찾을 수 없습니다.</div>;
   }
 
+  const currentLeft = leftVersion !== null ? leftVersion : (chain.length > 1 ? chain[chain.length - 2].version : 0);
+  const currentRight = rightVersion !== null ? rightVersion : (chain.length > 0 ? chain[chain.length - 1].version : 0);
+  const leftItem = chain.find(c => c.version === currentLeft);
+  const rightItem = chain.find(c => c.version === currentRight);
+  const leftDecoded = getDecodedContent(currentLeft);
+  const rightDecoded = getDecodedContent(currentRight);
+
+  const handleSwap = () => {
+    setLeftVersion(currentRight);
+    setRightVersion(currentLeft);
+  };
+
+  // Render navigation toolbar (Step timeline & Dropdown)
+  const renderStepNavigation = (compact = false) => {
+    if (chain.length <= 1) return null;
+    const latestVersion = chain[chain.length - 1].version;
+    const initialVersion = chain[0].version;
+
+    return (
+      <div className="px-3 py-1.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between gap-2 text-xs shrink-0 overflow-x-auto select-none">
+        {/* Step chips */}
+        <div className="flex items-center gap-1 shrink-0 overflow-x-auto">
+          <span className="text-[10px] text-slate-400 font-sans mr-1">단계별 비교:</span>
+          {chain.slice(1).map((item, idx) => {
+            const prevV = chain[idx].version;
+            const curV = item.version;
+            const isSelected = currentLeft === prevV && currentRight === curV;
+            return (
+              <button
+                key={curV}
+                onClick={() => {
+                  setLeftVersion(prevV);
+                  setRightVersion(curV);
+                }}
+                className={`px-2 py-0.5 rounded text-[10px] font-mono transition-all cursor-pointer border ${
+                  isSelected
+                    ? 'bg-mantis-500/25 text-mantis-300 border-mantis-500/50 shadow-sm font-bold'
+                    : 'bg-slate-950/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border-slate-800'
+                }`}
+                title={`@@/main/${prevV} 와 @@/main/${curV} 비교`}
+              >
+                v{prevV} → v{curV}
+              </button>
+            );
+          })}
+
+          {/* Compare Initial vs Latest */}
+          {chain.length > 2 && (
+            <button
+              onClick={() => {
+                setLeftVersion(initialVersion);
+                setRightVersion(latestVersion);
+              }}
+              className={`px-2 py-0.5 rounded text-[10px] font-mono transition-all cursor-pointer border ml-1 ${
+                currentLeft === initialVersion && currentRight === latestVersion
+                  ? 'bg-amber-500/25 text-amber-300 border-amber-500/50 shadow-sm font-bold'
+                  : 'bg-slate-950/80 hover:bg-slate-800 text-slate-400 hover:text-amber-300 border-slate-800'
+              }`}
+              title={`최초(v${initialVersion})와 최신(v${latestVersion}) 전체 변경사항 비교`}
+            >
+              v{initialVersion} → v{latestVersion} (전체)
+            </button>
+          )}
+        </div>
+
+        {/* Dropdown pickers */}
+        <div className="flex items-center gap-1.5 shrink-0 ml-auto font-mono text-[10px]">
+          <span className="text-slate-500">좌:</span>
+          <select
+            value={currentLeft}
+            onChange={e => setLeftVersion(Number(e.target.value))}
+            className="bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-slate-200 outline-none cursor-pointer"
+          >
+            {chain.map(c => (
+              <option key={c.version} value={c.version} className="bg-slate-900 text-slate-200">
+                v{c.version} {c.crid ? `(#${c.crid})` : ''}
+              </option>
+            ))}
+          </select>
+
+          <span className="text-slate-500">우:</span>
+          <select
+            value={currentRight}
+            onChange={e => setRightVersion(Number(e.target.value))}
+            className="bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-slate-200 outline-none cursor-pointer"
+          >
+            {chain.map(c => (
+              <option key={c.version} value={c.version} className="bg-slate-900 text-slate-200">
+                v{c.version} {c.crid ? `(#${c.crid})` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <>
-      <div className="space-y-1.5 bg-slate-950/40 rounded-xl border border-slate-800/80 overflow-hidden">
+      <div className="space-y-1.5 bg-slate-950/40 rounded-xl border border-slate-800/80 overflow-hidden flex flex-col">
         {/* Header toolbar */}
         <div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-300 px-3 pt-2.5 pb-1">
-          <div className="flex items-center gap-1.5 truncate min-w-0">
+          <div className="flex items-center gap-2 truncate min-w-0">
             <History className="w-3.5 h-3.5 text-mantis-400 shrink-0" />
             <span className="truncate">전체 버전 이력 (0 ~ {chain.length - 1})</span>
+
+            {/* View Mode Switcher */}
+            <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5 text-[10px] ml-2 shrink-0">
+              <button
+                onClick={() => setViewMode('side-by-side')}
+                className={`flex items-center gap-1 px-2 py-0.5 rounded cursor-pointer transition-colors ${
+                  viewMode === 'side-by-side'
+                    ? 'bg-mantis-500/20 text-mantis-300 font-bold'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="Beyond Compare 스타일 전문 2-Way 분할 비교"
+              >
+                <Split className="w-3 h-3" />
+                <span>2-Way 비교</span>
+              </button>
+              <button
+                onClick={() => setViewMode('strip')}
+                className={`flex items-center gap-1 px-2 py-0.5 rounded cursor-pointer transition-colors ${
+                  viewMode === 'strip'
+                    ? 'bg-mantis-500/20 text-mantis-300 font-bold'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="모든 버전을 가로 컬럼으로 모아보기"
+              >
+                <Columns className="w-3 h-3" />
+                <span>전체 나열</span>
+              </button>
+            </div>
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
@@ -443,24 +585,26 @@ const FileVersionChainPanel: React.FC<{
               <span>ZIP 다운로드</span>
             </button>
 
-            {/* Scroll navigation buttons */}
-            <div className="flex items-center rounded-lg bg-slate-900 border border-slate-800 overflow-hidden">
-              <button
-                onClick={() => handleScroll(inlineScrollRef, 'left')}
-                className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
-                title="이전 버전으로 가로 스크롤"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-              </button>
-              <div className="w-[1px] h-3 bg-slate-800" />
-              <button
-                onClick={() => handleScroll(inlineScrollRef, 'right')}
-                className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
-                title="다음 버전으로 가로 스크롤"
-              >
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
+            {/* Scroll navigation buttons (Strip mode only) */}
+            {viewMode === 'strip' && (
+              <div className="flex items-center rounded-lg bg-slate-900 border border-slate-800 overflow-hidden">
+                <button
+                  onClick={() => handleScroll(inlineScrollRef, 'left')}
+                  className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+                  title="이전 버전으로 가로 스크롤"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <div className="w-[1px] h-3 bg-slate-800" />
+                <button
+                  onClick={() => handleScroll(inlineScrollRef, 'right')}
+                  className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+                  title="다음 버전으로 가로 스크롤"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
 
             {/* Fullscreen Modal button */}
             <button
@@ -474,8 +618,11 @@ const FileVersionChainPanel: React.FC<{
           </div>
         </div>
 
+        {/* Step Navigation in 2-Way mode */}
+        {viewMode === 'side-by-side' && renderStepNavigation()}
+
         {loadingContent ? (
-          <div className="p-6 flex flex-col items-center gap-2 text-slate-500">
+          <div className="p-8 flex flex-col items-center gap-2 text-slate-500">
             <Loader2 className="w-5 h-5 animate-spin text-mantis-400" />
             <span className="text-xs">ClearCase에서 {chain.length}개 버전을 병렬로 읽어오는 중...</span>
           </div>
@@ -483,6 +630,21 @@ const FileVersionChainPanel: React.FC<{
           <div className="p-3 mx-3 mb-3 rounded-lg bg-rose-950/30 border border-rose-800/40 text-rose-300 text-[11px] flex items-center gap-1.5">
             <AlertCircle className="w-3.5 h-3.5 shrink-0" />
             {contentError}
+          </div>
+        ) : viewMode === 'side-by-side' ? (
+          <div className="p-2 h-[500px]">
+            <SideBySideDiffViewer
+              leftContent={leftDecoded}
+              rightContent={rightDecoded}
+              leftTitle={`@@/main/${currentLeft}`}
+              rightTitle={`@@/main/${currentRight}`}
+              leftCrid={leftItem?.crid}
+              rightCrid={rightItem?.crid}
+              wrapLines={wrapLines}
+              onDownloadLeft={() => downloadTextFile(`${fileName}.v${currentLeft}`, leftDecoded)}
+              onDownloadRight={() => downloadTextFile(`${fileName}.v${currentRight}`, rightDecoded)}
+              onSwap={handleSwap}
+            />
           </div>
         ) : (
           <div className="relative border-t border-slate-800/80">
@@ -536,6 +698,32 @@ const FileVersionChainPanel: React.FC<{
                       <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 font-mono">
                         전체 버전 0 ~ {chain.length - 1} ({chain.length}개)
                       </span>
+
+                      {/* Modal Mode Switcher */}
+                      <div className="flex items-center bg-slate-950 border border-slate-800 rounded-lg p-0.5 text-xs ml-2">
+                        <button
+                          onClick={() => setViewMode('side-by-side')}
+                          className={`flex items-center gap-1 px-2.5 py-1 rounded cursor-pointer transition-colors ${
+                            viewMode === 'side-by-side'
+                              ? 'bg-mantis-500/20 text-mantis-300 font-bold'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          <Split className="w-3.5 h-3.5" />
+                          <span>2-Way 분할 비교</span>
+                        </button>
+                        <button
+                          onClick={() => setViewMode('strip')}
+                          className={`flex items-center gap-1 px-2.5 py-1 rounded cursor-pointer transition-colors ${
+                            viewMode === 'strip'
+                              ? 'bg-mantis-500/20 text-mantis-300 font-bold'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          <Columns className="w-3.5 h-3.5" />
+                          <span>전체 나열</span>
+                        </button>
+                      </div>
                     </div>
                     <div className="text-[11px] font-mono text-slate-500 truncate" title={filePath}>
                       {filePath}
@@ -589,26 +777,28 @@ const FileVersionChainPanel: React.FC<{
                     <span>{wrapLines ? '줄바꿈 해제' : '코드 줄바꿈'}</span>
                   </button>
 
-                  {/* Horizontal navigation buttons */}
-                  <div className="flex items-center rounded-lg bg-slate-800 border border-slate-700 overflow-hidden">
-                    <button
-                      onClick={() => handleScroll(modalScrollRef, 'left')}
-                      className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer text-xs font-mono"
-                      title="이전 버전 컬럼으로 스크롤"
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                      <span>이전</span>
-                    </button>
-                    <div className="w-[1px] h-4 bg-slate-700" />
-                    <button
-                      onClick={() => handleScroll(modalScrollRef, 'right')}
-                      className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer text-xs font-mono"
-                      title="다음 버전 컬럼으로 스크롤"
-                    >
-                      <span>다음</span>
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
-                  </div>
+                  {/* Horizontal navigation buttons (Strip mode only) */}
+                  {viewMode === 'strip' && (
+                    <div className="flex items-center rounded-lg bg-slate-800 border border-slate-700 overflow-hidden">
+                      <button
+                        onClick={() => handleScroll(modalScrollRef, 'left')}
+                        className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer text-xs font-mono"
+                        title="이전 버전 컬럼으로 스크롤"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                        <span>이전</span>
+                      </button>
+                      <div className="w-[1px] h-4 bg-slate-700" />
+                      <button
+                        onClick={() => handleScroll(modalScrollRef, 'right')}
+                        className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer text-xs font-mono"
+                        title="다음 버전 컬럼으로 스크롤"
+                      >
+                        <span>다음</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
 
                   {/* Close button */}
                   <button
@@ -621,6 +811,9 @@ const FileVersionChainPanel: React.FC<{
                 </div>
               </div>
 
+              {/* Step Navigation in Modal (2-Way mode) */}
+              {viewMode === 'side-by-side' && renderStepNavigation()}
+
               {/* Modal Body */}
               <div className="flex-1 overflow-hidden relative flex flex-col bg-slate-950">
                 {loadingContent ? (
@@ -632,6 +825,21 @@ const FileVersionChainPanel: React.FC<{
                   <div className="p-6 m-4 rounded-xl bg-rose-950/40 border border-rose-800 text-rose-300 text-sm flex items-center gap-2">
                     <AlertCircle className="w-5 h-5 shrink-0" />
                     <span>{contentError}</span>
+                  </div>
+                ) : viewMode === 'side-by-side' ? (
+                  <div className="flex-1 p-2 min-h-0">
+                    <SideBySideDiffViewer
+                      leftContent={leftDecoded}
+                      rightContent={rightDecoded}
+                      leftTitle={`@@/main/${currentLeft}`}
+                      rightTitle={`@@/main/${currentRight}`}
+                      leftCrid={leftItem?.crid}
+                      rightCrid={rightItem?.crid}
+                      wrapLines={wrapLines}
+                      onDownloadLeft={() => downloadTextFile(`${fileName}.v${currentLeft}`, leftDecoded)}
+                      onDownloadRight={() => downloadTextFile(`${fileName}.v${currentRight}`, rightDecoded)}
+                      onSwap={handleSwap}
+                    />
                   </div>
                 ) : (
                   <div
