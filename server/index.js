@@ -13,6 +13,7 @@ import { testSSHConnection, fetchFileDiffSSH, fetchFileVersionHistorySSH, fetchF
 import { getClaudeModels, getAntigravityModels, getCodexModels, getOmniRouteModels, getAIProvidersStatus, checkOmniRouteStatus, findCommandPath } from './cli-models.js';
 import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, initCacheIndex, batchIndexDiffs, backgroundDiffIndexer, getVobList, getVobHistory, mapFileVersionsToCRs, isBinaryFile } from './diff-cache.js';
 import { sshPool } from './ssh-pool.js';
+import { searchCRs } from './search.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -279,6 +280,24 @@ app.get('/api/crs', (req, res) => {
     count: crs.length,
     crs
   });
+});
+
+// 2b. Search CRs by text/keyword (PePe Terminal AI Chat MCP 연동용) — crid 숫자면 zero-pad
+// 매칭 우선, 그 외엔 요약/파일/체크인로그 키워드 AND 매칭. 목록 카드용 필드 서브셋만 반환.
+app.get('/api/search', (req, res) => {
+  try {
+    const q = String(req.query.q || '');
+    const limit = req.query.limit;
+    if (!q.trim()) {
+      return res.status(400).json({ ok: false, error: 'q is required' });
+    }
+    const { crs } = getLocalDatabase();
+    const results = searchCRs(crs, q, limit);
+    res.json({ ok: true, count: results.length, results });
+  } catch (err) {
+    console.error('[Search CRs Error]', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 // 3. Trigger Mantis Sync (Incremental Upsert)
