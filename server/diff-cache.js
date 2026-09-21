@@ -208,6 +208,10 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = 10, forceRef
   const cached = getCRDiffCache(crid);
   if (cached && cached.files && cached.files.length > 0 && !forceRefresh) {
     let isStale = false;
+    // Auto-refresh if any previously cached file has error status
+    if (cached.files.some(f => f.status === 'error')) {
+      isStale = true;
+    }
     // Check if CR was modified in Mantis after cachedAt
     if (cr.lastUpdated && cached.cachedAt) {
       const crTime = new Date(cr.lastUpdated).getTime();
@@ -226,7 +230,7 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = 10, forceRef
     if (!isStale) {
       return cached;
     }
-    console.log(`[DiffCache] CR #${crid} is modified or has updated files. Auto-refreshing diff cache...`);
+    console.log(`[DiffCache] CR #${crid} is modified, has errors, or has updated files. Auto-refreshing diff cache...`);
   }
 
   let servers = Array.isArray(sshConfig) 

@@ -363,13 +363,15 @@ export async function fetchFileVersionsSSH(
 export async function fetchAndCacheCRDiffAPI(
   cr: CRItem, 
   sshConfig?: SSHConfig,
-  sshServers?: SSHConfig[]
+  sshServers?: SSHConfig[],
+  forceRefresh?: boolean
 ): Promise<{ ok: boolean; cached: boolean; data: any }> {
   const localServers = loadSettings()?.sshServers;
   const resp = await axios.post(`${API_BASE}/diff-cache/fetch`, { 
     cr, 
     sshConfig,
-    sshServers: sshServers || sshConfig?.servers || localServers
+    sshServers: sshServers || sshConfig?.servers || localServers,
+    forceRefresh: !!forceRefresh
   }, { timeout: 60000 });
   return resp.data;
 }

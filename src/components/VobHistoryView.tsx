@@ -147,7 +147,8 @@ const FileVersionChainPanel: React.FC<{
   filePath: string;
   checkinLog?: string;
   sshConfig?: SSHConfig;
-}> = ({ filePath, checkinLog, sshConfig }) => {
+  onVersionLoaded?: () => void;
+}> = ({ filePath, checkinLog, sshConfig, onVersionLoaded }) => {
   const [chain, setChain] = useState<FileVersionChainItem[] | null>(null);
   const [loadingChain, setLoadingChain] = useState(true);
   const [loadingContent, setLoadingContent] = useState(false);
@@ -178,10 +179,15 @@ const FileVersionChainPanel: React.FC<{
         if (cancelled) return;
         if (res.ok) {
           const next: Record<number, { content: string }> = {};
+          let hasAny = false;
           for (const r of res.results || []) {
             next[r.version] = { content: r.content };
+            if (r.content) hasAny = true;
           }
           setContents(next);
+          if (hasAny && onVersionLoaded) {
+            onVersionLoaded();
+          }
         } else {
           setContentError('버전 내용을 불러오지 못했습니다.');
         }
@@ -335,6 +341,7 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
   const [collectMessage, setCollectMessage] = useState<string | null>(null);
   const [retryingCrid, setRetryingCrid] = useState<string | null>(null);
   const [copiedFilePath, setCopiedFilePath] = useState<string | null>(null);
+  const [resolvedFiles, setResolvedFiles] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -523,6 +530,9 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                 filteredEntries.map((entry, idx) => {
                   const isExpanded = expandedIdx === idx;
                   const { dir, file } = formatVobSubPath(entry.filePath, selectedVob || '');
+                  const isResolved = resolvedFiles.has(entry.filePath);
+                  const effectiveStatus = isResolved ? 'success' : entry.status;
+                  const effectiveHasChanges = isResolved ? true : entry.hasChanges;
                   return (
                     <div
                       key={`${entry.crid}-${entry.filePath}-${idx}`}
@@ -553,11 +563,11 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
-                          {entry.status === 'error' ? (
+                          {effectiveStatus === 'error' ? (
                             <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-500/15 border border-rose-500/30 text-rose-300 font-mono">
                               조회 실패
                             </span>
-                          ) : entry.hasChanges ? (
+                          ) : effectiveHasChanges ? (
                             <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-mono">
                               변경됨
                             </span>
@@ -616,7 +626,7 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                               </button>
                             </div>
                           </div>
-                          {entry.status === 'error' && (
+                          {entry.status === 'error' && !isResolved && (
                             <div className="p-3 rounded-lg bg-rose-950/30 border border-rose-800/40 text-rose-300 text-[11px] flex items-center justify-between gap-2">
                               <div className="flex items-center gap-1.5">
                                 <AlertCircle className="w-3.5 h-3.5 shrink-0" />
@@ -627,7 +637,7 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                                   e.stopPropagation();
                                   setRetryingCrid(entry.crid);
                                   try {
-                                    await fetchAndCacheCRDiffAPI({ crid: entry.crid, id: entry.id } as any, sshConfig);
+                                    await fetchAndCacheCRDiffAPI({ crid: entry.crid, id: entry.id } as any, sshConfig, undefined, true);
                                     if (selectedVob) loadHistory(selectedVob);
                                   } catch (err: any) {
                                     alert('재조회 실패: ' + (err.message || '서버 응답 없음'));
@@ -648,6 +658,9 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                             filePath={entry.filePath}
                             checkinLog={entry.checkinLog}
                             sshConfig={sshConfig}
+                            onVersionLoaded={() => {
+                              setResolvedFiles(prev => new Set(prev).add(entry.filePath));
+                            }}
                           />
                         </div>
                       )}

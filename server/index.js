@@ -907,15 +907,16 @@ app.get('/api/diff-cache/:crid', (req, res) => {
 
 app.post('/api/diff-cache/fetch', async (req, res) => {
   try {
-    const { cr, crid, sshConfig, sshServers } = req.body;
+    const { cr, crid, sshConfig, sshServers, forceRefresh } = req.body;
     const targetCrid = cr?.crid || crid;
     if (!targetCrid) {
       return res.status(400).json({ ok: false, error: 'CR 정보 또는 crid가 필요합니다.' });
     }
 
-    // Check cache first
+    // Check cache first (skip if forceRefresh or existing cache has any failed files)
     const cached = getCRDiffCache(targetCrid);
-    if (cached && cached.files && cached.files.length > 0) {
+    const hasErrorInCache = cached?.files?.some(f => f.status === 'error');
+    if (!forceRefresh && !hasErrorInCache && cached && cached.files && cached.files.length > 0) {
       return res.json({ ok: true, cached: true, data: cached });
     }
 
@@ -930,7 +931,7 @@ app.post('/api/diff-cache/fetch', async (req, res) => {
     }
 
     const servers = resolveAllSSHServers(sshServers, sshConfig);
-    const fetched = await fetchAndCacheCRDiff(targetCR, servers);
+    const fetched = await fetchAndCacheCRDiff(targetCR, servers, 10, true);
     res.json({ ok: true, cached: false, data: fetched });
   } catch (err) {
     console.error('[Diff Cache Fetch Error]', err.message);
