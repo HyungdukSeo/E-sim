@@ -198,17 +198,19 @@ async function fetchOneVersion(conn, vobSubPath, versionSuffix, candidateViews) 
   const envPrefix = 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:/usr/local/bin:/usr/bin:/bin:$PATH;';
 
   // Phase 1: Fast direct /view paths and direct /vobs path (instant)
+  // Supports both regular files (via cat / cleartool cat) and versioned ClearCase directories
+  // (via ls -1 "$P/") so directory version changes can be inspected without error.
   const directAttempts = [];
   for (const v of candidateViews) {
     if (v) {
       directAttempts.push({
-        cmd: `/bin/sh -c '${envPrefix} cat "/view/${v}${filePath}" 2>/dev/null || cleartool cat "/view/${v}${filePath}" 2>/dev/null'`,
+        cmd: `/bin/sh -c '${envPrefix} P="/view/${v}${filePath}"; if [ -d "$P" ] || [ -d "$P/" ]; then echo "[DIRECTORY: ${vobSubPath}]"; ls -1 "$P/" 2>/dev/null; else cat "$P" 2>/dev/null || cleartool cat "$P" 2>/dev/null; fi'`,
         view: v
       });
     }
   }
   directAttempts.push({
-    cmd: `/bin/sh -c '${envPrefix} cat "${filePath}" 2>/dev/null || cleartool cat "${filePath}" 2>/dev/null'`,
+    cmd: `/bin/sh -c '${envPrefix} P="${filePath}"; if [ -d "$P" ] || [ -d "$P/" ]; then echo "[DIRECTORY: ${vobSubPath}]"; ls -1 "$P/" 2>/dev/null; else cat "$P" 2>/dev/null || cleartool cat "$P" 2>/dev/null; fi'`,
     view: candidateViews[0] || 'default'
   });
 
@@ -241,11 +243,11 @@ async function fetchOneVersion(conn, vobSubPath, versionSuffix, candidateViews) 
   const fallbackAttempts = [];
   for (const v of fallbackViews) {
     fallbackAttempts.push({
-      cmd: `/bin/sh -c '${envPrefix} cleartool setview -exec "cat \\"${filePath}\\"" "${v}" 2>/dev/null'`,
+      cmd: `/bin/sh -c '${envPrefix} cleartool setview -exec "if [ -d \\"${filePath}\\" ] || [ -d \\"${filePath}/\\" ]; then echo \\"[DIRECTORY: ${vobSubPath}]\\"; ls -1 \\"${filePath}/\\" 2>/dev/null; else cat \\"${filePath}\\" 2>/dev/null; fi" "${v}" 2>/dev/null'`,
       view: v
     });
     fallbackAttempts.push({
-      cmd: `csh -c "setenv DEVCSHRC ~/.cshrc.hyungduk; [ -f ~/.cshrc.hyungduk ] && source ~/.cshrc.hyungduk 2>/dev/null; cat \\"/view/${v}${filePath}\\" 2>/dev/null || cat \\"${filePath}\\" 2>/dev/null"`,
+      cmd: `csh -c "setenv DEVCSHRC ~/.cshrc.hyungduk; [ -f ~/.cshrc.hyungduk ] && source ~/.cshrc.hyungduk 2>/dev/null; if ( -d \\"/view/${v}${filePath}\\" ) then; echo \\"[DIRECTORY: ${vobSubPath}]\\"; ls -1 \\"/view/${v}${filePath}/\\"; else; cat \\"/view/${v}${filePath}\\" 2>/dev/null || cat \\"${filePath}\\" 2>/dev/null; endif"`,
       view: v
     });
   }
@@ -516,12 +518,14 @@ export async function fetchFileVersionsSSH(configOrServers, filePath, checkinLog
             const handle = await sshPool.acquire(server, { priority: options.priority || 'normal', timeout: 15000 });
             try {
               const res = await fetchOneVersion(handle.conn, vobSubPath, suffix, effectiveViews);
+              const decoded = smartDecode(res.buffer);
               return {
                 version: versionNum,
                 versionSuffix: suffix,
-                content: smartDecode(res.buffer),
+                content: decoded,
                 base64: res.buffer.toString('base64'),
-                byteLength: res.buffer.length
+                byteLength: res.buffer.length,
+                isDirectory: decoded.includes('[DIRECTORY:')
               };
             } finally {
               try { handle.release(); } catch (e) {}
@@ -811,6 +815,7 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '', options 
     // 4. Smart decode text
     const oldText = predVersion === '0' ? '' : smartDecode(oldBuf);
     const newText = smartDecode(newBuf);
+    const isDirectory = oldText.includes('[DIRECTORY:') || newText.includes('[DIRECTORY:');
 
     const elapsed = Date.now() - t0;
     console.log(`[SSH Diff] Stream Result (${elapsed}ms): view=${foundView}, old=${oldBuf.length} bytes (${oldText.split('\n').length} lines), new=${newBuf.length} bytes (${newText.split('\n').length} lines)`);
@@ -855,6 +860,7 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '', options 
       ok: true,
       filePath: vobSubPath,
       fileName,
+      isDirectory,
       prevVersion: prevSuffix,
       currVersion: currSuffix,
       prevVersionPath: cliOldPath,

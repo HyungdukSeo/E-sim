@@ -219,6 +219,9 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = 10, forceRef
     const fileName = files[i];
     const filePath = filePaths[i] || fileName;
 
+    // Skip ClearCase branch activity names (e.g. crdb00016126) that are not actual files/directories
+    if (fileName.startsWith('crdb') || fileName.startsWith('cr_')) continue;
+
     const ext = fileName.includes('.') 
       ? fileName.substring(fileName.lastIndexOf('.')).toLowerCase() 
       : '';
@@ -401,13 +404,15 @@ export function getVobHistory(vobName, allCrs) {
         reporter: cr.reporter || '',
         fileName: f.fileName,
         filePath: f.filePath,
+        isDirectory: f.isDirectory || (f.unifiedDiff && f.unifiedDiff.includes('[DIRECTORY:')) || false,
         status: f.status,
         hasChanges: f.hasChanges,
         error: f.error || null,
         oldVersion: f.oldVersion,
         newVersion: f.newVersion,
         unifiedDiff: f.unifiedDiff,
-        fetchedAt: f.fetchedAt
+        fetchedAt: f.fetchedAt,
+        checkinLog: cr.checkinLog || ''
       });
     }
   }

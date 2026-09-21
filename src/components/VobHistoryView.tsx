@@ -14,7 +14,8 @@ import {
   ChevronLeft,
   Layers,
   History,
-  GitCommit
+  GitCommit,
+  Folder
 } from 'lucide-react';
 import {
   fetchVobList,
@@ -22,6 +23,7 @@ import {
   collectVobUncachedCRs,
   fetchFileVersionChain,
   fetchFileVersionsSSH,
+  fetchAndCacheCRDiffAPI,
   VobListItem,
   VobHistoryEntry,
   FileVersionChainItem
@@ -57,12 +59,19 @@ const VersionColumn: React.FC<{
   return (
     <div className="flex-1 min-w-[360px] max-w-[520px] shrink-0 flex flex-col border-r border-slate-800 last:border-r-0">
       <div className="px-2.5 py-1.5 bg-slate-900/90 border-b border-slate-800 flex items-center gap-1.5 sticky top-0 z-10">
-        <GitCommit className="w-3 h-3 text-mantis-400 shrink-0" />
-        <span className="text-[11px] font-bold font-mono text-slate-200">@@/main/{version}</span>
-        {crid ? (
-          <span className="text-[9px] font-mono text-slate-500 truncate">CR #{crid}</span>
+        {content.includes('[DIRECTORY:') ? (
+          <Folder className="w-3 h-3 text-amber-400 shrink-0" />
         ) : (
-          <span className="text-[9px] text-slate-600 italic">CR 정보 없음</span>
+          <GitCommit className="w-3 h-3 text-mantis-400 shrink-0" />
+        )}
+        <span className="text-[11px] font-bold font-mono text-slate-200">@@/main/{version}</span>
+        {content.includes('[DIRECTORY:') && (
+          <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/15 text-amber-300 font-mono">폴더</span>
+        )}
+        {crid ? (
+          <span className="text-[9px] font-mono text-slate-500 truncate ml-auto">CR #{crid}</span>
+        ) : (
+          <span className="text-[9px] text-slate-600 italic ml-auto">CR 정보 없음</span>
         )}
       </div>
       <div className="flex-1 overflow-y-auto font-mono text-[10px] leading-5 bg-slate-950 max-h-80">
@@ -282,6 +291,7 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   const [isCollecting, setIsCollecting] = useState(false);
   const [collectMessage, setCollectMessage] = useState<string | null>(null);
+  const [retryingCrid, setRetryingCrid] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -462,8 +472,17 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                         onClick={() => setExpandedIdx(isExpanded ? null : idx)}
                         className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-slate-800/40 transition-colors text-left cursor-pointer"
                       >
-                        <FileCode2 className="w-3.5 h-3.5 text-mantis-400 shrink-0" />
+                        {entry.isDirectory || (!entry.fileName.includes('.') && (entry.unifiedDiff?.includes('[DIRECTORY:') || !entry.error)) ? (
+                          <Folder className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        ) : (
+                          <FileCode2 className="w-3.5 h-3.5 text-mantis-400 shrink-0" />
+                        )}
                         <span className="text-xs font-mono text-slate-200 truncate flex-1">{entry.fileName}</span>
+                        {entry.isDirectory || (!entry.fileName.includes('.') && (entry.unifiedDiff?.includes('[DIRECTORY:') || !entry.error)) ? (
+                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono shrink-0">
+                            디렉터리
+                          </span>
+                        ) : null}
                         <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1 shrink-0">
                           <Clock className="w-3 h-3" />
                           {entry.dateSubmitted || entry.lastUpdated || '-'}
@@ -496,14 +515,36 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                             <span className="font-mono text-slate-500 truncate max-w-full">{entry.filePath}</span>
                           </div>
                           {entry.status === 'error' && (
-                            <div className="p-3 rounded-lg bg-rose-950/30 border border-rose-800/40 text-rose-300 text-[11px] flex items-center gap-1.5">
-                              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                              소스 조회 실패: {entry.error || '알 수 없는 오류'}
+                            <div className="p-3 rounded-lg bg-rose-950/30 border border-rose-800/40 text-rose-300 text-[11px] flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5">
+                                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                                <span>소스 조회 실패: {entry.error || '알 수 없는 오류'}</span>
+                              </div>
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  setRetryingCrid(entry.crid);
+                                  try {
+                                    await fetchAndCacheCRDiffAPI({ crid: entry.crid, id: entry.id } as any, sshConfig);
+                                    if (selectedVob) loadHistory(selectedVob);
+                                  } catch (err: any) {
+                                    alert('재조회 실패: ' + (err.message || '서버 응답 없음'));
+                                  } finally {
+                                    setRetryingCrid(null);
+                                  }
+                                }}
+                                disabled={retryingCrid === entry.crid}
+                                className="px-2 py-1 rounded bg-rose-900/60 hover:bg-rose-800 text-rose-100 text-[10px] shrink-0 font-sans flex items-center gap-1 cursor-pointer transition-colors"
+                              >
+                                <RefreshCw className={`w-3 h-3 ${retryingCrid === entry.crid ? 'animate-spin' : ''}`} />
+                                다시 시도
+                              </button>
                             </div>
                           )}
 
                           <FileVersionChainPanel
                             filePath={entry.filePath}
+                            checkinLog={entry.checkinLog}
                             sshConfig={sshConfig}
                           />
                         </div>

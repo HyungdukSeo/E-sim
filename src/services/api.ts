@@ -276,6 +276,7 @@ export interface VobHistoryEntry {
   reporter: string;
   fileName: string;
   filePath: string;
+  isDirectory?: boolean;
   status: string;
   hasChanges: boolean;
   error?: string | null;
@@ -283,6 +284,7 @@ export interface VobHistoryEntry {
   newVersion: string;
   unifiedDiff: string;
   fetchedAt: string;
+  checkinLog?: string;
 }
 
 export async function fetchVobList(): Promise<{ ok: boolean; vobs: VobListItem[] }> {
@@ -334,6 +336,7 @@ export interface FileVersionResult {
   content: string;
   base64: string;
   byteLength: number;
+  isDirectory?: boolean;
 }
 
 export async function fetchFileVersionHistorySSH(

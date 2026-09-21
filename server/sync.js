@@ -141,7 +141,7 @@ export function parseCheckinLog(log) {
       const normalizedPath = rawPath.replace(/(_|@@)\/(main|branch|[a-zA-Z0-9_\-\.]+)\/.*$/, '').replace(/_$/, '');
       const fileName = normalizedPath.split('/').pop() || '';
       
-      if (fileName) {
+      if (fileName && !fileName.startsWith('crdb') && !fileName.startsWith('cr_')) {
         filesSet.add(fileName);
         filePathsSet.add(normalizedPath);
       }
