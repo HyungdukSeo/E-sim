@@ -953,7 +953,7 @@ app.post('/api/diff-cache/fetch', async (req, res) => {
     }
 
     const servers = resolveAllSSHServers(sshServers, sshConfig);
-    const fetched = await fetchAndCacheCRDiff(targetCR, servers, 10, true);
+    const fetched = await fetchAndCacheCRDiff(targetCR, servers, Infinity, true);
     res.json({ ok: true, cached: false, data: fetched });
   } catch (err) {
     console.error('[Diff Cache Fetch Error]', err.message);
@@ -963,7 +963,7 @@ app.post('/api/diff-cache/fetch', async (req, res) => {
 
 app.post('/api/diff-cache/batch', async (req, res) => {
   try {
-    const { crids = [], maxFilesPerCR = 5, sshConfig, sshServers } = req.body;
+    const { crids = [], maxFilesPerCR = Infinity, sshConfig, sshServers } = req.body;
     const { crs } = getLocalDatabase();
     const targetCRs = crids.length > 0 
       ? crs.filter(c => crids.includes(c.crid))

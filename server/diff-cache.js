@@ -207,9 +207,17 @@ export function saveCRDiffCache(crid, diffData) {
 }
 
 /**
- * Fetch and cache diffs for a CR using SSH
+ * Fetch and cache diffs for a CR using SSH. maxFiles defaults to unlimited —
+ * a CR's filePaths can legitimately run into the hundreds or low thousands
+ * (e.g. a single large release/deployment check-in touching every Makefile
+ * across several VOBs), and capping collection at a small fixed number left
+ * those CRs permanently showing only a handful of files while the cache
+ * entry itself was marked complete, silently hiding the rest from VOB
+ * history and anything else that reads the cache. Files are still fetched
+ * one at a time with a yield between each, so an unlimited count doesn't
+ * flood the SSH pool — it just takes longer for very large CRs.
  */
-export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = 10, forceRefresh = false) {
+export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, forceRefresh = false) {
   if (!cr || !cr.crid) return null;
   const crid = cr.crid;
 
@@ -532,7 +540,7 @@ export function getDiffCacheStats() {
  * Batch prefetch diffs for a list of CRs
  */
 export async function batchIndexDiffs(crs, sshConfig, options = {}) {
-  const { maxCRs = 50, maxFilesPerCR = 5, onProgress } = options;
+  const { maxCRs = 50, maxFilesPerCR = Infinity, onProgress } = options;
   const targets = crs.slice(0, maxCRs);
 
   let successCount = 0;
@@ -754,7 +762,7 @@ class BackgroundDiffIndexer {
     try {
       // Yield to event loop
       await new Promise(res => setImmediate(res));
-      await fetchAndCacheCRDiff(targetCR, this.sshConfig, 8);
+      await fetchAndCacheCRDiff(targetCR, this.sshConfig);
       this.processedCount++;
       this.lastProcessedAt = new Date().toISOString();
       this.lastError = null;
