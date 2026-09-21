@@ -29,8 +29,18 @@ import {
   Minimize2,
   WrapText,
   X,
-  Globe
+  Globe,
+  Binary
 } from 'lucide-react';
+
+export const BINARY_FILE_RE = /\.(so|a|o|exe|dll|dylib|bin|dat|class|jar|war|ear|tar|gz|tgz|zip|7z|rar|iso|img|rpm|deb|png|jpg|jpeg|gif|bmp|ico|pdf)(\.\d+)*$/i;
+
+export function isBinaryFile(fileName: string, filePath: string = ''): boolean {
+  const target = (fileName || filePath || '').toLowerCase().trim();
+  if (!target) return false;
+  const base = target.split('/').pop() || target;
+  return BINARY_FILE_RE.test(base);
+}
 
 function decodeBase64WithEncoding(base64Str?: string, fallbackStr?: string, encoding: string = 'euc-kr'): string {
   if (!base64Str) return fallbackStr || '';
@@ -49,6 +59,9 @@ function decodeBase64WithEncoding(base64Str?: string, fallbackStr?: string, enco
 }
 
 function getFileIcon(fileName: string) {
+  if (isBinaryFile(fileName)) {
+    return <Binary className="w-3.5 h-3.5 text-slate-400 shrink-0" />;
+  }
   const lower = (fileName || '').toLowerCase();
   if (lower.endsWith('.c') || lower.endsWith('.cc') || lower.endsWith('.cpp')) {
     return <FileCode className="w-3.5 h-3.5 text-blue-400 shrink-0" />;
@@ -839,9 +852,10 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                 filteredEntries.map((entry, idx) => {
                   const isExpanded = expandedIdx === idx;
                   const { dir, file } = formatVobSubPath(entry.filePath, selectedVob || '');
+                  const isBinary = isBinaryFile(entry.fileName, entry.filePath);
                   const isResolved = resolvedFiles.has(entry.filePath);
-                  const effectiveStatus = isResolved ? 'success' : entry.status;
-                  const effectiveHasChanges = isResolved ? true : entry.hasChanges;
+                  const effectiveStatus = isBinary ? 'binary' : (isResolved ? 'success' : entry.status);
+                  const effectiveHasChanges = isBinary ? false : (isResolved ? true : entry.hasChanges);
                   return (
                     <div
                       key={`${entry.crid}-${entry.filePath}-${idx}`}
@@ -872,7 +886,11 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
-                          {effectiveStatus === 'error' ? (
+                          {effectiveStatus === 'binary' ? (
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 border border-slate-700 text-slate-400 font-mono">
+                              바이너리
+                            </span>
+                          ) : effectiveStatus === 'error' ? (
                             <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-500/15 border border-rose-500/30 text-rose-300 font-mono">
                               조회 실패
                             </span>
@@ -935,7 +953,7 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                               </button>
                             </div>
                           </div>
-                          {entry.status === 'error' && !isResolved && (
+                          {entry.status === 'error' && !isResolved && !isBinary && (
                             <div className="p-3 rounded-lg bg-rose-950/30 border border-rose-800/40 text-rose-300 text-[11px] flex items-center justify-between gap-2">
                               <div className="flex items-center gap-1.5">
                                 <AlertCircle className="w-3.5 h-3.5 shrink-0" />
@@ -963,14 +981,28 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                             </div>
                           )}
 
-                          <FileVersionChainPanel
-                            filePath={entry.filePath}
-                            checkinLog={entry.checkinLog}
-                            sshConfig={sshConfig}
-                            onVersionLoaded={() => {
-                              setResolvedFiles(prev => new Set(prev).add(entry.filePath));
-                            }}
-                          />
+                          {isBinary ? (
+                            <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 text-slate-400 text-xs flex items-center gap-3">
+                              <div className="p-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 shrink-0">
+                                <Binary className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <div className="font-semibold text-slate-200">바이너리 파일 (.so / .a / .exe 등)</div>
+                                <div className="text-[11px] text-slate-500 mt-0.5">
+                                  바이너리 형식의 파일은 텍스트 코드 비교(Diff)를 지원하지 않습니다. 성능 저하 및 화면 멈춤을 방지하기 위해 변경 이력 로딩을 생략합니다.
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <FileVersionChainPanel
+                              filePath={entry.filePath}
+                              checkinLog={entry.checkinLog}
+                              sshConfig={sshConfig}
+                              onVersionLoaded={() => {
+                                setResolvedFiles(prev => new Set(prev).add(entry.filePath));
+                              }}
+                            />
+                          )}
                         </div>
                       )}
                     </div>

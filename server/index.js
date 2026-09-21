@@ -11,7 +11,7 @@ import { syncMantisData, getLocalDatabase, reloadDatabase, importDatabase, fetch
 import { processAiQuery, analyzeSingleCRDiff, compareMultipleCRDiffs } from './ai.js';
 import { testSSHConnection, fetchFileDiffSSH, fetchFileVersionHistorySSH, fetchFileVersionsSSH } from './ssh.js';
 import { getClaudeModels, getAntigravityModels, getCodexModels, getOmniRouteModels, getAIProvidersStatus, checkOmniRouteStatus, findCommandPath } from './cli-models.js';
-import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, initCacheIndex, batchIndexDiffs, backgroundDiffIndexer, getVobList, getVobHistory, mapFileVersionsToCRs } from './diff-cache.js';
+import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, initCacheIndex, batchIndexDiffs, backgroundDiffIndexer, getVobList, getVobHistory, mapFileVersionsToCRs, isBinaryFile } from './diff-cache.js';
 import { sshPool } from './ssh-pool.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -839,6 +839,9 @@ app.get('/api/diff-cache/file-version-chain', (req, res) => {
     const filePath = req.query.filePath;
     if (!filePath) {
       return res.status(400).json({ ok: false, error: 'filePath 쿼리 파라미터가 필요합니다.' });
+    }
+    if (isBinaryFile(filePath)) {
+      return res.json({ ok: true, isBinary: true, chain: [] });
     }
     const { crs } = getLocalDatabase();
     const versionToCr = mapFileVersionsToCRs(filePath, crs);

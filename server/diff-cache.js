@@ -51,6 +51,15 @@ export function initCacheIndex(forceReset = false) {
   }
 }
 
+export const BINARY_FILE_RE = /\.(so|a|o|exe|dll|dylib|bin|dat|class|jar|war|ear|tar|gz|tgz|zip|7z|rar|iso|img|rpm|deb|png|jpg|jpeg|gif|bmp|ico|pdf)(\.\d+)*$/i;
+
+export function isBinaryFile(fileName, filePath = '') {
+  const target = (fileName || filePath || '').toLowerCase().trim();
+  if (!target) return false;
+  const base = target.split('/').pop() || target;
+  return BINARY_FILE_RE.test(base);
+}
+
 const BINARY_EXTS = new Set([
   '.exe', '.o', '.a', '.so', '.dll', '.tar', '.gz', '.zip', 
   '.class', '.jar', '.png', '.jpg', '.jpeg', '.gif', '.pdf', 
@@ -287,10 +296,8 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = 10, forceRef
     // Skip directory elements & branch pseudo-elements
     if (isDirectoryElement(fileName, filePath) || dirPaths.has(filePath)) continue;
 
-    const ext = fileName.includes('.') 
-      ? fileName.substring(fileName.lastIndexOf('.')).toLowerCase() 
-      : '';
-    if (BINARY_EXTS.has(ext)) continue;
+    // Skip binary files (e.g. .so, .so.1.1, .a, .exe, .dll, etc.)
+    if (isBinaryFile(fileName, filePath)) continue;
 
     processed++;
     if (sshPool.isUserActive()) {
