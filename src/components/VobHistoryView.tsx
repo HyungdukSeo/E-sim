@@ -28,8 +28,25 @@ import {
   Maximize2,
   Minimize2,
   WrapText,
-  X
+  X,
+  Globe
 } from 'lucide-react';
+
+function decodeBase64WithEncoding(base64Str?: string, fallbackStr?: string, encoding: string = 'euc-kr'): string {
+  if (!base64Str) return fallbackStr || '';
+  try {
+    const binary = atob(base64Str);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    const decoder = new TextDecoder(encoding);
+    return decoder.decode(bytes);
+  } catch (err) {
+    console.warn(`[TextDecoder Error (${encoding})]`, err);
+    return fallbackStr || '';
+  }
+}
 
 function getFileIcon(fileName: string) {
   const lower = (fileName || '').toLowerCase();
@@ -86,7 +103,9 @@ const VersionColumn: React.FC<{
   error?: string;
   wrapLines?: boolean;
   isModal?: boolean;
-}> = ({ version, crid, content, prevContent, error, wrapLines, isModal }) => {
+  encoding?: string;
+  onEncodingChange?: (enc: string) => void;
+}> = ({ version, crid, content, prevContent, error, wrapLines, isModal, encoding = 'euc-kr', onEncodingChange }) => {
   const lines = useMemo(() => {
     if (error) return [];
     if (prevContent === null) {
@@ -119,6 +138,22 @@ const VersionColumn: React.FC<{
         {content.includes('[DIRECTORY:') && (
           <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/15 text-amber-300 font-mono">폴더</span>
         )}
+
+        {/* Column-specific encoding dropdown */}
+        {onEncodingChange && (
+          <select
+            value={encoding}
+            onChange={e => onEncodingChange(e.target.value)}
+            className="text-[9px] font-mono bg-slate-950/80 text-slate-400 hover:text-slate-200 border border-slate-800 hover:border-slate-700 rounded px-1 py-0.2 outline-none cursor-pointer transition-colors ml-1"
+            title={`@@/main/${version} 버전 인코딩 변경 (현재: ${encoding.toUpperCase()})`}
+          >
+            <option value="euc-kr">EUC-KR</option>
+            <option value="utf-8">UTF-8</option>
+            <option value="windows-949">CP949</option>
+            <option value="iso-8859-1">Latin-1</option>
+          </select>
+        )}
+
         {crid ? (
           <span className="text-[9px] font-mono text-slate-300 bg-slate-800/90 px-1.5 py-0.5 rounded border border-slate-700/80 truncate ml-auto">
             CR #{crid}
@@ -169,9 +204,11 @@ const FileVersionChainPanel: React.FC<{
   const [loadingChain, setLoadingChain] = useState(true);
   const [loadingContent, setLoadingContent] = useState(false);
   const [contentError, setContentError] = useState<string | null>(null);
-  const [contents, setContents] = useState<Record<number, { content: string; error?: string }>>({});
+  const [contents, setContents] = useState<Record<number, { content: string; base64?: string; error?: string }>>({});
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [wrapLines, setWrapLines] = useState(false);
+  const [globalEncoding, setGlobalEncoding] = useState<string>('euc-kr');
+  const [columnEncodings, setColumnEncodings] = useState<Record<number, string>>({});
 
   const inlineScrollRef = useRef<HTMLDivElement>(null);
   const modalScrollRef = useRef<HTMLDivElement>(null);
@@ -180,6 +217,13 @@ const FileVersionChainPanel: React.FC<{
     if (!ref.current) return;
     const amount = direction === 'left' ? -420 : 420;
     ref.current.scrollBy({ left: amount, behavior: 'smooth' });
+  };
+
+  const getDecodedContent = (version: number) => {
+    const raw = contents[version];
+    if (!raw) return '';
+    const enc = columnEncodings[version] || globalEncoding;
+    return raw.base64 ? decodeBase64WithEncoding(raw.base64, raw.content, enc) : raw.content;
   };
 
   useEffect(() => {
@@ -207,11 +251,11 @@ const FileVersionChainPanel: React.FC<{
       .then(res => {
         if (cancelled) return;
         if (res.ok) {
-          const next: Record<number, { content: string }> = {};
+          const next: Record<number, { content: string; base64?: string }> = {};
           let hasAny = false;
           for (const r of res.results || []) {
-            next[r.version] = { content: r.content };
-            if (r.content) hasAny = true;
+            next[r.version] = { content: r.content, base64: r.base64 };
+            if (r.content || r.base64) hasAny = true;
           }
           setContents(next);
           if (hasAny && onVersionLoaded) {
@@ -268,6 +312,26 @@ const FileVersionChainPanel: React.FC<{
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
+            {/* Global Encoding Selector */}
+            <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-[10px]">
+              <Globe className="w-3 h-3 text-mantis-400 shrink-0" />
+              <select
+                value={globalEncoding}
+                onChange={e => {
+                  const enc = e.target.value;
+                  setGlobalEncoding(enc);
+                  setColumnEncodings({});
+                }}
+                className="bg-transparent text-slate-200 outline-none cursor-pointer text-[10px] font-mono"
+                title="전체 버전 인코딩 일괄 변경"
+              >
+                <option value="euc-kr" className="bg-slate-900 text-slate-200">EUC-KR</option>
+                <option value="utf-8" className="bg-slate-900 text-slate-200">UTF-8</option>
+                <option value="windows-949" className="bg-slate-900 text-slate-200">CP949</option>
+                <option value="iso-8859-1" className="bg-slate-900 text-slate-200">Latin-1</option>
+              </select>
+            </div>
+
             {/* Wrap toggle */}
             <button
               onClick={() => setWrapLines(prev => !prev)}
@@ -331,18 +395,24 @@ const FileVersionChainPanel: React.FC<{
               className="overflow-x-auto overflow-y-hidden flex max-h-80 custom-horizontal-scrollbar pb-1"
             >
               {chain.map((item, idx) => {
+                const currentDecoded = getDecodedContent(item.version);
+                const prevDecoded = idx > 0 ? getDecodedContent(chain[idx - 1].version) : null;
                 const c = contents[item.version];
-                const prev = idx > 0 ? contents[chain[idx - 1].version]?.content ?? null : null;
+                const colEnc = columnEncodings[item.version] || globalEncoding;
                 return (
                   <VersionColumn
                     key={item.version}
                     version={item.version}
                     crid={item.crid}
-                    content={c?.content ?? ''}
-                    prevContent={prev}
+                    content={currentDecoded}
+                    prevContent={prevDecoded}
                     error={c ? undefined : '이 버전은 조회되지 않았습니다.'}
                     wrapLines={wrapLines}
                     isModal={false}
+                    encoding={colEnc}
+                    onEncodingChange={enc => {
+                      setColumnEncodings(prev => ({ ...prev, [item.version]: enc }));
+                    }}
                   />
                 );
               })}
@@ -376,6 +446,27 @@ const FileVersionChainPanel: React.FC<{
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
+                  {/* Global Encoding in Modal */}
+                  <div className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1 text-xs">
+                    <Globe className="w-3.5 h-3.5 text-mantis-400 shrink-0" />
+                    <span className="text-slate-400 font-sans text-xs">인코딩:</span>
+                    <select
+                      value={globalEncoding}
+                      onChange={e => {
+                        const enc = e.target.value;
+                        setGlobalEncoding(enc);
+                        setColumnEncodings({});
+                      }}
+                      className="bg-transparent text-slate-200 outline-none cursor-pointer text-xs font-mono font-semibold"
+                      title="모든 버전 인코딩 일괄 변경"
+                    >
+                      <option value="euc-kr" className="bg-slate-900 text-slate-200">EUC-KR (기본)</option>
+                      <option value="utf-8" className="bg-slate-900 text-slate-200">UTF-8</option>
+                      <option value="windows-949" className="bg-slate-900 text-slate-200">CP949</option>
+                      <option value="iso-8859-1" className="bg-slate-900 text-slate-200">Latin-1</option>
+                    </select>
+                  </div>
+
                   {/* Wrap Lines Toggle */}
                   <button
                     onClick={() => setWrapLines(prev => !prev)}
@@ -439,18 +530,24 @@ const FileVersionChainPanel: React.FC<{
                     className="flex-1 overflow-x-auto overflow-y-hidden flex custom-horizontal-scrollbar pb-2"
                   >
                     {chain.map((item, idx) => {
+                      const currentDecoded = getDecodedContent(item.version);
+                      const prevDecoded = idx > 0 ? getDecodedContent(chain[idx - 1].version) : null;
                       const c = contents[item.version];
-                      const prev = idx > 0 ? contents[chain[idx - 1].version]?.content ?? null : null;
+                      const colEnc = columnEncodings[item.version] || globalEncoding;
                       return (
                         <VersionColumn
                           key={item.version}
                           version={item.version}
                           crid={item.crid}
-                          content={c?.content ?? ''}
-                          prevContent={prev}
+                          content={currentDecoded}
+                          prevContent={prevDecoded}
                           error={c ? undefined : '이 버전은 조회되지 않았습니다.'}
                           wrapLines={wrapLines}
                           isModal={true}
+                          encoding={colEnc}
+                          onEncodingChange={enc => {
+                            setColumnEncodings(prev => ({ ...prev, [item.version]: enc }));
+                          }}
                         />
                       );
                     })}
