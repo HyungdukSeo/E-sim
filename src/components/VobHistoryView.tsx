@@ -35,6 +35,7 @@ import {
   Columns
 } from 'lucide-react';
 import { SideBySideDiffViewer } from './SideBySideDiffViewer';
+import { MultiVersionDiffViewer } from './MultiVersionDiffViewer';
 
 export const BINARY_FILE_RE = /\.(so|a|o|exe|dll|dylib|bin|dat|class|jar|war|ear|tar|gz|tgz|zip|7z|rar|iso|img|rpm|deb|png|jpg|jpeg|gif|bmp|ico|pdf)(\.\d+)*$/i;
 
@@ -154,119 +155,7 @@ async function downloadAllVersionsZip(fileName: string, chain: FileVersionChainI
   URL.revokeObjectURL(url);
 }
 
-// One version's content, line-diffed against the PREVIOUS column's content
-const VersionColumn: React.FC<{
-  version: number;
-  crid: string | null;
-  content: string;
-  prevContent: string | null;
-  error?: string;
-  wrapLines?: boolean;
-  isModal?: boolean;
-  encoding?: string;
-  fileName?: string;
-  onEncodingChange?: (enc: string) => void;
-}> = ({ version, crid, content, prevContent, error, wrapLines, isModal, encoding = 'euc-kr', fileName = 'file', onEncodingChange }) => {
-  const lines = useMemo(() => {
-    if (error) return [];
-    if (prevContent === null) {
-      return content.split('\n').map(text => ({ text, type: 'unchanged' as const }));
-    }
-    const changes = diffLines(prevContent, content);
-    const out: Array<{ text: string; type: 'unchanged' | 'added' | 'removed' }> = [];
-    for (const part of changes) {
-      const partLines = part.value.replace(/\n$/, '').split('\n');
-      for (const l of partLines) {
-        out.push({ text: l, type: part.added ? 'added' : part.removed ? 'removed' : 'unchanged' });
-      }
-    }
-    return out;
-  }, [content, prevContent, error]);
 
-  return (
-    <div
-      className={`flex-1 ${
-        isModal ? 'min-w-[360px] max-w-none' : 'min-w-[360px] max-w-[520px]'
-      } shrink-0 flex flex-col border-r border-slate-800 last:border-r-0`}
-    >
-      <div className="px-2.5 py-1.5 bg-slate-900/95 border-b border-slate-800 flex items-center gap-1.5 sticky top-0 z-10 select-none">
-        {content.includes('[DIRECTORY:') ? (
-          <Folder className="w-3 h-3 text-amber-400 shrink-0" />
-        ) : (
-          <GitCommit className="w-3 h-3 text-mantis-400 shrink-0" />
-        )}
-        <span className="text-[11px] font-bold font-mono text-slate-200">@@/main/{version}</span>
-        {content.includes('[DIRECTORY:') && (
-          <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/15 text-amber-300 font-mono">폴더</span>
-        )}
-
-        {/* Column-specific encoding dropdown */}
-        {onEncodingChange && (
-          <select
-            value={encoding}
-            onChange={e => onEncodingChange(e.target.value)}
-            className="text-[9px] font-mono bg-slate-950/80 text-slate-400 hover:text-slate-200 border border-slate-800 hover:border-slate-700 rounded px-1 py-0.2 outline-none cursor-pointer transition-colors ml-1"
-            title={`@@/main/${version} 버전 인코딩 변경 (현재: ${encoding.toUpperCase()})`}
-          >
-            <option value="euc-kr">EUC-KR</option>
-            <option value="utf-8">UTF-8</option>
-            <option value="windows-949">CP949</option>
-            <option value="iso-8859-1">Latin-1</option>
-          </select>
-        )}
-
-        {/* Single version download button */}
-        {content && !content.includes('[DIRECTORY:') && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              downloadTextFile(`${fileName}.v${version}`, content);
-            }}
-            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-mantis-300 transition-colors ml-0.5 cursor-pointer"
-            title={`이 버전(${fileName}.v${version}) 다운로드`}
-          >
-            <Download className="w-3 h-3" />
-          </button>
-        )}
-
-        {crid ? (
-          <span className="text-[9px] font-mono text-slate-300 bg-slate-800/90 px-1.5 py-0.5 rounded border border-slate-700/80 truncate ml-auto">
-            CR #{crid}
-          </span>
-        ) : (
-          <span className="text-[9px] text-slate-600 italic ml-auto">CR 정보 없음</span>
-        )}
-      </div>
-      <div
-        className={`flex-1 overflow-y-auto font-mono text-[10px] leading-5 bg-slate-950 ${
-          isModal ? 'h-full' : 'max-h-80'
-        } p-1`}
-      >
-        {error ? (
-          <div className="p-2.5 text-rose-300 text-[10px] flex items-center gap-1.5">
-            <AlertCircle className="w-3 h-3 shrink-0" />
-            {error}
-          </div>
-        ) : (
-          lines.map((l, idx) => {
-            let cls = 'text-slate-300';
-            if (l.type === 'added') cls = 'bg-emerald-950/40 text-emerald-300 border-l-2 border-emerald-500';
-            else if (l.type === 'removed')
-              cls = 'bg-rose-950/40 text-rose-300 border-l-2 border-rose-500 line-through decoration-rose-500/40';
-            return (
-              <div
-                key={idx}
-                className={`px-2 ${wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'} ${cls}`}
-              >
-                {l.text || ' '}
-              </div>
-            );
-          })
-        )}
-      </div>
-    </div>
-  );
-};
 
 // Shows the FULL version chain (0..latest) for one file
 const FileVersionChainPanel: React.FC<{
@@ -647,36 +536,20 @@ const FileVersionChainPanel: React.FC<{
             />
           </div>
         ) : (
-          <div className="relative border-t border-slate-800/80">
-            {/* Scrollable Container with prominent custom scrollbar */}
-            <div
-              ref={inlineScrollRef}
-              className="overflow-x-auto overflow-y-hidden flex max-h-80 custom-horizontal-scrollbar pb-1"
-            >
-              {chain.map((item, idx) => {
-                const currentDecoded = getDecodedContent(item.version);
-                const prevDecoded = idx > 0 ? getDecodedContent(chain[idx - 1].version) : null;
-                const c = contents[item.version];
-                const colEnc = columnEncodings[item.version] || globalEncoding;
-                return (
-                  <VersionColumn
-                    key={item.version}
-                    version={item.version}
-                    crid={item.crid}
-                    content={currentDecoded}
-                    prevContent={prevDecoded}
-                    error={c ? undefined : '이 버전은 조회되지 않았습니다.'}
-                    wrapLines={wrapLines}
-                    isModal={false}
-                    encoding={colEnc}
-                    fileName={fileName}
-                    onEncodingChange={enc => {
-                      setColumnEncodings(prev => ({ ...prev, [item.version]: enc }));
-                    }}
-                  />
-                );
-              })}
-            </div>
+          <div className="p-2 h-[500px]">
+            <MultiVersionDiffViewer
+              versions={chain}
+              fileName={fileName}
+              getDecodedContent={getDecodedContent}
+              wrapLines={wrapLines}
+              columnEncodings={columnEncodings}
+              onColumnEncodingChange={(v, enc) => {
+                setColumnEncodings(prev => ({ ...prev, [v]: enc }));
+              }}
+              onDownloadVersion={v => {
+                downloadTextFile(`${fileName}.v${v}`, getDecodedContent(v));
+              }}
+            />
           </div>
         )}
       </div>
@@ -842,33 +715,20 @@ const FileVersionChainPanel: React.FC<{
                     />
                   </div>
                 ) : (
-                  <div
-                    ref={modalScrollRef}
-                    className="flex-1 overflow-x-auto overflow-y-hidden flex custom-horizontal-scrollbar pb-2"
-                  >
-                    {chain.map((item, idx) => {
-                      const currentDecoded = getDecodedContent(item.version);
-                      const prevDecoded = idx > 0 ? getDecodedContent(chain[idx - 1].version) : null;
-                      const c = contents[item.version];
-                      const colEnc = columnEncodings[item.version] || globalEncoding;
-                      return (
-                        <VersionColumn
-                          key={item.version}
-                          version={item.version}
-                          crid={item.crid}
-                          content={currentDecoded}
-                          prevContent={prevDecoded}
-                          error={c ? undefined : '이 버전은 조회되지 않았습니다.'}
-                          wrapLines={wrapLines}
-                          isModal={true}
-                          encoding={colEnc}
-                          fileName={fileName}
-                          onEncodingChange={enc => {
-                            setColumnEncodings(prev => ({ ...prev, [item.version]: enc }));
-                          }}
-                        />
-                      );
-                    })}
+                  <div className="flex-1 p-2 min-h-0">
+                    <MultiVersionDiffViewer
+                      versions={chain}
+                      fileName={fileName}
+                      getDecodedContent={getDecodedContent}
+                      wrapLines={wrapLines}
+                      columnEncodings={columnEncodings}
+                      onColumnEncodingChange={(v, enc) => {
+                        setColumnEncodings(prev => ({ ...prev, [v]: enc }));
+                      }}
+                      onDownloadVersion={v => {
+                        downloadTextFile(`${fileName}.v${v}`, getDecodedContent(v));
+                      }}
+                    />
                   </div>
                 )}
               </div>

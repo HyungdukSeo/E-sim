@@ -193,3 +193,117 @@ export function computeAlignedDiff(leftText: string, rightText: string): Aligned
 
   return { rows, chunks, totalChanges };
 }
+
+export interface MultiVersionRow {
+  cols: Record<number, DiffLine>;
+  isModified: boolean;
+}
+
+export interface MultiVersionAlignedResult {
+  rows: MultiVersionRow[];
+  totalRows: number;
+}
+
+export function computeMultiVersionAlignedDiff(
+  versions: Array<{ version: number; content: string }>
+): MultiVersionAlignedResult {
+  if (!versions || versions.length === 0) {
+    return { rows: [], totalRows: 0 };
+  }
+
+  if (versions.length === 1) {
+    const v0 = versions[0];
+    const lines = v0.content.split('\n');
+    const rows: MultiVersionRow[] = lines.map((text, idx) => ({
+      cols: {
+        [v0.version]: { lineNum: idx + 1, text, type: 'unchanged' }
+      },
+      isModified: false
+    }));
+    return { rows, totalRows: rows.length };
+  }
+
+  const grid: Array<Record<number, DiffLine>> = [];
+  const v0 = versions[0];
+  const lines0 = v0.content.split('\n');
+  for (let i = 0; i < lines0.length; i++) {
+    grid.push({
+      [v0.version]: { lineNum: i + 1, text: lines0[i], type: 'unchanged' }
+    });
+  }
+
+  for (let k = 1; k < versions.length; k++) {
+    const prev = versions[k - 1];
+    const curr = versions[k];
+    const changes = diffLines(prev.content, curr.content);
+
+    let currLineNum = 1;
+    let gridIdx = 0;
+
+    for (const change of changes) {
+      if (change.added) {
+        const addedLines = change.value.replace(/\n$/, '').split('\n');
+        for (const line of addedLines) {
+          const newRow: Record<number, DiffLine> = {
+            [curr.version]: { lineNum: currLineNum++, text: line, type: 'added' }
+          };
+          for (let p = 0; p < k; p++) {
+            newRow[versions[p].version] = { lineNum: null, text: '', type: 'spacer' };
+          }
+          grid.splice(gridIdx, 0, newRow);
+          gridIdx++;
+        }
+      } else if (change.removed) {
+        const removedLines = change.value.replace(/\n$/, '').split('\n');
+        for (let r = 0; r < removedLines.length; r++) {
+          while (
+            gridIdx < grid.length &&
+            (!grid[gridIdx][prev.version] || grid[gridIdx][prev.version]?.type === 'spacer')
+          ) {
+            gridIdx++;
+          }
+          if (gridIdx < grid.length) {
+            grid[gridIdx][curr.version] = { lineNum: null, text: '', type: 'spacer' };
+            gridIdx++;
+          }
+        }
+      } else {
+        const sameLines = change.value.replace(/\n$/, '').split('\n');
+        for (let s = 0; s < sameLines.length; s++) {
+          while (
+            gridIdx < grid.length &&
+            (!grid[gridIdx][prev.version] || grid[gridIdx][prev.version]?.type === 'spacer')
+          ) {
+            gridIdx++;
+          }
+          if (gridIdx < grid.length) {
+            grid[gridIdx][curr.version] = { lineNum: currLineNum++, text: sameLines[s], type: 'unchanged' };
+            gridIdx++;
+          }
+        }
+      }
+    }
+
+    for (let g = 0; g < grid.length; g++) {
+      if (!grid[g][curr.version]) {
+        grid[g][curr.version] = { lineNum: null, text: '', type: 'spacer' };
+      }
+    }
+  }
+
+  const verKeys = versions.map(v => v.version);
+  const rows: MultiVersionRow[] = grid.map(colMap => {
+    let isModified = false;
+    for (const vk of verKeys) {
+      const line = colMap[vk];
+      if (line && (line.type === 'added' || line.type === 'removed' || line.type === 'spacer')) {
+        isModified = true;
+        break;
+      }
+    }
+    return { cols: colMap, isModified };
+  });
+
+  return { rows, totalRows: rows.length };
+}
+
