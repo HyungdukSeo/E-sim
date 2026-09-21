@@ -211,6 +211,8 @@ export function computeMultiVersionAlignedDiff(
     return { rows: [], totalRows: 0 };
   }
 
+  const verKeys = versions.map(v => v.version);
+
   if (versions.length === 1) {
     const v0 = versions[0];
     const lines = v0.content.split('\n');
@@ -223,6 +225,20 @@ export function computeMultiVersionAlignedDiff(
     return { rows, totalRows: rows.length };
   }
 
+  // If 2 versions, use the high-precision 2-way aligned diff
+  if (versions.length === 2) {
+    const res = computeAlignedDiff(versions[0].content, versions[1].content);
+    const rows: MultiVersionRow[] = res.rows.map(r => ({
+      cols: {
+        [versions[0].version]: r.left,
+        [versions[1].version]: r.right
+      },
+      isModified: r.isModified
+    }));
+    return { rows, totalRows: rows.length };
+  }
+
+  // For N >= 3: Progressive alignment
   const grid: Array<Record<number, DiffLine>> = [];
   const v0 = versions[0];
   const lines0 = v0.content.split('\n');
@@ -237,12 +253,25 @@ export function computeMultiVersionAlignedDiff(
     const curr = versions[k];
     const changes = diffLines(prev.content, curr.content);
 
+    // Track the row indices in the current grid where prev.version has a non-spacer line
+    const prevRowIndices: number[] = [];
+    for (let r = 0; r < grid.length; r++) {
+      const cell = grid[r][prev.version];
+      if (cell && cell.type !== 'spacer') {
+        prevRowIndices.push(r);
+      }
+    }
+
+    let prevCursor = 0;
     let currLineNum = 1;
-    let gridIdx = 0;
 
     for (const change of changes) {
       if (change.added) {
         const addedLines = change.value.replace(/\n$/, '').split('\n');
+        // Insert at the position before the current prevRowIndex (or at the end if cursor is at end)
+        const insertAt = prevCursor < prevRowIndices.length ? prevRowIndices[prevCursor] : grid.length;
+
+        const newRows: Array<Record<number, DiffLine>> = [];
         for (const line of addedLines) {
           const newRow: Record<number, DiffLine> = {
             [curr.version]: { lineNum: currLineNum++, text: line, type: 'added' }
@@ -250,40 +279,38 @@ export function computeMultiVersionAlignedDiff(
           for (let p = 0; p < k; p++) {
             newRow[versions[p].version] = { lineNum: null, text: '', type: 'spacer' };
           }
-          grid.splice(gridIdx, 0, newRow);
-          gridIdx++;
+          newRows.push(newRow);
+        }
+
+        grid.splice(insertAt, 0, ...newRows);
+
+        // Shift all subsequent prevRowIndices by the number of inserted rows
+        const numInserted = newRows.length;
+        for (let idx = prevCursor; idx < prevRowIndices.length; idx++) {
+          prevRowIndices[idx] += numInserted;
         }
       } else if (change.removed) {
         const removedLines = change.value.replace(/\n$/, '').split('\n');
         for (let r = 0; r < removedLines.length; r++) {
-          while (
-            gridIdx < grid.length &&
-            (!grid[gridIdx][prev.version] || grid[gridIdx][prev.version]?.type === 'spacer')
-          ) {
-            gridIdx++;
-          }
-          if (gridIdx < grid.length) {
-            grid[gridIdx][curr.version] = { lineNum: null, text: '', type: 'spacer' };
-            gridIdx++;
+          if (prevCursor < prevRowIndices.length) {
+            const rowIdx = prevRowIndices[prevCursor];
+            grid[rowIdx][curr.version] = { lineNum: null, text: '', type: 'spacer' };
+            prevCursor++;
           }
         }
       } else {
         const sameLines = change.value.replace(/\n$/, '').split('\n');
         for (let s = 0; s < sameLines.length; s++) {
-          while (
-            gridIdx < grid.length &&
-            (!grid[gridIdx][prev.version] || grid[gridIdx][prev.version]?.type === 'spacer')
-          ) {
-            gridIdx++;
-          }
-          if (gridIdx < grid.length) {
-            grid[gridIdx][curr.version] = { lineNum: currLineNum++, text: sameLines[s], type: 'unchanged' };
-            gridIdx++;
+          if (prevCursor < prevRowIndices.length) {
+            const rowIdx = prevRowIndices[prevCursor];
+            grid[rowIdx][curr.version] = { lineNum: currLineNum++, text: sameLines[s], type: 'unchanged' };
+            prevCursor++;
           }
         }
       }
     }
 
+    // Fill any missing rows for curr.version with spacer
     for (let g = 0; g < grid.length; g++) {
       if (!grid[g][curr.version]) {
         grid[g][curr.version] = { lineNum: null, text: '', type: 'spacer' };
@@ -291,7 +318,6 @@ export function computeMultiVersionAlignedDiff(
     }
   }
 
-  const verKeys = versions.map(v => v.version);
   const rows: MultiVersionRow[] = grid.map(colMap => {
     let isModified = false;
     for (const vk of verKeys) {
