@@ -401,17 +401,18 @@ export function mapFileVersionsToCRs(filePath, allCrs) {
  * over the already-in-memory CR list, same cost class as /api/stats's byProject.
  */
 export function getVobList(allCrs) {
-  const vobMap = new Map(); // vobName -> { crids: Set, fileCount }
+  const vobMap = new Map(); // vobName -> { crids: Set, files: Set }
 
   for (const cr of allCrs || []) {
     if (!cr.filePaths || cr.filePaths.length === 0) continue;
     const vobsInThisCR = new Set();
     for (const fp of cr.filePaths) {
+      if (isDirectoryElement(fp)) continue; // Skip directory elements
       const vob = extractVobFromPath(fp);
       if (!vob) continue;
       vobsInThisCR.add(vob);
-      if (!vobMap.has(vob)) vobMap.set(vob, { crids: new Set(), fileCount: 0 });
-      vobMap.get(vob).fileCount++;
+      if (!vobMap.has(vob)) vobMap.set(vob, { crids: new Set(), files: new Set() });
+      vobMap.get(vob).files.add(fp);
     }
     for (const vob of vobsInThisCR) {
       vobMap.get(vob).crids.add(cr.crid);
@@ -421,7 +422,7 @@ export function getVobList(allCrs) {
   const list = Array.from(vobMap.entries()).map(([vob, data]) => ({
     vob,
     crCount: data.crids.size,
-    fileCount: data.fileCount
+    fileCount: data.files.size
   }));
   list.sort((a, b) => b.crCount - a.crCount);
   return list;

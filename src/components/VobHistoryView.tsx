@@ -4,7 +4,12 @@ import {
   GitBranch,
   Search,
   Loader2,
+  FileCode,
   FileCode2,
+  FileText,
+  Terminal,
+  Settings,
+  Database,
   Clock,
   User,
   Tag,
@@ -12,11 +17,48 @@ import {
   RefreshCw,
   Download,
   ChevronLeft,
+  ChevronRight,
   Layers,
   History,
   GitCommit,
-  Folder
+  Folder,
+  Copy,
+  Check
 } from 'lucide-react';
+
+function getFileIcon(fileName: string) {
+  const lower = (fileName || '').toLowerCase();
+  if (lower.endsWith('.c') || lower.endsWith('.cc') || lower.endsWith('.cpp')) {
+    return <FileCode className="w-3.5 h-3.5 text-blue-400 shrink-0" />;
+  }
+  if (lower.endsWith('.h') || lower.endsWith('.hh') || lower.endsWith('.hpp')) {
+    return <FileCode className="w-3.5 h-3.5 text-purple-400 shrink-0" />;
+  }
+  if (lower.endsWith('.sh') || lower.endsWith('.csh') || lower.endsWith('.bash')) {
+    return <Terminal className="w-3.5 h-3.5 text-amber-400 shrink-0" />;
+  }
+  if (lower.endsWith('.sql') || lower.includes('.tbl') || lower.includes('.db')) {
+    return <Database className="w-3.5 h-3.5 text-emerald-400 shrink-0" />;
+  }
+  if (lower.startsWith('makefile') || lower === 'makeall' || lower.endsWith('.mk')) {
+    return <Settings className="w-3.5 h-3.5 text-rose-400 shrink-0" />;
+  }
+  return <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />;
+}
+
+function formatVobSubPath(filePath: string, vobName: string) {
+  if (!filePath) return { dir: '', file: '' };
+  const vobIdx = vobName ? filePath.indexOf(vobName) : -1;
+  let sub = vobIdx !== -1 ? filePath.slice(vobIdx + vobName.length).replace(/^\/+/, '') : filePath;
+  const lastSlash = sub.lastIndexOf('/');
+  if (lastSlash === -1) {
+    return { dir: '', file: sub };
+  }
+  return {
+    dir: sub.slice(0, lastSlash + 1),
+    file: sub.slice(lastSlash + 1)
+  };
+}
 import {
   fetchVobList,
   fetchVobHistory,
@@ -292,6 +334,7 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
   const [isCollecting, setIsCollecting] = useState(false);
   const [collectMessage, setCollectMessage] = useState<string | null>(null);
   const [retryingCrid, setRetryingCrid] = useState<string | null>(null);
+  const [copiedFilePath, setCopiedFilePath] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -479,33 +522,67 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
               ) : (
                 filteredEntries.map((entry, idx) => {
                   const isExpanded = expandedIdx === idx;
+                  const { dir, file } = formatVobSubPath(entry.filePath, selectedVob || '');
                   return (
                     <div
                       key={`${entry.crid}-${entry.filePath}-${idx}`}
-                      className="rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden"
+                      className="rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden hover:border-slate-700/80 transition-all"
                     >
                       <button
                         onClick={() => setExpandedIdx(isExpanded ? null : idx)}
-                        className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-slate-800/40 transition-colors text-left cursor-pointer"
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-slate-800/40 transition-colors text-left cursor-pointer group"
                       >
-                        <FileCode2 className="w-3.5 h-3.5 text-mantis-400 shrink-0" />
-                        <span className="text-xs font-mono text-slate-200 truncate flex-1">{entry.fileName}</span>
-                        <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1 shrink-0">
-                          <Clock className="w-3 h-3" />
-                          {entry.dateSubmitted || entry.lastUpdated || '-'}
-                        </span>
-                        {onSelectCR && (
-                          <span
-                            onClick={e => {
-                              e.stopPropagation();
-                              onSelectCR(entry.crid);
-                            }}
-                            className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-mantis-400 font-mono shrink-0 cursor-pointer"
-                            title="이 CR 상세 보기"
-                          >
-                            #{entry.crid}
+                        <div className="shrink-0 flex items-center">
+                          {getFileIcon(entry.fileName)}
+                        </div>
+
+                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                          {dir && (
+                            <span className="text-slate-500 font-mono text-[11px] truncate hidden sm:inline" title={entry.filePath}>
+                              {dir}
+                            </span>
+                          )}
+                          <span className="text-xs font-mono font-semibold text-slate-200 group-hover:text-mantis-300 transition-colors truncate">
+                            {file || entry.fileName}
                           </span>
-                        )}
+                          {entry.summary && (
+                            <span className="text-[11px] text-slate-400 truncate max-w-[240px] lg:max-w-[340px] hidden md:inline ml-2 pl-2 border-l border-slate-800 font-sans">
+                              {entry.summary}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          {entry.status === 'error' ? (
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-500/15 border border-rose-500/30 text-rose-300 font-mono">
+                              조회 실패
+                            </span>
+                          ) : entry.hasChanges ? (
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-mono">
+                              변경됨
+                            </span>
+                          ) : null}
+
+                          <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {entry.dateSubmitted || entry.lastUpdated || '-'}
+                          </span>
+
+                          {onSelectCR && (
+                            <span
+                              onClick={e => {
+                                e.stopPropagation();
+                                onSelectCR(entry.crid);
+                              }}
+                              className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-mantis-400 font-mono shrink-0 cursor-pointer border border-slate-700/60"
+                              title="이 CR 상세 보기"
+                            >
+                              #{entry.crid}
+                            </span>
+                          )}
+
+                          <ChevronRight className={`w-3.5 h-3.5 text-slate-500 transition-transform ${isExpanded ? 'rotate-90 text-mantis-400' : ''}`} />
+                        </div>
                       </button>
 
                       {isExpanded && (
@@ -519,7 +596,25 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                                 <User className="w-3 h-3" /> {entry.reporter}
                               </span>
                             )}
-                            <span className="font-mono text-slate-500 truncate max-w-full">{entry.filePath}</span>
+                            <div className="flex items-center gap-1.5 font-mono text-slate-500 text-[10px] bg-slate-950/70 px-2 py-1 rounded-md border border-slate-800 max-w-full">
+                              <span className="truncate">{entry.filePath}</span>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigator.clipboard.writeText(entry.filePath);
+                                  setCopiedFilePath(entry.filePath);
+                                  setTimeout(() => setCopiedFilePath(null), 1500);
+                                }}
+                                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors shrink-0"
+                                title="파일 전체 경로 복사"
+                              >
+                                {copiedFilePath === entry.filePath ? (
+                                  <Check className="w-3 h-3 text-mantis-400" />
+                                ) : (
+                                  <Copy className="w-3 h-3" />
+                                )}
+                              </button>
+                            </div>
                           </div>
                           {entry.status === 'error' && (
                             <div className="p-3 rounded-lg bg-rose-950/30 border border-rose-800/40 text-rose-300 text-[11px] flex items-center justify-between gap-2">
