@@ -306,10 +306,8 @@ const FileVersionChainPanel: React.FC<{
   };
 
   // Render navigation toolbar (Step timeline & Dropdown)
-  const renderStepNavigation = (compact = false) => {
+  const renderStepNavigation = () => {
     if (chain.length <= 1) return null;
-    const latestVersion = chain[chain.length - 1].version;
-    const initialVersion = chain[0].version;
 
     return (
       <div className="px-3 py-1.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between gap-2 text-xs shrink-0 overflow-x-auto select-none">
@@ -338,24 +336,6 @@ const FileVersionChainPanel: React.FC<{
               </button>
             );
           })}
-
-          {/* Compare Initial vs Latest */}
-          {chain.length > 2 && (
-            <button
-              onClick={() => {
-                setLeftVersion(initialVersion);
-                setRightVersion(latestVersion);
-              }}
-              className={`px-2 py-0.5 rounded text-[10px] font-mono transition-all cursor-pointer border ml-1 ${
-                currentLeft === initialVersion && currentRight === latestVersion
-                  ? 'bg-amber-500/25 text-amber-300 border-amber-500/50 shadow-sm font-bold'
-                  : 'bg-slate-950/80 hover:bg-slate-800 text-slate-400 hover:text-amber-300 border-slate-800'
-              }`}
-              title={`최초(v${initialVersion})와 최신(v${latestVersion}) 전체 변경사항 비교`}
-            >
-              v{initialVersion} → v{latestVersion} (전체)
-            </button>
-          )}
         </div>
 
         {/* Dropdown pickers */}
