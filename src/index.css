@@ -154,6 +154,28 @@
   background: rgba(74, 222, 128, 0.4);
 }
 
+/* Prominent Horizontal Scrollbar for Version Chains & Diff Views */
+.custom-horizontal-scrollbar::-webkit-scrollbar {
+  height: 12px !important;
+}
+
+.custom-horizontal-scrollbar::-webkit-scrollbar-track {
+  background: rgba(2, 6, 23, 0.85);
+  border-top: 1px solid rgba(51, 65, 85, 0.6);
+  border-radius: 0 0 8px 8px;
+}
+
+.custom-horizontal-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(52, 211, 153, 0.5);
+  border: 2px solid rgba(2, 6, 23, 0.85);
+  border-radius: 9999px;
+  min-width: 40px;
+}
+
+.custom-horizontal-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(52, 211, 153, 0.85);
+}
+
 /* Glassmorphism Classes */
 .glass-panel {
   background: var(--card-bg);

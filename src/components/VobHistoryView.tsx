@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { diffLines } from 'diff';
 import {
   GitBranch,
@@ -23,7 +24,11 @@ import {
   GitCommit,
   Folder,
   Copy,
-  Check
+  Check,
+  Maximize2,
+  Minimize2,
+  WrapText,
+  X
 } from 'lucide-react';
 
 function getFileIcon(fileName: string) {
@@ -73,15 +78,15 @@ import {
 import { SSHConfig } from '../types/cr';
 
 // One version's content, line-diffed against the PREVIOUS column's content
-// (or shown plain if it's the leftmost column). Mirrors MultiVersionCompareModal's
-// column rendering so this inline chain view and the modal look identical.
 const VersionColumn: React.FC<{
   version: number;
   crid: string | null;
   content: string;
   prevContent: string | null;
   error?: string;
-}> = ({ version, crid, content, prevContent, error }) => {
+  wrapLines?: boolean;
+  isModal?: boolean;
+}> = ({ version, crid, content, prevContent, error, wrapLines, isModal }) => {
   const lines = useMemo(() => {
     if (error) return [];
     if (prevContent === null) {
@@ -99,8 +104,12 @@ const VersionColumn: React.FC<{
   }, [content, prevContent, error]);
 
   return (
-    <div className="flex-1 min-w-[360px] max-w-[520px] shrink-0 flex flex-col border-r border-slate-800 last:border-r-0">
-      <div className="px-2.5 py-1.5 bg-slate-900/90 border-b border-slate-800 flex items-center gap-1.5 sticky top-0 z-10">
+    <div
+      className={`flex-1 ${
+        isModal ? 'min-w-[460px] max-w-[680px]' : 'min-w-[360px] max-w-[520px]'
+      } shrink-0 flex flex-col border-r border-slate-800 last:border-r-0`}
+    >
+      <div className="px-2.5 py-1.5 bg-slate-900/95 border-b border-slate-800 flex items-center gap-1.5 sticky top-0 z-10 select-none">
         {content.includes('[DIRECTORY:') ? (
           <Folder className="w-3 h-3 text-amber-400 shrink-0" />
         ) : (
@@ -111,12 +120,18 @@ const VersionColumn: React.FC<{
           <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/15 text-amber-300 font-mono">폴더</span>
         )}
         {crid ? (
-          <span className="text-[9px] font-mono text-slate-500 truncate ml-auto">CR #{crid}</span>
+          <span className="text-[9px] font-mono text-slate-300 bg-slate-800/90 px-1.5 py-0.5 rounded border border-slate-700/80 truncate ml-auto">
+            CR #{crid}
+          </span>
         ) : (
           <span className="text-[9px] text-slate-600 italic ml-auto">CR 정보 없음</span>
         )}
       </div>
-      <div className="flex-1 overflow-y-auto font-mono text-[10px] leading-5 bg-slate-950 max-h-80">
+      <div
+        className={`flex-1 overflow-y-auto font-mono text-[10px] leading-5 bg-slate-950 ${
+          isModal ? 'h-full' : 'max-h-80'
+        } p-1`}
+      >
         {error ? (
           <div className="p-2.5 text-rose-300 text-[10px] flex items-center gap-1.5">
             <AlertCircle className="w-3 h-3 shrink-0" />
@@ -126,9 +141,13 @@ const VersionColumn: React.FC<{
           lines.map((l, idx) => {
             let cls = 'text-slate-300';
             if (l.type === 'added') cls = 'bg-emerald-950/40 text-emerald-300 border-l-2 border-emerald-500';
-            else if (l.type === 'removed') cls = 'bg-rose-950/40 text-rose-300 border-l-2 border-rose-500 line-through decoration-rose-500/40';
+            else if (l.type === 'removed')
+              cls = 'bg-rose-950/40 text-rose-300 border-l-2 border-rose-500 line-through decoration-rose-500/40';
             return (
-              <div key={idx} className={`px-2 whitespace-pre ${cls}`}>
+              <div
+                key={idx}
+                className={`px-2 ${wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'} ${cls}`}
+              >
                 {l.text || ' '}
               </div>
             );
@@ -139,10 +158,7 @@ const VersionColumn: React.FC<{
   );
 };
 
-// Shows the FULL version chain (0..latest) for one file, independent of any
-// single CR, as horizontally-scrollable side-by-side columns (same look as
-// MultiVersionCompareModal). Fetches every version's real content over SSH
-// as soon as it mounts — no manual per-version load step.
+// Shows the FULL version chain (0..latest) for one file
 const FileVersionChainPanel: React.FC<{
   filePath: string;
   checkinLog?: string;
@@ -154,6 +170,17 @@ const FileVersionChainPanel: React.FC<{
   const [loadingContent, setLoadingContent] = useState(false);
   const [contentError, setContentError] = useState<string | null>(null);
   const [contents, setContents] = useState<Record<number, { content: string; error?: string }>>({});
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [wrapLines, setWrapLines] = useState(false);
+
+  const inlineScrollRef = useRef<HTMLDivElement>(null);
+  const modalScrollRef = useRef<HTMLDivElement>(null);
+
+  const handleScroll = (ref: React.RefObject<HTMLDivElement | null>, direction: 'left' | 'right') => {
+    if (!ref.current) return;
+    const amount = direction === 'left' ? -420 : 420;
+    ref.current.scrollBy({ left: amount, behavior: 'smooth' });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -165,7 +192,9 @@ const FileVersionChainPanel: React.FC<{
       .finally(() => {
         if (!cancelled) setLoadingChain(false);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [filePath]);
 
   useEffect(() => {
@@ -198,9 +227,21 @@ const FileVersionChainPanel: React.FC<{
       .finally(() => {
         if (!cancelled) setLoadingContent(false);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chain, filePath]);
+
+  // Handle ESC to close modal
+  useEffect(() => {
+    if (!isModalOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsModalOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isModalOpen]);
 
   if (loadingChain) {
     return (
@@ -214,42 +255,213 @@ const FileVersionChainPanel: React.FC<{
     return <div className="p-4 text-xs text-slate-500">이 파일의 버전 이력을 찾을 수 없습니다.</div>;
   }
 
+  const fileName = filePath.split('/').pop() || filePath;
+
   return (
-    <div className="space-y-1.5 bg-slate-950/40 rounded-xl border border-slate-800/80 overflow-hidden">
-      <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-300 px-3 pt-2.5">
-        <History className="w-3.5 h-3.5 text-mantis-400" />
-        전체 버전 이력 (0 ~ {chain.length - 1}) — 좌우로 스크롤하여 비교
+    <>
+      <div className="space-y-1.5 bg-slate-950/40 rounded-xl border border-slate-800/80 overflow-hidden">
+        {/* Header toolbar */}
+        <div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-300 px-3 pt-2.5 pb-1">
+          <div className="flex items-center gap-1.5 truncate min-w-0">
+            <History className="w-3.5 h-3.5 text-mantis-400 shrink-0" />
+            <span className="truncate">전체 버전 이력 (0 ~ {chain.length - 1})</span>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* Wrap toggle */}
+            <button
+              onClick={() => setWrapLines(prev => !prev)}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-sans transition-colors cursor-pointer border ${
+                wrapLines
+                  ? 'bg-mantis-500/20 text-mantis-300 border-mantis-500/40'
+                  : 'bg-slate-900 hover:bg-slate-800 text-slate-400 border-slate-800'
+              }`}
+              title="줄바꿈 토글 (ON: 긴 줄 가로 스크롤 방지)"
+            >
+              <WrapText className="w-3 h-3" />
+              <span>{wrapLines ? '줄바꿈 켜짐' : '줄바꿈'}</span>
+            </button>
+
+            {/* Scroll navigation buttons */}
+            <div className="flex items-center rounded-lg bg-slate-900 border border-slate-800 overflow-hidden">
+              <button
+                onClick={() => handleScroll(inlineScrollRef, 'left')}
+                className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+                title="이전 버전으로 가로 스크롤"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <div className="w-[1px] h-3 bg-slate-800" />
+              <button
+                onClick={() => handleScroll(inlineScrollRef, 'right')}
+                className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+                title="다음 버전으로 가로 스크롤"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Fullscreen Modal button */}
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-mantis-400 hover:text-mantis-300 border border-slate-700 text-[10px] font-sans transition-all cursor-pointer shadow-sm"
+              title="설정창처럼 전체화면 팝업으로 크게 보기"
+            >
+              <Maximize2 className="w-3 h-3" />
+              <span>크게 보기</span>
+            </button>
+          </div>
+        </div>
+
+        {loadingContent ? (
+          <div className="p-6 flex flex-col items-center gap-2 text-slate-500">
+            <Loader2 className="w-5 h-5 animate-spin text-mantis-400" />
+            <span className="text-xs">ClearCase에서 {chain.length}개 버전을 병렬로 읽어오는 중...</span>
+          </div>
+        ) : contentError ? (
+          <div className="p-3 mx-3 mb-3 rounded-lg bg-rose-950/30 border border-rose-800/40 text-rose-300 text-[11px] flex items-center gap-1.5">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            {contentError}
+          </div>
+        ) : (
+          <div className="relative border-t border-slate-800/80">
+            {/* Scrollable Container with prominent custom scrollbar */}
+            <div
+              ref={inlineScrollRef}
+              className="overflow-x-auto overflow-y-hidden flex max-h-80 custom-horizontal-scrollbar pb-1"
+            >
+              {chain.map((item, idx) => {
+                const c = contents[item.version];
+                const prev = idx > 0 ? contents[chain[idx - 1].version]?.content ?? null : null;
+                return (
+                  <VersionColumn
+                    key={item.version}
+                    version={item.version}
+                    crid={item.crid}
+                    content={c?.content ?? ''}
+                    prevContent={prev}
+                    error={c ? undefined : '이 버전은 조회되지 않았습니다.'}
+                    wrapLines={wrapLines}
+                    isModal={false}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
-      {loadingContent ? (
-        <div className="p-6 flex flex-col items-center gap-2 text-slate-500">
-          <Loader2 className="w-5 h-5 animate-spin text-mantis-400" />
-          <span className="text-xs">ClearCase에서 {chain.length}개 버전을 병렬로 읽어오는 중...</span>
-        </div>
-      ) : contentError ? (
-        <div className="p-3 mx-3 mb-3 rounded-lg bg-rose-950/30 border border-rose-800/40 text-rose-300 text-[11px] flex items-center gap-1.5">
-          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-          {contentError}
-        </div>
-      ) : (
-        <div className="overflow-x-auto overflow-y-hidden flex border-t border-slate-800/60 max-h-80">
-          {chain.map((item, idx) => {
-            const c = contents[item.version];
-            const prev = idx > 0 ? contents[chain[idx - 1].version]?.content ?? null : null;
-            return (
-              <VersionColumn
-                key={item.version}
-                version={item.version}
-                crid={item.crid}
-                content={c?.content ?? ''}
-                prevContent={prev}
-                error={c ? undefined : '이 버전은 조회되지 않았습니다.'}
-              />
-            );
-          })}
-        </div>
-      )}
-    </div>
+      {/* Full-Screen / Large Modal for Version Compare */}
+      {isModalOpen &&
+        createPortal(
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-200">
+            <div className="w-[98vw] max-w-[1700px] h-[94vh] rounded-2xl bg-slate-950 border border-slate-700 shadow-2xl flex flex-col overflow-hidden">
+              {/* Modal Header */}
+              <div className="p-3.5 bg-slate-900/95 border-b border-slate-800 flex items-center justify-between gap-3 shrink-0">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="p-1.5 rounded-lg bg-mantis-500/15 border border-mantis-500/30 text-mantis-400 shrink-0">
+                    <History className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold font-mono text-slate-100 truncate">{fileName}</span>
+                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 font-mono">
+                        전체 버전 0 ~ {chain.length - 1} ({chain.length}개)
+                      </span>
+                    </div>
+                    <div className="text-[11px] font-mono text-slate-500 truncate" title={filePath}>
+                      {filePath}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* Wrap Lines Toggle */}
+                  <button
+                    onClick={() => setWrapLines(prev => !prev)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer border ${
+                      wrapLines
+                        ? 'bg-mantis-500/20 text-mantis-300 border-mantis-500/40'
+                        : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                    }`}
+                  >
+                    <WrapText className="w-3.5 h-3.5" />
+                    <span>{wrapLines ? '줄바꿈 해제' : '코드 줄바꿈'}</span>
+                  </button>
+
+                  {/* Horizontal navigation buttons */}
+                  <div className="flex items-center rounded-lg bg-slate-800 border border-slate-700 overflow-hidden">
+                    <button
+                      onClick={() => handleScroll(modalScrollRef, 'left')}
+                      className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer text-xs font-mono"
+                      title="이전 버전 컬럼으로 스크롤"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      <span>이전</span>
+                    </button>
+                    <div className="w-[1px] h-4 bg-slate-700" />
+                    <button
+                      onClick={() => handleScroll(modalScrollRef, 'right')}
+                      className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer text-xs font-mono"
+                      title="다음 버전 컬럼으로 스크롤"
+                    >
+                      <span>다음</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Close button */}
+                  <button
+                    onClick={() => setIsModalOpen(false)}
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-100 transition-colors cursor-pointer ml-1"
+                    title="닫기 (ESC)"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Body */}
+              <div className="flex-1 overflow-hidden relative flex flex-col bg-slate-950">
+                {loadingContent ? (
+                  <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-400">
+                    <Loader2 className="w-8 h-8 animate-spin text-mantis-400" />
+                    <span className="text-sm">버전 소스코드를 불러오는 중입니다...</span>
+                  </div>
+                ) : contentError ? (
+                  <div className="p-6 m-4 rounded-xl bg-rose-950/40 border border-rose-800 text-rose-300 text-sm flex items-center gap-2">
+                    <AlertCircle className="w-5 h-5 shrink-0" />
+                    <span>{contentError}</span>
+                  </div>
+                ) : (
+                  <div
+                    ref={modalScrollRef}
+                    className="flex-1 overflow-x-auto overflow-y-hidden flex custom-horizontal-scrollbar pb-2"
+                  >
+                    {chain.map((item, idx) => {
+                      const c = contents[item.version];
+                      const prev = idx > 0 ? contents[chain[idx - 1].version]?.content ?? null : null;
+                      return (
+                        <VersionColumn
+                          key={item.version}
+                          version={item.version}
+                          crid={item.crid}
+                          content={c?.content ?? ''}
+                          prevContent={prev}
+                          error={c ? undefined : '이 버전은 조회되지 않았습니다.'}
+                          wrapLines={wrapLines}
+                          isModal={true}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+    </>
   );
 };
 
