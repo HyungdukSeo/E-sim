@@ -57,6 +57,46 @@ const BINARY_EXTS = new Set([
   '.bin', '.dat'
 ]);
 
+const KNOWN_CODE_EXTS = new Set([
+  'c', 'h', 'cpp', 'cc', 'cxx', 'hpp', 'hh', 'hxx', 's', 'asm',
+  'sh', 'bash', 'csh', 'ksh', 'tcsh', 'py', 'pl', 'pm', 'rb',
+  'java', 'go', 'rs', 'js', 'ts', 'jsx', 'tsx', 'json', 'xml',
+  'yaml', 'yml', 'sql', 'tbl', 'awk', 'sed', 'mk', 'mak',
+  'cfg', 'conf', 'ini', 'properties', 'txt', 'md', 'csv', 'log',
+  'diff', 'patch', 'pc', 'ec', 'sqc', 'def', 'idl'
+]);
+
+/**
+ * Determine if an entry is a ClearCase directory element or branch activity rather than a source file
+ */
+export function isDirectoryElement(fileName, filePath = '', unifiedDiff = '') {
+  if (!fileName) return false;
+  // ClearCase branch activity names
+  if (fileName.startsWith('crdb') || fileName.startsWith('cr_')) return true;
+  // Explicit directory marker in unified diff
+  if (unifiedDiff && unifiedDiff.includes('[DIRECTORY:')) return true;
+
+  const cleanName = fileName.split('/').pop() || fileName;
+  const lower = cleanName.toLowerCase();
+
+  // Known build/doc files without extension
+  const knownFiles = new Set(['makefile', 'makeall', 'dockerfile', 'readme', 'license', 'cmakelists.txt']);
+  if (knownFiles.has(lower) || lower.startsWith('makefile')) return false;
+
+  // Platform/arch directories (e.g. Linux_2.6.32_ICC, SunOS_5.10, etc.)
+  if (/^(linux|sunos|aix|hp-ux|solaris)_/i.test(cleanName)) return true;
+
+  // Recognized source/code/config file extension
+  const dotIndex = cleanName.lastIndexOf('.');
+  if (dotIndex > 0) {
+    const ext = cleanName.slice(dotIndex + 1).toLowerCase();
+    if (KNOWN_CODE_EXTS.has(ext)) return false;
+  }
+
+  // Without recognized extension and not a known build file -> Directory element in ClearCase
+  return true;
+}
+
 function getCacheFilePath(crid) {
   const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
   return path.join(DIFF_CACHE_DIR, `${safeId}.json`);
@@ -89,6 +129,19 @@ export function getCRDiffCache(crid) {
     try {
       const content = fs.readFileSync(filePath, 'utf8');
       const parsed = JSON.parse(content);
+      
+      // Filter out directory elements and branch pseudo-elements from files list
+      if (parsed && Array.isArray(parsed.files)) {
+        const filePaths = parsed.files.map(f => f.filePath || f.fileName || '');
+        parsed.files = parsed.files.filter(f => {
+          if (f.isDirectory) return false;
+          if (isDirectoryElement(f.fileName, f.filePath, f.unifiedDiff)) return false;
+          const fp = f.filePath || f.fileName || '';
+          if (fp && filePaths.some(other => other !== fp && other.startsWith(fp + '/'))) return false;
+          return true;
+        });
+      }
+
       // Keep index updated
       if (parsed.cachedAt) {
         cacheIndex.set(safeId, {
@@ -210,6 +263,14 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = 10, forceRef
   const filePaths = cr.filePaths || [];
   const checkinLog = cr.checkinLog || '';
 
+  // Detect directory elements from filePaths
+  const dirPaths = new Set();
+  for (const fp of filePaths) {
+    if (filePaths.some(other => other !== fp && other.startsWith(fp + '/'))) {
+      dirPaths.add(fp);
+    }
+  }
+
   const results = [];
   let processed = 0;
 
@@ -219,8 +280,8 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = 10, forceRef
     const fileName = files[i];
     const filePath = filePaths[i] || fileName;
 
-    // Skip ClearCase branch activity names (e.g. crdb00016126) that are not actual files/directories
-    if (fileName.startsWith('crdb') || fileName.startsWith('cr_')) continue;
+    // Skip directory elements & branch pseudo-elements
+    if (isDirectoryElement(fileName, filePath) || dirPaths.has(filePath)) continue;
 
     const ext = fileName.includes('.') 
       ? fileName.substring(fileName.lastIndexOf('.')).toLowerCase() 
@@ -236,6 +297,10 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = 10, forceRef
 
     try {
       const diffRes = await fetchFileDiffSSH(validServers, filePath, checkinLog, { priority: 'background' });
+      // Skip if diff result indicates a directory element
+      if (diffRes.isDirectory || (diffRes.unifiedDiff && diffRes.unifiedDiff.includes('[DIRECTORY:'))) {
+        continue;
+      }
       results.push({
         fileName,
         filePath,
@@ -393,6 +458,10 @@ export function getVobHistory(vobName, allCrs) {
 
     for (const f of cached.files) {
       if (extractVobFromPath(f.filePath) !== vobName) continue; // this CR's other files may be in a different VOB
+      // Skip directory elements and branch pseudo-elements completely
+      if (f.isDirectory || isDirectoryElement(f.fileName, f.filePath, f.unifiedDiff)) continue;
+      if (cached.files.some(other => other.filePath !== f.filePath && other.filePath.startsWith(f.filePath + '/'))) continue;
+
       entries.push({
         crid: cr.crid,
         id: cr.id,
@@ -404,7 +473,7 @@ export function getVobHistory(vobName, allCrs) {
         reporter: cr.reporter || '',
         fileName: f.fileName,
         filePath: f.filePath,
-        isDirectory: f.isDirectory || (f.unifiedDiff && f.unifiedDiff.includes('[DIRECTORY:')) || false,
+        isDirectory: false,
         status: f.status,
         hasChanges: f.hasChanges,
         error: f.error || null,

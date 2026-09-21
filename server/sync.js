@@ -123,12 +123,32 @@ export function parseTitleTags(title) {
   return { customer, vob, module, authorInTitle, cleanSummary: cleanSummary || title };
 }
 
+/**
+ * Determine if an entry is a ClearCase directory element or branch activity rather than a source file
+ */
+export function isDirectoryElement(fileName, filePath = '') {
+  if (!fileName) return false;
+  // ClearCase branch activity names
+  if (fileName.startsWith('crdb') || fileName.startsWith('cr_')) return true;
+
+  const cleanName = fileName.split('/').pop() || fileName;
+  const hasExt = cleanName.includes('.') && !cleanName.startsWith('.');
+  if (hasExt) return false; // Typical source file with extension
+
+  // Known extensionless files
+  const lower = cleanName.toLowerCase();
+  const knownFiles = new Set(['makefile', 'makeall', 'dockerfile', 'readme', 'license', 'cmakelists.txt']);
+  if (knownFiles.has(lower) || lower.startsWith('makefile')) return false;
+
+  // Extensionless and not a known build file -> Directory element in ClearCase
+  return true;
+}
+
 export function parseCheckinLog(log) {
   if (!log) return { files: [], filePaths: [] };
 
   const lines = log.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  const filesSet = new Set();
-  const filePathsSet = new Set();
+  const rawPaths = [];
 
   for (const line of lines) {
     const cleanLine = line.replace(/^"+|"+$/g, '').trim();
@@ -141,16 +161,69 @@ export function parseCheckinLog(log) {
       const normalizedPath = rawPath.replace(/(_|@@)\/(main|branch|[a-zA-Z0-9_\-\.]+)\/.*$/, '').replace(/_$/, '');
       const fileName = normalizedPath.split('/').pop() || '';
       
-      if (fileName && !fileName.startsWith('crdb') && !fileName.startsWith('cr_')) {
-        filesSet.add(fileName);
-        filePathsSet.add(normalizedPath);
+      if (fileName && !isDirectoryElement(fileName, normalizedPath)) {
+        rawPaths.push(normalizedPath);
       }
     }
+  }
+
+  const uniquePaths = Array.from(new Set(rawPaths));
+  // Detect ClearCase directory elements:
+  // When a file is added/deleted/renamed in ClearCase, its parent directory element is checked in too.
+  // Any path that has children in the same check-in list is 100% a directory element.
+  const dirPaths = new Set();
+  for (const p of uniquePaths) {
+    if (uniquePaths.some(other => other !== p && other.startsWith(p + '/'))) {
+      dirPaths.add(p);
+    }
+  }
+
+  const filesSet = new Set();
+  const filePathsSet = new Set();
+
+  for (const p of uniquePaths) {
+    if (dirPaths.has(p)) continue;
+    const fileName = p.split('/').pop() || '';
+    if (isDirectoryElement(fileName, p)) continue;
+    filesSet.add(fileName);
+    filePathsSet.add(p);
   }
 
   return {
     files: Array.from(filesSet),
     filePaths: Array.from(filePathsSet)
+  };
+}
+
+/**
+ * Filter directory elements from a CR object's files and filePaths
+ */
+export function cleanCRFilePaths(cr) {
+  if (!cr || !Array.isArray(cr.filePaths) || cr.filePaths.length === 0) return cr;
+  
+  const rawPaths = cr.filePaths;
+  const dirPaths = new Set();
+  for (const p of rawPaths) {
+    if (rawPaths.some(other => other !== p && other.startsWith(p + '/'))) {
+      dirPaths.add(p);
+    }
+  }
+  
+  const filteredPaths = [];
+  const filteredFiles = [];
+  for (let i = 0; i < rawPaths.length; i++) {
+    const fp = rawPaths[i];
+    const fn = (cr.files && cr.files[i]) || fp.split('/').pop() || '';
+    if (!dirPaths.has(fp) && !isDirectoryElement(fn, fp)) {
+      filteredPaths.push(fp);
+      filteredFiles.push(fn);
+    }
+  }
+  
+  return {
+    ...cr,
+    filePaths: filteredPaths,
+    files: filteredFiles
   };
 }
 
@@ -168,7 +241,8 @@ export function getLocalDatabase() {
 
   try {
     const raw = fs.readFileSync(DB_FILE, 'utf-8');
-    inMemoryCrs = JSON.parse(raw);
+    const parsedCrs = JSON.parse(raw);
+    inMemoryCrs = parsedCrs.map(cleanCRFilePaths);
     inMemoryMeta = { status: 'cached', totalCount: inMemoryCrs.length, lastSyncTime: null };
     if (fs.existsSync(META_FILE)) {
       inMemoryMeta = JSON.parse(fs.readFileSync(META_FILE, 'utf-8'));

@@ -53,17 +53,66 @@ function getFileIcon(fileName: string) {
   return <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />;
 }
 
+const KNOWN_CODE_EXTS = new Set([
+  'c', 'h', 'cpp', 'cc', 'cxx', 'hpp', 'hh', 'hxx', 's', 'asm',
+  'sh', 'bash', 'csh', 'ksh', 'tcsh', 'py', 'pl', 'pm', 'rb',
+  'java', 'go', 'rs', 'js', 'ts', 'jsx', 'tsx', 'json', 'xml',
+  'yaml', 'yml', 'sql', 'tbl', 'awk', 'sed', 'mk', 'mak',
+  'cfg', 'conf', 'ini', 'properties', 'txt', 'md', 'csv', 'log',
+  'diff', 'patch', 'pc', 'ec', 'sqc', 'def', 'idl'
+]);
+
+export function isDirectoryElement(path: string): boolean {
+  if (!path) return false;
+  const fileName = path.split('/').pop() || path;
+  if (fileName.startsWith('crdb') || fileName.startsWith('cr_')) return true;
+
+  const cleanName = fileName;
+  const lower = cleanName.toLowerCase();
+  const knownFiles = new Set(['makefile', 'makeall', 'dockerfile', 'readme', 'license', 'cmakelists.txt']);
+  if (knownFiles.has(lower) || lower.startsWith('makefile')) return false;
+
+  // Platform/arch directories (e.g. Linux_2.6.32_ICC, SunOS_5.10, etc.)
+  if (/^(linux|sunos|aix|hp-ux|solaris)_/i.test(cleanName)) return true;
+
+  const dotIndex = cleanName.lastIndexOf('.');
+  if (dotIndex > 0) {
+    const ext = cleanName.slice(dotIndex + 1).toLowerCase();
+    if (KNOWN_CODE_EXTS.has(ext)) return false;
+  }
+  return true;
+}
+
+export function filterOutDirectories(paths: string[]): string[] {
+  if (!paths || paths.length === 0) return [];
+  // 1. Detect any path that is a parent prefix of another path
+  const dirSet = new Set<string>();
+  for (const p of paths) {
+    if (paths.some(other => other !== p && other.startsWith(p + '/'))) {
+      dirSet.add(p);
+    }
+  }
+
+  return paths.filter(p => {
+    if (dirSet.has(p)) return false;
+    if (isDirectoryElement(p)) return false;
+    return true;
+  });
+}
+
 // Build raw tree from paths
 function buildRawTree(paths: string[]): TreeNode {
+  const cleanPaths = filterOutDirectories(paths);
+
   const root: TreeNode = {
     name: 'root',
     fullPath: '',
     isFolder: true,
-    fileCount: paths.length,
+    fileCount: cleanPaths.length,
     children: {}
   };
 
-  for (const rawPath of paths) {
+  for (const rawPath of cleanPaths) {
     const cleanPath = rawPath.replace(/^\/+/, '');
     const parts = cleanPath.split('/');
 
@@ -92,6 +141,15 @@ function buildRawTree(paths: string[]): TreeNode {
       current = current.children[part];
     }
   }
+
+  // Ensure any node with children is strictly treated as a folder
+  function ensureFolderFlags(node: TreeNode) {
+    if (Object.keys(node.children).length > 0) {
+      node.isFolder = true;
+      Object.values(node.children).forEach(ensureFolderFlags);
+    }
+  }
+  ensureFolderFlags(root);
 
   return root;
 }
@@ -250,12 +308,17 @@ export const FileTreeView: React.FC<FileTreeViewProps> = ({ filePaths, onOpenDif
   const [filterQuery, setFilterQuery] = useState('');
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
 
-  // Filter paths
+  // Filter out directory elements from raw filePaths
+  const cleanPaths = useMemo(() => {
+    return filterOutDirectories(filePaths || []);
+  }, [filePaths]);
+
+  // Filter paths by search query
   const filteredPaths = useMemo(() => {
-    if (!filterQuery.trim()) return filePaths;
+    if (!filterQuery.trim()) return cleanPaths;
     const q = filterQuery.toLowerCase();
-    return filePaths.filter(p => p.toLowerCase().includes(q));
-  }, [filePaths, filterQuery]);
+    return cleanPaths.filter(p => p.toLowerCase().includes(q));
+  }, [cleanPaths, filterQuery]);
 
   // Build tree (compacted or raw)
   const tree = useMemo(() => {
@@ -273,7 +336,7 @@ export const FileTreeView: React.FC<FileTreeViewProps> = ({ filePaths, onOpenDif
         if (c.isFolder) autoOpen(c, depth + 1);
       });
     }
-    const raw = buildRawTree(filePaths);
+    const raw = buildRawTree(cleanPaths);
     const t = compactTree(raw);
     autoOpen(t, 0);
     return initial;
@@ -492,7 +555,7 @@ export const FileTreeView: React.FC<FileTreeViewProps> = ({ filePaths, onOpenDif
       <div className="flex items-center justify-between text-[11px] text-main0 px-1 font-mono">
         <span>
           총 <strong className="text-slate-300">{filteredPaths.length.toLocaleString()}</strong>개 파일
-          {filteredPaths.length !== filePaths.length && ` (전체 ${filePaths.length.toLocaleString()}개 중 필터됨)`}
+          {filteredPaths.length !== cleanPaths.length && ` (전체 ${cleanPaths.length.toLocaleString()}개 중 필터됨)`}
         </span>
         <span className="text-[10px] text-main0 font-sans">
           💡 <strong className="text-amber-400">압축 경로</strong>: 단일 경로를 한 줄로 결합하여 분기 지점(<code className="text-slate-300">BASE</code>, <code className="text-slate-300">SSW</code>, <code className="text-slate-300">STK</code> 등)을 즉시 펼쳐볼 수 있습니다.

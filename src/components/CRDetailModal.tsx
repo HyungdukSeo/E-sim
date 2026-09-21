@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { CRItem, SSHConfig, AppSettings } from '../types/cr';
 import { SimilarCRs } from './SimilarCRs';
-import { FileTreeView } from './FileTreeView';
+import { FileTreeView, filterOutDirectories } from './FileTreeView';
 import { CRCodeChangesView } from './CRCodeChangesView';
 import { DiffViewerModal } from './DiffViewerModal';
 import { fetchCRDetail, fetchCRDiffCache, analyzeCRDiffAPI, loadSettings } from '../services/api';
@@ -129,6 +129,7 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
 
   if (!isOpen || !currentCR) return null;
   const crItem = currentCR;
+  const actualFilePaths = filterOutDirectories(crItem.filePaths || []);
   const isBookmarked = bookmarks.has(crItem.crid);
 
   const mantisLink = `${mantisUrl.replace(/\/$/, '')}/view.php?id=${crItem.id}`;
@@ -310,9 +311,9 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
         >
           <GitBranch className="w-3.5 h-3.5" />
           수정 파일 트리
-          {crItem.files && crItem.files.length > 0 && (
+          {actualFilePaths.length > 0 && (
             <span className="px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-400 text-[10px]">
-              {crItem.files.length}
+              {actualFilePaths.length}
             </span>
           )}
         </button>
@@ -546,7 +547,7 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
 
         {activeTab === 'checkin' && (
           <FileTreeView 
-            filePaths={crItem.filePaths || []} 
+            filePaths={actualFilePaths} 
             onOpenDiff={path => setDiffTargetFile(path)}
           />
         )}

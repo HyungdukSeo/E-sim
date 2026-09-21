@@ -349,9 +349,25 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
 
   const filteredEntries = useMemo(() => {
     if (!history) return [];
+    // Completely exclude ClearCase directory elements and branch pseudo-elements from timeline list
+    const isDir = (name: string, diff?: string) => {
+      if (!name) return false;
+      if (name.startsWith('crdb') || name.startsWith('cr_')) return true;
+      if (diff && diff.includes('[DIRECTORY:')) return true;
+      const clean = name.split('/').pop() || name;
+      if (clean.includes('.') && !clean.startsWith('.')) return false;
+      const lower = clean.toLowerCase();
+      const known = new Set(['makefile', 'makeall', 'dockerfile', 'readme', 'license', 'cmakelists.txt']);
+      if (known.has(lower) || lower.startsWith('makefile')) return false;
+      return true;
+    };
+
+    const nonDirEntries = (history.entries || []).filter(
+      e => !e.isDirectory && !isDir(e.fileName, e.unifiedDiff)
+    );
     const q = fileQuery.trim().toLowerCase();
-    if (!q) return history.entries;
-    return history.entries.filter(
+    if (!q) return nonDirEntries;
+    return nonDirEntries.filter(
       e =>
         e.fileName.toLowerCase().includes(q) ||
         e.crid.toLowerCase().includes(q) ||
@@ -472,17 +488,8 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                         onClick={() => setExpandedIdx(isExpanded ? null : idx)}
                         className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-slate-800/40 transition-colors text-left cursor-pointer"
                       >
-                        {entry.isDirectory || (!entry.fileName.includes('.') && (entry.unifiedDiff?.includes('[DIRECTORY:') || !entry.error)) ? (
-                          <Folder className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                        ) : (
-                          <FileCode2 className="w-3.5 h-3.5 text-mantis-400 shrink-0" />
-                        )}
+                        <FileCode2 className="w-3.5 h-3.5 text-mantis-400 shrink-0" />
                         <span className="text-xs font-mono text-slate-200 truncate flex-1">{entry.fileName}</span>
-                        {entry.isDirectory || (!entry.fileName.includes('.') && (entry.unifiedDiff?.includes('[DIRECTORY:') || !entry.error)) ? (
-                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono shrink-0">
-                            디렉터리
-                          </span>
-                        ) : null}
                         <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1 shrink-0">
                           <Clock className="w-3 h-3" />
                           {entry.dateSubmitted || entry.lastUpdated || '-'}
