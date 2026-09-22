@@ -345,14 +345,10 @@ function resolveVobSubPath(filePath, checkinLog, config) {
     vobSubPath = '/vobs/' + vobSubPath.replace(/^\/+/, '');
   }
 
-  const candidateViews = [];
-  if (detectedViewTag) candidateViews.push(detectedViewTag);
-  candidateViews.push('hyungduk_view', 'hdseo_view', 'hdseo');
-  if (config && config.username) {
-    candidateViews.push(`${config.username}_view`);
-    candidateViews.push(config.username);
-  }
-  const uniqueViews = Array.from(new Set(candidateViews)).filter(Boolean);
+  // hyungduk_view 로만 시도하도록 단일화하여 불필요한 다중 View 순회 및 수집 지연 방지
+  const targetView = (config && config.view) ? config.view : 'hyungduk_view';
+  const candidateViews = [targetView];
+  const uniqueViews = [targetView];
 
   return { vobSubPath, branchPath, uniqueViews };
 }
@@ -737,15 +733,10 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '', options 
     return hit;
   }
 
-  // Ordered candidate views (Target view 1st)
-  const candidateViews = [];
-  if (detectedViewTag) candidateViews.push(detectedViewTag);
-  candidateViews.push('hyungduk_view', 'hdseo_view', 'hdseo');
-  if (config.username) {
-    candidateViews.push(`${config.username}_view`);
-    candidateViews.push(config.username);
-  }
-  const uniqueViews = Array.from(new Set(candidateViews)).filter(Boolean);
+  // Ordered candidate views: hyungduk_view 로만 시도하여 수집 시간 단축
+  const targetView = (config && config.view) ? config.view : 'hyungduk_view';
+  const candidateViews = [targetView];
+  const uniqueViews = [targetView];
 
   let handle1;
   let handle2;
