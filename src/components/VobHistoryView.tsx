@@ -1111,11 +1111,19 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                               </button>
                             </div>
                           </div>
-                          {entry.status === 'error' && !isResolved && !isBinary && (
-                            <div className="p-3 rounded-lg bg-rose-950/30 border border-rose-800/40 text-rose-300 text-[11px] flex items-center justify-between gap-2">
+                          {(entry.status === 'error' || entry.status === 'not_collected') && !isResolved && !isBinary && (
+                            <div className={`p-3 rounded-lg border text-[11px] flex items-center justify-between gap-2 ${
+                              entry.status === 'not_collected'
+                                ? 'bg-amber-950/30 border-amber-800/40 text-amber-300'
+                                : 'bg-rose-950/30 border-rose-800/40 text-rose-300'
+                            }`}>
                               <div className="flex items-center gap-1.5">
                                 <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                                <span>소스 조회 실패: {entry.error || '알 수 없는 오류'}</span>
+                                <span>
+                                  {entry.status === 'not_collected'
+                                    ? `아직 수집되지 않음: ${entry.error || '수집이 중간에 중단되었을 수 있습니다'}`
+                                    : `소스 조회 실패: ${entry.error || '알 수 없는 오류'}`}
+                                </span>
                               </div>
                               <button
                                 onClick={async (e) => {
@@ -1139,15 +1147,19 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                                   }
                                 }}
                                 disabled={retryingCrid === entry.crid}
-                                className="px-2 py-1 rounded bg-rose-900/60 hover:bg-rose-800 text-rose-100 text-[10px] shrink-0 font-sans flex items-center gap-1 cursor-pointer transition-colors"
+                                className={`px-2 py-1 rounded text-[10px] shrink-0 font-sans flex items-center gap-1 cursor-pointer transition-colors ${
+                                  entry.status === 'not_collected'
+                                    ? 'bg-amber-900/60 hover:bg-amber-800 text-amber-100'
+                                    : 'bg-rose-900/60 hover:bg-rose-800 text-rose-100'
+                                }`}
                               >
                                 <RefreshCw className={`w-3 h-3 ${retryingCrid === entry.crid ? 'animate-spin' : ''}`} />
-                                재수집 요청
+                                {entry.status === 'not_collected' ? '지금 수집 요청' : '재수집 요청'}
                               </button>
                             </div>
                           )}
 
-                          {isBinary ? (
+                          {entry.status === 'not_collected' ? null : isBinary ? (
                             <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 text-slate-400 text-xs flex items-center gap-3">
                               <div className="p-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 shrink-0">
                                 <Binary className="w-4 h-4" />
