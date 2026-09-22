@@ -486,7 +486,7 @@ export async function saveCRDiffCacheAsync(crid, diffData) {
  * one at a time with a yield between each, so an unlimited count doesn't
  * flood the SSH pool — it just takes longer for very large CRs.
  */
-export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, forceRefresh = false) {
+export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, forceRefresh = false, targetVob = null) {
   if (!cr || !cr.crid) return null;
   const crid = cr.crid;
 
@@ -564,11 +564,15 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
   const filePaths = cr.filePaths || [];
   const checkinLog = cr.checkinLog || '';
 
-  // Detect directory elements from filePaths
+  // Detect directory elements from filePaths using O(N) parent lookup
+  const rawPathSet = new Set(filePaths);
   const dirPaths = new Set();
-  for (const fp of filePaths) {
-    if (filePaths.some(other => other !== fp && other.startsWith(fp + '/'))) {
-      dirPaths.add(fp);
+  for (const p of filePaths) {
+    let parent = p;
+    let slashIdx;
+    while ((slashIdx = parent.lastIndexOf('/')) > 0) {
+      parent = parent.slice(0, slashIdx);
+      if (rawPathSet.has(parent)) dirPaths.add(parent);
     }
   }
 
@@ -577,8 +581,21 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
   // final payload has all of them regardless of how many are newly fetched.
   const results = Array.from(alreadyCachedByPath.values());
   let processed = 0;
+  let newlyFetchedCount = 0;
 
-  for (let i = 0; i < files.length; i++) {
+  // If a targetVob was specified (e.g. from VOB History collect), prioritize
+  // files belonging to that VOB so the user sees results immediately instead
+  // of waiting for hundreds of unrelated files in other VOBs first.
+  const fileIndices = files.map((_, idx) => idx);
+  if (targetVob) {
+    fileIndices.sort((a, b) => {
+      const vobA = extractVobFromPath(filePaths[a] || files[a]) === targetVob ? 0 : 1;
+      const vobB = extractVobFromPath(filePaths[b] || files[b]) === targetVob ? 0 : 1;
+      return vobA - vobB;
+    });
+  }
+
+  for (const i of fileIndices) {
     if (processed >= maxFiles) break;
 
     const fileName = files[i];
@@ -619,6 +636,7 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
         unifiedDiff: diffRes.unifiedDiff || '',
         fetchedAt: new Date().toISOString()
       });
+      newlyFetchedCount++;
     } catch (err) {
       results.push({
         fileName,
@@ -629,6 +647,23 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
         unifiedDiff: '',
         fetchedAt: new Date().toISOString()
       });
+      newlyFetchedCount++;
+    }
+
+    // Incremental disk save every 5 newly fetched files so VOB history immediately reflects progress
+    if (newlyFetchedCount > 0 && newlyFetchedCount % 5 === 0) {
+      try {
+        await saveCRDiffCacheAsync(crid, {
+          crid,
+          summary: cr.summary || '',
+          cleanSummary: cr.cleanSummary || cr.summary || '',
+          module: cr.module || '',
+          customer: cr.customer || '',
+          cachedAt: new Date().toISOString(),
+          fileCount: results.length,
+          files: results
+        });
+      } catch (e) {}
     }
   }
 
@@ -912,6 +947,7 @@ class BackgroundDiffIndexer {
     this.activeCrids = new Set(); // Currently processing CR IDs
     this.activeLargeCrids = new Set(); // Subset of activeCrids whose file count exceeds LARGE_CR_FILE_THRESHOLD
     this.priorityQueue = []; // CR IDs to process immediately (e.g. newly synced CRs)
+    this.priorityVobs = new Map(); // crid -> targetVob
     this.sshConfig = null;
     this.lastError = null;
     this.lastProcessedAt = null;
@@ -964,9 +1000,18 @@ class BackgroundDiffIndexer {
     this.wake();
   }
 
-  queuePriority(crid) {
+  queuePriority(crid, targetVob = null) {
+    if (targetVob) {
+      this.priorityVobs.set(crid, targetVob);
+    }
     if (!this.priorityQueue.includes(crid)) {
       this.priorityQueue.unshift(crid);
+    }
+    // Explicit priority items should run immediately even if auto-sweep is disabled
+    if (!this.isRunning) {
+      this.isRunning = true;
+      this._runLoop();
+    } else {
       this.wake();
     }
   }
@@ -1128,6 +1173,8 @@ class BackgroundDiffIndexer {
 
   async _processCRWorker(targetCR) {
     const crid = targetCR.crid;
+    const targetVob = this.priorityVobs.get(crid) || null;
+    this.priorityVobs.delete(crid);
     const isLarge = (targetCR.files || []).length >= LARGE_CR_FILE_THRESHOLD;
     this.activeWorkers++;
     this.activeCrids.add(crid);
@@ -1137,7 +1184,7 @@ class BackgroundDiffIndexer {
     try {
       // Yield to event loop
       await new Promise(res => setImmediate(res));
-      await fetchAndCacheCRDiff(targetCR, this.sshConfig);
+      await fetchAndCacheCRDiff(targetCR, this.sshConfig, Infinity, false, targetVob);
       this.processedCount++;
       this.lastProcessedAt = new Date().toISOString();
       this.lastError = null;
@@ -1154,7 +1201,8 @@ class BackgroundDiffIndexer {
 
   async _runLoop() {
     while (this.isRunning) {
-      if (!this.enabled) {
+      // If auto-sweep is disabled AND there are no priority items left, pause and sleep
+      if (!this.enabled && this.priorityQueue.length === 0) {
         this.status = 'paused';
         await this._sleep(1000);
         continue;

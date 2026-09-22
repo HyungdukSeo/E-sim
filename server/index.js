@@ -905,12 +905,13 @@ app.get('/api/diff-cache/file-version-chain', async (req, res) => {
 // full-database sweep to reach them.
 app.post('/api/diff-cache/vobs/:vob/collect', (req, res) => {
   try {
+    const { vob } = req.params;
     const { crids } = req.body || {};
     if (!Array.isArray(crids) || crids.length === 0) {
       return res.status(400).json({ ok: false, error: 'crids 배열이 필요합니다.' });
     }
     for (const crid of crids) {
-      backgroundDiffIndexer.queuePriority(crid);
+      backgroundDiffIndexer.queuePriority(crid, vob);
     }
     res.json({ ok: true, queued: crids.length });
   } catch (err) {

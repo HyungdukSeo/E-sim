@@ -65,6 +65,55 @@ export function getVobTags(filePath) {
   return tags;
 }
 
+/**
+ * Accurately finds the corresponding checkinLog line for a filePath.
+ * Prevents false matches where a common base filename (e.g. Makefile, UEnc.c)
+ * from another VOB earlier in the log was picked, and selects the latest version
+ * if the file was checked in multiple times in the same CR.
+ */
+export function findCheckinLogEntry(checkinLog, filePath) {
+  if (!checkinLog) return null;
+  const lines = checkinLog.split(/\r?\n/);
+  const baseFileName = filePath.split('/').pop() || filePath;
+  const cleanReqPath = filePath.replace(/(_|@@)\/.*$/, '');
+  const reqVobKey = extractVobKey(filePath);
+
+  let bestMatch = null;
+  let bestScore = -1; // 3: exact full path, 2: same VOB key + baseFileName, 1: baseFileName only (if relative)
+
+  for (const l of lines) {
+    if (!l.trim()) continue;
+    let score = -1;
+    if (l.includes(cleanReqPath)) {
+      score = 3;
+    } else if (reqVobKey && l.includes(reqVobKey) && l.includes(baseFileName)) {
+      score = 2;
+    } else if (!cleanReqPath.startsWith('/vobs/') && l.includes(baseFileName)) {
+      score = 1;
+    }
+
+    if (score >= 2 || (score === 1 && bestScore < 1)) {
+      const pathMatch = l.match(/(\/vobs\/[a-zA-Z0-9_\-\.\/]+)/);
+      const vMatch = l.match(/(_|@@)(\/[a-zA-Z0-9_\-\.\/]+)\/(\d+)/);
+      if (pathMatch && vMatch) {
+        const extracted = pathMatch[1].replace(/(_|@@)\/.*$/, '');
+        const branchPath = vMatch[2];
+        const verNum = parseInt(vMatch[3], 10);
+        if (score > bestScore || (score === bestScore && (!bestMatch || verNum >= bestMatch.verNum))) {
+          bestScore = score;
+          bestMatch = {
+            exactVobPath: extracted,
+            branchPath,
+            verNum,
+            line: l
+          };
+        }
+      }
+    }
+  }
+  return bestMatch;
+}
+
 function markVobServerAffinity(vobKey, host) {
   if (vobKey && host) {
     vobServerAffinity.set(vobKey, host);
@@ -316,20 +365,10 @@ function resolveVobSubPath(filePath, checkinLog, config) {
       if (fieldMatch) detectedViewTag = fieldMatch[1];
     }
 
-    const lines = checkinLog.split(/\r?\n/);
-    for (const l of lines) {
-      if (l.includes(filePath) || (baseFileName && l.includes(baseFileName))) {
-        const pathMatch = l.match(/(\/vobs\/[a-zA-Z0-9_\-\.\/]+)/);
-        if (pathMatch) {
-          const extracted = pathMatch[1].replace(/(_|@@)\/.*$/, '');
-          if (extracted.endsWith(baseFileName) || extracted.includes(baseFileName)) {
-            exactVobPathFromLog = extracted;
-          }
-        }
-        const vMatch = l.match(/(_|@@)(\/[a-zA-Z0-9_\-\.\/]+)\/(\d+)/);
-        if (vMatch) branchPath = vMatch[2];
-        break;
-      }
+    const logEntry = findCheckinLogEntry(checkinLog, filePath);
+    if (logEntry) {
+      exactVobPathFromLog = logEntry.exactVobPath;
+      branchPath = logEntry.branchPath;
     }
   }
 
@@ -681,26 +720,12 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '', options 
       if (fieldMatch) detectedViewTag = fieldMatch[1];
     }
 
-    const lines = checkinLog.split(/\r?\n/);
-    for (const l of lines) {
-      if (l.includes(filePath) || (baseFileName && l.includes(baseFileName))) {
-        const pathMatch = l.match(/(\/vobs\/[a-zA-Z0-9_\-\.\/]+)/);
-        if (pathMatch) {
-          const extracted = pathMatch[1].replace(/(_|@@)\/.*$/, '');
-          if (extracted.endsWith(baseFileName) || extracted.includes(baseFileName)) {
-            exactVobPathFromLog = extracted;
-          }
-        }
-
-        const vMatch = l.match(/(_|@@)(\/[a-zA-Z0-9_\-\.\/]+)\/(\d+)/);
-        if (vMatch) {
-          branchPath = vMatch[2];
-          const verNum = parseInt(vMatch[3], 10);
-          currentVersion = String(verNum);
-          predVersion = String(Math.max(0, verNum - 1));
-        }
-        break;
-      }
+    const logEntry = findCheckinLogEntry(checkinLog, filePath);
+    if (logEntry) {
+      exactVobPathFromLog = logEntry.exactVobPath;
+      branchPath = logEntry.branchPath;
+      currentVersion = String(logEntry.verNum);
+      predVersion = String(Math.max(0, logEntry.verNum - 1));
     }
   }
 
