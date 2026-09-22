@@ -774,7 +774,6 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '', options 
   const uniqueViews = [targetView];
 
   let handle1;
-  let handle2;
   try {
     const t0 = Date.now();
     handle1 = await sshPool.acquire(config, { priority, timeout: 15000 });
@@ -815,18 +814,14 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '', options 
     // Ensure primary view is started in /bin/sh
     await execSSHBuffer(conn, `/bin/sh -c 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH; cleartool startview "${effectiveViews[0]}" 2>/dev/null || true'`, 2500);
 
-    // 2. Fetch current and previous versions in parallel.
-    // Each fetchOneVersion() races many exec() channels at once (per-view x per-strategy),
-    // so old/new uses separate pooled connections if needOld is true.
+    // 2. Fetch current and previous versions in parallel over single multiplexed SSH connection.
+    // SSH2 connections natively support multiplexed parallel exec channels over a single socket,
+    // requiring strictly 1 pooled connection per worker and eliminating connection pool deadlock.
     const needOld = predVersion !== '0';
-    if (needOld) {
-      handle2 = await sshPool.acquire(config, { priority, timeout: 15000 });
-    }
-    const oldConn = handle2 ? handle2.conn : null;
     const [newRes, oldRes] = await Promise.all([
       fetchOneVersion(conn, vobSubPath, currSuffix, effectiveViews),
       needOld
-        ? fetchOneVersion(oldConn, vobSubPath, prevSuffix, effectiveViews)
+        ? fetchOneVersion(conn, vobSubPath, prevSuffix, effectiveViews)
         : Promise.resolve({ buffer: Buffer.alloc(0), view: effectiveViews[0] })
     ]);
 
@@ -834,19 +829,20 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '', options 
     const oldBuf = oldRes.buffer;
     const foundView = newRes.view || effectiveViews[0] || 'hyungduk_view';
 
-    // 3. Base64 encode raw bytes for frontend
-    const oldBase64 = oldBuf.toString('base64');
-    const newBase64 = newBuf.toString('base64');
-
-    // 4. Smart decode text
+    // 3. Smart decode text
     const oldText = predVersion === '0' ? '' : smartDecode(oldBuf);
     const newText = smartDecode(newBuf);
     const isDirectory = oldText.includes('[DIRECTORY:') || newText.includes('[DIRECTORY:');
 
+    // For background worker indexing, omit base64 encoding to prevent huge V8 memory pressure
+    const isBackground = priority === 'background';
+    const oldBase64 = isBackground ? '' : oldBuf.toString('base64');
+    const newBase64 = isBackground ? '' : newBuf.toString('base64');
+
     const elapsed = Date.now() - t0;
     console.log(`[SSH Diff] Stream Result (${elapsed}ms): view=${foundView}, old=${oldBuf.length} bytes (${oldText.split('\n').length} lines), new=${newBuf.length} bytes (${newText.split('\n').length} lines)`);
 
-    // 5. Check if file was completely unfound
+    // 4. Check if file was completely unfound
     if (!oldText && !newText) {
       throw new Error(
         `SSH 서버(${config.host}) 연결은 성공했으나, ClearCase 소스 파일(${vobSubPath}${currSuffix})을 읽지 못했습니다.\n` +
@@ -855,7 +851,7 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '', options 
       );
     }
 
-    // 6. Compute Structured Patch
+    // 5. Compute Structured Patch
     const fileName = vobSubPath.split('/').pop() || vobSubPath;
     const patch = diff.structuredPatch(
       fileName,
@@ -901,24 +897,24 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '', options 
       hasChanges: oldText !== newText
     };
 
-    // Save to LRU In-Memory Cache (Immutable committed ClearCase versions)
-    if (diffCache.size >= MAX_CACHE_ENTRIES) {
-      const firstKey = diffCache.keys().next().value;
-      diffCache.delete(firstKey);
+    // Save to LRU In-Memory Cache for interactive user UI only
+    // Background indexing workers save directly to disk JSON; caching in RAM causes severe memory starvation
+    if (!isBackground) {
+      if (diffCache.size >= MAX_CACHE_ENTRIES) {
+        const firstKey = diffCache.keys().next().value;
+        diffCache.delete(firstKey);
+      }
+      diffCache.set(cacheKey, finalResult);
     }
-    diffCache.set(cacheKey, finalResult);
 
     return finalResult;
   } catch (err) {
     console.error('[SSH Diff Error]', err.message);
     throw new Error(err.message);
   } finally {
-    // Release connections back to warm pool (0 socket destruction)
+    // Release connection back to warm pool (0 socket destruction)
     if (handle1) {
       try { handle1.release(); } catch (e) {}
-    }
-    if (handle2) {
-      try { handle2.release(); } catch (e) {}
     }
   }
 }

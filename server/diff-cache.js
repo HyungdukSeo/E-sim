@@ -698,8 +698,10 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
     // to a worker thread). A time-based interval keeps the "show progress
     // soon" benefit while keeping the number of saves proportional to how
     // long collection takes, not how many files exist.
-    const INCREMENTAL_SAVE_INTERVAL_MS = 15000;
-    if (newlyFetchedCount > 0 && Date.now() - lastIncrementalSaveAt >= INCREMENTAL_SAVE_INTERVAL_MS) {
+    // Incremental disk save only for large CRs (>= 30 files) to eliminate disk thrashing.
+    // Small/medium CRs save exactly once when finished, saving hundreds of gigabytes of disk I/O.
+    const INCREMENTAL_SAVE_INTERVAL_MS = 60000;
+    if (totalEligibleCount >= 30 && newlyFetchedCount > 0 && Date.now() - lastIncrementalSaveAt >= INCREMENTAL_SAVE_INTERVAL_MS) {
       lastIncrementalSaveAt = Date.now();
       try {
         await saveCRDiffCacheAsync(crid, {
@@ -1112,6 +1114,9 @@ class BackgroundDiffIndexer {
     if (!isNaN(num) && num >= 1 && num <= 10) {
       this.concurrency = num;
       console.log(`[BackgroundDiffIndexer] Concurrency set to ${this.concurrency} parallel workers`);
+      if (sshPool && typeof sshPool.setMaxPerHost === 'function') {
+        sshPool.setMaxPerHost(Math.max(3, num));
+      }
     }
   }
 
@@ -1120,6 +1125,8 @@ class BackgroundDiffIndexer {
     this.sshConfig = sshConfig;
     if (initialConcurrency) {
       this.setConcurrency(initialConcurrency);
+    } else if (sshPool && typeof sshPool.setMaxPerHost === 'function') {
+      sshPool.setMaxPerHost(Math.max(3, this.concurrency));
     }
     if (this.enabled) {
       this.start();
@@ -1368,6 +1375,13 @@ class BackgroundDiffIndexer {
       this.activeCrids.delete(crid);
       if (isLarge) this.activeLargeCrids.delete(crid);
       this.activeWorkers = Math.max(0, this.activeWorkers - 1);
+      // Reclaim memory if heap exceeds 700MB to avoid Mac memory pressure & swap thrashing
+      if (typeof global.gc === 'function') {
+        const mem = process.memoryUsage();
+        if (mem.heapUsed > 700 * 1024 * 1024) {
+          try { global.gc(); } catch (_) {}
+        }
+      }
       // Essential breathing cooldown (800ms) between CRs so Electron UI and OS stay fluid
       await new Promise(res => setTimeout(res, 800));
     }
@@ -1375,6 +1389,13 @@ class BackgroundDiffIndexer {
 
   async _runLoop() {
     while (this.isRunning) {
+      // Periodic GC check to keep heap lean
+      if (typeof global.gc === 'function') {
+        const mem = process.memoryUsage();
+        if (mem.heapUsed > 700 * 1024 * 1024) {
+          try { global.gc(); } catch (_) {}
+        }
+      }
       // If auto-sweep is disabled AND there are no priority items left, pause and sleep
       if (!this.enabled && this.priorityQueue.length === 0) {
         this.status = 'paused';

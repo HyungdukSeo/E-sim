@@ -174,6 +174,14 @@ class SSHConnectionPool {
     if (this.reaperInterval.unref) this.reaperInterval.unref();
   }
 
+  setMaxPerHost(val) {
+    const parsed = parseInt(val, 10);
+    if (!isNaN(parsed) && parsed >= 1) {
+      this.maxPerHost = Math.min(16, Math.max(1, parsed));
+      console.log(`[SSH Pool] Max connections per host set to ${this.maxPerHost}`);
+    }
+  }
+
   notifyUserActive() {
     this.lastUserActivity = Date.now();
   }
