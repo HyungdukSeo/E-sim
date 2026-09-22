@@ -262,6 +262,7 @@ export function getLocalDatabase() {
     const parsedCrs = JSON.parse(raw);
     raw = null; // Release 234MB raw UTF-8 string immediately to reduce peak heap allocation
     for (let i = 0; i < parsedCrs.length; i++) {
+      delete parsedCrs[i].checkinEntries;
       cleanCRFilePaths(parsedCrs[i]);
     }
     inMemoryCrs = parsedCrs;
@@ -455,6 +456,7 @@ export function importDatabase(importedCrs) {
 
   for (const cr of importedCrs) {
     if (!cr.crid) continue;
+    delete cr.checkinEntries;
     if (crMap.has(cr.crid)) {
       crMap.set(cr.crid, { ...crMap.get(cr.crid), ...cr });
       updated++;

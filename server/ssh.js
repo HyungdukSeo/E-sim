@@ -851,27 +851,47 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '', options 
       );
     }
 
-    // 5. Compute Structured Patch
+    // 5. Compute Structured Patch & Unified Diff
     const fileName = vobSubPath.split('/').pop() || vobSubPath;
-    const patch = diff.structuredPatch(
-      fileName,
-      fileName,
-      oldText,
-      newText,
-      prevSuffix,
-      currSuffix,
-      { context: 3 }
-    );
+    const hasChanges = oldText !== newText;
+    let patch = null;
+    let unifiedDiffText = '';
 
-    const unifiedDiffText = diff.createTwoFilesPatch(
-      fileName,
-      fileName,
-      oldText,
-      newText,
-      prevSuffix,
-      currSuffix,
-      { context: 3 }
-    );
+    if (hasChanges) {
+      const MAX_DIFF_BYTES = 1.5 * 1024 * 1024; // Protect event loop from quadratic Myers diff on huge files
+      if (oldText.length > MAX_DIFF_BYTES || newText.length > MAX_DIFF_BYTES) {
+        unifiedDiffText = `--- ${fileName}${prevSuffix}\n+++ ${fileName}${currSuffix}\n@@ -1,1 +1,1 @@\n... [File exceeds 1.5MB: unified diff truncated to protect event loop responsiveness] ...`;
+        if (!isBackground) {
+          patch = {
+            oldHeader: fileName + prevSuffix,
+            newHeader: fileName + currSuffix,
+            hunks: []
+          };
+        }
+      } else {
+        // Background indexing only needs unifiedDiffText, skip heavy structured patch
+        if (!isBackground) {
+          patch = diff.structuredPatch(
+            fileName,
+            fileName,
+            oldText,
+            newText,
+            prevSuffix,
+            currSuffix,
+            { context: 3 }
+          );
+        }
+        unifiedDiffText = diff.createTwoFilesPatch(
+          fileName,
+          fileName,
+          oldText,
+          newText,
+          prevSuffix,
+          currSuffix,
+          { context: 3 }
+        );
+      }
+    }
 
     // Compute friendly CLI vimdiff command
     const cliOldPath = `${vobSubPath}${prevSuffix}`;
@@ -894,7 +914,7 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '', options 
       newContent: newText,
       patch,
       unifiedDiff: unifiedDiffText,
-      hasChanges: oldText !== newText
+      hasChanges
     };
 
     // Save to LRU In-Memory Cache for interactive user UI only

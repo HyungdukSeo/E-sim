@@ -1063,6 +1063,19 @@ export async function batchIndexDiffs(crs, sshConfig, options = {}) {
 // competed for the single JS thread.
 const LARGE_CR_FILE_THRESHOLD = 200;
 
+let lastGCTime = 0;
+function tryProactiveGC(thresholdMB = 1000) {
+  if (typeof global.gc === 'function' && Date.now() - lastGCTime > 20000) {
+    try {
+      const mem = process.memoryUsage();
+      if (mem.heapUsed > thresholdMB * 1024 * 1024) {
+        lastGCTime = Date.now();
+        global.gc();
+      }
+    } catch (_) {}
+  }
+}
+
 /**
  * Background Automatic Diff Indexer Service
  * High-performance concurrent worker pool (up to 10 workers) for parallel diff collection
@@ -1375,13 +1388,8 @@ class BackgroundDiffIndexer {
       this.activeCrids.delete(crid);
       if (isLarge) this.activeLargeCrids.delete(crid);
       this.activeWorkers = Math.max(0, this.activeWorkers - 1);
-      // Reclaim memory if heap exceeds 700MB to avoid Mac memory pressure & swap thrashing
-      if (typeof global.gc === 'function') {
-        const mem = process.memoryUsage();
-        if (mem.heapUsed > 700 * 1024 * 1024) {
-          try { global.gc(); } catch (_) {}
-        }
-      }
+      // Reclaim memory if heap exceeds 1000MB (throttled to at most once every 20s)
+      tryProactiveGC(1000);
       // Essential breathing cooldown (800ms) between CRs so Electron UI and OS stay fluid
       await new Promise(res => setTimeout(res, 800));
     }
@@ -1389,13 +1397,8 @@ class BackgroundDiffIndexer {
 
   async _runLoop() {
     while (this.isRunning) {
-      // Periodic GC check to keep heap lean
-      if (typeof global.gc === 'function') {
-        const mem = process.memoryUsage();
-        if (mem.heapUsed > 700 * 1024 * 1024) {
-          try { global.gc(); } catch (_) {}
-        }
-      }
+      // Periodic GC check if memory is high
+      tryProactiveGC(1000);
       // If auto-sweep is disabled AND there are no priority items left, pause and sleep
       if (!this.enabled && this.priorityQueue.length === 0) {
         this.status = 'paused';
