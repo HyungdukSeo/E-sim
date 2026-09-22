@@ -15,10 +15,14 @@ import {
   fetchSettingsFromDisk,
   loadBookmarks, 
   saveBookmarks,
-  DEFAULT_SETTINGS
+  DEFAULT_SETTINGS,
+  DiffWorkerStatus,
+  fetchDiffWorkerStatus,
+  controlDiffWorker
 } from './services/api';
 import { filterAndSearchCRs } from './services/searchEngine';
 import { Header } from './components/Header';
+import { DatasetSyncBanner } from './components/DatasetSyncBanner';
 import { SearchBar } from './components/SearchBar';
 import { FilterSidebar } from './components/FilterSidebar';
 import { CRListTable } from './components/CRListTable';
@@ -101,6 +105,40 @@ export function App() {
       }
     });
   }, [loadData]);
+
+  // Real-time diff worker polling for menu bar sub-header progress banner
+  const [diffWorkerStatus, setDiffWorkerStatus] = useState<DiffWorkerStatus | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    const pollStatus = async () => {
+      try {
+        const res = await fetchDiffWorkerStatus();
+        if (isMounted && res.ok && res.status) {
+          setDiffWorkerStatus(res.status);
+        }
+      } catch {}
+    };
+
+    pollStatus();
+    const timer = setInterval(pollStatus, 2000);
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  const handleToggleDiffWorker = async () => {
+    if (!diffWorkerStatus) return;
+    try {
+      const res = await controlDiffWorker(!diffWorkerStatus.enabled);
+      if (res.ok && res.status) {
+        setDiffWorkerStatus(res.status);
+      }
+    } catch (err) {
+      console.error('Failed to toggle worker:', err);
+    }
+  };
 
   // Handle Sync
   const handleSync = async () => {
@@ -216,6 +254,13 @@ export function App() {
         onOpenAI={() => setIsAIOpen(true)}
         bookmarkedCount={bookmarks.size}
         mantisUrl={settings.mantisUrl}
+      />
+
+      {/* 1.5 Real-time Dataset Collection Progress Banner (Right below Menu bar) */}
+      <DatasetSyncBanner
+        workerStatus={diffWorkerStatus}
+        onToggleWorker={handleToggleDiffWorker}
+        onOpenSettings={() => setIsSettingsOpen(true)}
       />
 
       {/* 2. Main Content Area */}

@@ -424,12 +424,22 @@ export async function startOmniRouteDaemonAPI(): Promise<{ ok: boolean; message?
   }
 }
 
+export interface DiffTaskProgress {
+  crid: string;
+  currentFile: string;
+  filePath: string;
+  fileIndex: number;
+  totalFiles: number;
+  updatedAt?: number;
+}
+
 export interface DiffWorkerStatus {
   enabled: boolean;
   status: 'idle' | 'running' | 'paused' | 'waiting_ssh' | 'completed';
   concurrency?: number;
   activeWorkers?: number;
   activeCrids?: string[];
+  activeTasks?: DiffTaskProgress[];
   currentCrid: string | null;
   totalCRs: number;
   targetCRsWithFiles: number;

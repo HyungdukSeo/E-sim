@@ -496,7 +496,7 @@ export async function saveCRDiffCacheAsync(crid, diffData) {
  * one at a time with a yield between each, so an unlimited count doesn't
  * flood the SSH pool — it just takes longer for very large CRs.
  */
-export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, forceRefresh = false, targetVob = null) {
+export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, forceRefresh = false, targetVob = null, onFileProgress = null) {
   if (!cr || !cr.crid) return null;
   const crid = cr.crid;
 
@@ -606,6 +606,16 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
     });
   }
 
+  // Calculate eligible files count for accurate progress (N / M)
+  const eligibleIndices = fileIndices.filter(idx => {
+    const fn = files[idx];
+    const fp = filePaths[idx] || fn;
+    if (isDirectoryElement(fn, fp) || dirPaths.has(fp)) return false;
+    if (isBinaryFile(fn, fp)) return false;
+    return true;
+  });
+  const totalEligibleCount = eligibleIndices.length || files.length;
+
   for (const i of fileIndices) {
     if (processed >= maxFiles) break;
 
@@ -622,6 +632,17 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
     if (isBinaryFile(fileName, filePath)) continue;
 
     processed++;
+    if (typeof onFileProgress === 'function') {
+      try {
+        onFileProgress({
+          crid,
+          fileName,
+          filePath,
+          fileIndex: processed,
+          totalFiles: totalEligibleCount
+        });
+      } catch (_) {}
+    }
     if (sshPool.isUserActive()) {
       await new Promise(res => setTimeout(res, 1200)); // Momentarily yield to interactive user requests
     }
@@ -706,6 +727,19 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
     isComplete: true,
     files: results
   };
+
+  if (typeof onFileProgress === 'function') {
+    try {
+      onFileProgress({
+        crid,
+        fileName: '',
+        filePath: '',
+        fileIndex: processed,
+        totalFiles: totalEligibleCount,
+        completed: true
+      });
+    } catch (_) {}
+  }
 
   await saveCRDiffCacheAsync(crid, cachePayload);
   return cachePayload;
@@ -1040,6 +1074,7 @@ class BackgroundDiffIndexer {
     this.activeWorkers = 0;
     this.activeCrids = new Set(); // Currently processing CR IDs
     this.activeLargeCrids = new Set(); // Subset of activeCrids whose file count exceeds LARGE_CR_FILE_THRESHOLD
+    this.activeTasks = new Map(); // crid -> { crid, currentFile, filePath, fileIndex, totalFiles, updatedAt }
     this.priorityQueue = []; // CR IDs to process immediately (e.g. newly synced CRs)
     this.priorityVobs = new Map(); // crid -> targetVob
     this.sshConfig = null;
@@ -1201,6 +1236,7 @@ class BackgroundDiffIndexer {
       concurrency: this.concurrency,
       activeWorkers: this.activeWorkers,
       activeCrids: activeList,
+      activeTasks: Array.from(this.activeTasks.values()),
       currentCrid: activeList.length > 0 ? activeList.join(', ') : null,
       totalCRs: allCrs.length,
       targetCRsWithFiles: crsWithFiles.length,
@@ -1290,10 +1326,33 @@ class BackgroundDiffIndexer {
     if (isLarge) this.activeLargeCrids.add(crid);
     this.status = 'running';
 
+    const initialTotal = (targetCR.files || []).length || 1;
+    this.activeTasks.set(crid, {
+      crid,
+      currentFile: targetCR.files?.[0] || '준비 중...',
+      filePath: targetCR.filePaths?.[0] || targetCR.files?.[0] || '',
+      fileIndex: 0,
+      totalFiles: initialTotal,
+      updatedAt: Date.now()
+    });
+
     try {
       // Yield to event loop
       await new Promise(res => setTimeout(res, 100));
-      await fetchAndCacheCRDiff(targetCR, this.sshConfig, Infinity, false, targetVob);
+      await fetchAndCacheCRDiff(targetCR, this.sshConfig, Infinity, false, targetVob, (prog) => {
+        if (prog.completed) {
+          this.activeTasks.delete(crid);
+        } else {
+          this.activeTasks.set(crid, {
+            crid,
+            currentFile: prog.fileName,
+            filePath: prog.filePath,
+            fileIndex: prog.fileIndex,
+            totalFiles: prog.totalFiles,
+            updatedAt: Date.now()
+          });
+        }
+      });
       this.processedCount++;
       this.lastProcessedAt = new Date().toISOString();
       this.lastError = null;
@@ -1305,6 +1364,7 @@ class BackgroundDiffIndexer {
       const prevCount = this.failedAttempts.get(crid)?.count || 0;
       this.failedAttempts.set(crid, { count: prevCount + 1, lastFailedAt: Date.now() });
     } finally {
+      this.activeTasks.delete(crid);
       this.activeCrids.delete(crid);
       if (isLarge) this.activeLargeCrids.delete(crid);
       this.activeWorkers = Math.max(0, this.activeWorkers - 1);

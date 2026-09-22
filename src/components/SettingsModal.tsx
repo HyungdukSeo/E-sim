@@ -27,7 +27,8 @@ import {
   Plus,
   Trash2,
   FolderOpen,
-  Loader2
+  Loader2,
+  Activity
 } from 'lucide-react';
 import { AppSettings, SyncMeta } from '../types/cr';
 import { 
@@ -181,9 +182,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           });
         }
       });
-      // One-shot on open only — no auto-polling. Use the refresh button for
-      // an on-demand re-check instead, same pattern as provider status.
       loadWorkerStatus();
+      const pollTimer = setInterval(() => {
+        loadWorkerStatus();
+      }, 1500);
+      return () => clearInterval(pollTimer);
     }
   }, [isOpen]);
 
@@ -1416,6 +1419,66 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {workerStatus ? `${Math.max(0, (workerStatus.targetCRsWithFiles || workerStatus.totalCRs) - workerStatus.cachedCRs)}개 남음` : '-'}
                 </div>
               </div>
+            </div>
+
+            {/* Real-time Active Tasks List (Which CR, Which File, N / M) */}
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-300 font-medium flex items-center gap-1.5">
+                  <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                  실시간 수집 진행 현황
+                  {workerStatus?.activeTasks && workerStatus.activeTasks.length > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-mono font-bold">
+                      {workerStatus.activeTasks.length}개 워커 가동 중
+                    </span>
+                  )}
+                </span>
+                {workerStatus?.status === 'running' && (
+                  <span className="text-[11px] text-emerald-400 flex items-center gap-1 font-mono">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                    수집 진행 중
+                  </span>
+                )}
+              </div>
+
+              {workerStatus?.activeTasks && workerStatus.activeTasks.length > 0 ? (
+                <div className="space-y-1.5 max-h-[180px] overflow-y-auto pr-1 scrollbar-thin">
+                  {workerStatus.activeTasks.map(task => {
+                    const filePct = task.totalFiles > 0 
+                      ? Math.min(100, Math.round((task.fileIndex / task.totalFiles) * 100))
+                      : 0;
+                    return (
+                      <div
+                        key={task.crid}
+                        className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/90 hover:border-slate-700 transition-all flex flex-col gap-1.5 text-xs shadow-inner"
+                      >
+                        <div className="flex items-center justify-between gap-2 font-mono">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-mantis-400 font-bold shrink-0">CR #{task.crid}</span>
+                            <span className="text-slate-600 shrink-0">•</span>
+                            <span className="text-slate-200 truncate font-sans font-medium" title={task.filePath || task.currentFile}>
+                              {task.currentFile || '준비 중...'}
+                            </span>
+                          </div>
+                          <div className="shrink-0 text-emerald-400 font-semibold text-[11px]">
+                            {task.fileIndex} / {task.totalFiles}개 ({filePct}%)
+                          </div>
+                        </div>
+                        <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+                          <div
+                            className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 rounded-full transition-all duration-300"
+                            style={{ width: `${filePct}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl bg-slate-950/50 border border-slate-800/60 text-[11px] text-slate-400 text-center">
+                  {workerStatus?.enabled ? '현재 활성 워커 대기 중 (새 대상 디스패치 대기)' : '수집 일시정지 상태입니다.'}
+                </div>
+              )}
             </div>
 
             {/* Note & Incremental Sync Info */}
