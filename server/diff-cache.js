@@ -22,6 +22,31 @@ let totalCachedFiles = 0;
 let totalCachedBytes = 0;
 let isIndexInitialized = false;
 
+// Fast extraction of the top-level "fileCount" field WITHOUT parsing the
+// whole cache file — files can be 250KB+ each and there are thousands of
+// them, so reading only the first couple KB (fileCount always appears near
+// the start, right after the CR metadata fields) keeps index rebuilds fast
+// while still letting callers detect a CR whose cache has fewer files than
+// its current filePaths (e.g. an old cache saved back when file collection
+// was capped at 5-10 files per CR).
+const FILE_COUNT_RE = /"fileCount"\s*:\s*(\d+)/;
+const PARTIAL_READ_BYTES = 2048;
+
+function readCachedFileCount(fullPath) {
+  let fd;
+  try {
+    fd = fs.openSync(fullPath, 'r');
+    const buf = Buffer.alloc(PARTIAL_READ_BYTES);
+    const bytesRead = fs.readSync(fd, buf, 0, PARTIAL_READ_BYTES, 0);
+    const m = FILE_COUNT_RE.exec(buf.toString('utf8', 0, bytesRead));
+    return m ? parseInt(m[1], 10) : null;
+  } catch (e) {
+    return null;
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch (e) {} }
+  }
+}
+
 export function initCacheIndex(forceReset = false) {
   if (isIndexInitialized && !forceReset) return;
   isIndexInitialized = true;
@@ -38,12 +63,15 @@ export function initCacheIndex(forceReset = false) {
       const fullPath = path.join(DIFF_CACHE_DIR, f);
       try {
         const stat = fs.statSync(fullPath);
+        const fileCount = readCachedFileCount(fullPath);
         cacheIndex.set(crid, {
           sizeBytes: stat.size,
           mtimeMs: stat.mtimeMs,
-          cachedAt: new Date(stat.mtimeMs).toISOString()
+          cachedAt: new Date(stat.mtimeMs).toISOString(),
+          fileCount: fileCount ?? undefined
         });
         totalCachedBytes += stat.size;
+        if (fileCount) totalCachedFiles += fileCount;
       } catch (e) {}
     }
   } catch (err) {
@@ -223,31 +251,42 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
 
   // 1. Check existing cache
   const cached = getCRDiffCache(crid);
-  if (cached && cached.files && cached.files.length > 0 && !forceRefresh) {
-    let isStale = false;
-    // Auto-refresh if any previously cached file has error status
-    if (cached.files.some(f => f.status === 'error')) {
-      isStale = true;
+  // Files already successfully cached, keyed by filePath — reused below so a
+  // partial cache (e.g. one saved back when collection was capped at 5-10
+  // files per CR) only fetches what's actually MISSING over SSH instead of
+  // re-fetching everything from scratch. forceRefresh bypasses this and
+  // always re-fetches every file (used when the user explicitly retries a
+  // failed file).
+  const alreadyCachedByPath = new Map();
+  if (cached && Array.isArray(cached.files)) {
+    for (const f of cached.files) {
+      if (f.status === 'success' && f.filePath) alreadyCachedByPath.set(f.filePath, f);
     }
-    // Check if CR was modified in Mantis after cachedAt
+  }
+
+  if (cached && cached.files && cached.files.length > 0 && !forceRefresh) {
+    // Check if CR was modified in Mantis after cachedAt — if so, every file
+    // needs a fresh look since we can't tell which ones actually changed.
+    let modifiedInMantis = false;
     if (cr.lastUpdated && cached.cachedAt) {
       const crTime = new Date(cr.lastUpdated).getTime();
       const cacheTime = new Date(cached.cachedAt).getTime();
       if (!isNaN(crTime) && !isNaN(cacheTime) && crTime > cacheTime) {
-        isStale = true;
+        modifiedInMantis = true;
       }
     }
-    // Check if file count changed
-    const crFileCount = (cr.files || []).length;
-    const cachedFileCount = (cached.files || []).length;
-    if (crFileCount > 0 && crFileCount !== cachedFileCount) {
-      isStale = true;
+    if (modifiedInMantis) {
+      alreadyCachedByPath.clear();
+    } else {
+      const crFileCount = (cr.files || []).length;
+      const cachedFileCount = cached.files.length;
+      const hasErrors = cached.files.some(f => f.status === 'error');
+      if (!hasErrors && (crFileCount === 0 || crFileCount === cachedFileCount)) {
+        // Fully cached, nothing missing, nothing failed — done.
+        return cached;
+      }
+      console.log(`[DiffCache] CR #${crid} has ${cachedFileCount}/${crFileCount} files cached (errors: ${hasErrors}). Fetching only what's missing/failed...`);
     }
-
-    if (!isStale) {
-      return cached;
-    }
-    console.log(`[DiffCache] CR #${crid} is modified, has errors, or has updated files. Auto-refreshing diff cache...`);
   }
 
   let servers = Array.isArray(sshConfig) 
@@ -292,7 +331,10 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
     }
   }
 
-  const results = [];
+  // Files already successfully cached are reused as-is (not re-fetched); only
+  // missing/failed ones go through SSH below. Carry them over first so the
+  // final payload has all of them regardless of how many are newly fetched.
+  const results = Array.from(alreadyCachedByPath.values());
   let processed = 0;
 
   for (let i = 0; i < files.length; i++) {
@@ -300,6 +342,9 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
 
     const fileName = files[i];
     const filePath = filePaths[i] || fileName;
+
+    // Already have a successful diff for this exact file — skip the SSH round-trip.
+    if (alreadyCachedByPath.has(filePath)) continue;
 
     // Skip directory elements & branch pseudo-elements
     if (isDirectoryElement(fileName, filePath) || dirPaths.has(filePath)) continue;
@@ -467,6 +512,7 @@ export function getVobHistory(vobName, allCrs) {
 
   const entries = [];
   const uncachedCrids = [];
+  const partiallyCachedCrids = [];
 
   for (const cr of matchingCrs) {
     if (!hasCRDiffCache(cr.crid)) {
@@ -475,6 +521,14 @@ export function getVobHistory(vobName, allCrs) {
     }
     const cached = getCRDiffCache(cr.crid);
     if (!cached || !Array.isArray(cached.files)) continue;
+
+    // Cache exists but has fewer files than the CR actually has (e.g. saved
+    // back when per-CR collection was capped) — what's cached is still shown
+    // below, but flagged separately so the caller can offer "재수집" instead
+    // of implying the CR is fully collected.
+    if ((cr.files || []).length > cached.files.length) {
+      partiallyCachedCrids.push(cr.crid);
+    }
 
     for (const f of cached.files) {
       if (extractVobFromPath(f.filePath) !== vobName) continue; // this CR's other files may be in a different VOB
@@ -519,6 +573,7 @@ export function getVobHistory(vobName, allCrs) {
     totalCrs: matchingCrs.length,
     cachedCrs: matchingCrs.length - uncachedCrids.length,
     uncachedCrids,
+    partiallyCachedCrids,
     entries
   };
 }
@@ -685,12 +740,18 @@ class BackgroundDiffIndexer {
     const crsWithFiles = allCrs.filter(c => c.files && c.files.length > 0);
     const totalTargetCount = crsWithFiles.length || allCrs.length || 1;
 
-    // Accurately count cached CRs that belong to current target CRs with files
+    // Accurately count FULLY cached CRs that belong to current target CRs with
+    // files — a CR whose cache exists but has fewer files than it actually
+    // has (e.g. saved back when collection was capped) must not count as
+    // done, or the progress bar shows 100% while VOB history and everything
+    // else reading the cache is still missing most of that CR's files.
     let cachedTargetCRs = 0;
     for (const cr of crsWithFiles) {
-      if (hasCRDiffCache(cr.crid)) {
-        cachedTargetCRs++;
-      }
+      const safeId = String(cr.crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+      const meta = cacheIndex.get(safeId);
+      if (!meta) continue;
+      if (typeof meta.fileCount === 'number' && cr.files.length > meta.fileCount) continue;
+      cachedTargetCRs++;
     }
 
     const progressPercent = Math.min(100, (cachedTargetCRs / totalTargetCount) * 100);
@@ -748,6 +809,19 @@ class BackgroundDiffIndexer {
         if (cr._lastUpdatedMs > meta.mtimeMs) {
           return cr;
         }
+      }
+
+      // Re-pick CRs whose cache was written back when per-CR file collection
+      // was capped (5-10 files) — those caches were saved as "complete" with
+      // far fewer files than the CR actually has, so this check is the only
+      // thing that gets them collected in full without waiting for Mantis to
+      // report the CR as modified (it never will, since nothing changed in
+      // Mantis — only the collection limit changed). Uses the same
+      // significantly-fewer-than heuristic as fetchAndCacheCRDiff's own
+      // stale check so a CR isn't endlessly re-picked over the handful of
+      // files legitimately skipped as directory elements or binaries.
+      if (typeof meta.fileCount === 'number' && cr.files.length > meta.fileCount) {
+        return cr;
       }
     }
     return null;
@@ -823,7 +897,14 @@ class BackgroundDiffIndexer {
         const anyRemaining = allCrs.some(cr => {
           if (!cr.files || cr.files.length === 0) return false;
           const safeId = String(cr.crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
-          return !cacheIndex.has(safeId);
+          const meta = cacheIndex.get(safeId);
+          if (!meta) return true;
+          // Same under-collected check as _pickNextCR — otherwise the loop
+          // considers itself "100% complete" while CRs whose cache was
+          // capped under the old per-CR file limit sit there forever,
+          // getting picked up only once every 30s sleep instead of promptly.
+          if (typeof meta.fileCount === 'number' && cr.files.length > meta.fileCount) return true;
+          return false;
         });
 
         if (!anyRemaining && this.priorityQueue.length === 0) {

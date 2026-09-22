@@ -105,7 +105,6 @@ import {
   collectVobUncachedCRs,
   fetchFileVersionChain,
   fetchFileVersionsSSH,
-  fetchAndCacheCRDiffAPI,
   VobListItem,
   VobHistoryEntry,
   FileVersionChainItem
@@ -801,6 +800,7 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
     totalCrs: number;
     cachedCrs: number;
     uncachedCrids: string[];
+    partiallyCachedCrids: string[];
     entries: VobHistoryEntry[];
   } | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -836,6 +836,7 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
             totalCrs: res.totalCrs,
             cachedCrs: res.cachedCrs,
             uncachedCrids: res.uncachedCrids,
+            partiallyCachedCrids: res.partiallyCachedCrids || [],
             entries: res.entries
           });
         }
@@ -849,14 +850,16 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
   };
 
   const handleCollectUncached = async () => {
-    if (!selectedVob || !history || history.uncachedCrids.length === 0) return;
+    if (!selectedVob || !history) return;
+    const targets = Array.from(new Set([...history.uncachedCrids, ...history.partiallyCachedCrids]));
+    if (targets.length === 0) return;
     setIsCollecting(true);
     setCollectMessage(null);
     try {
-      const res = await collectVobUncachedCRs(selectedVob, history.uncachedCrids);
+      const res = await collectVobUncachedCRs(selectedVob, targets);
       if (res.ok) {
         setCollectMessage(
-          `${res.queued}건을 백그라운드 수집 대기열 최우선순위로 등록했습니다. 설정 화면의 자동 수집을 켜두면 곧 반영됩니다.`
+          `${res.queued}건을 백그라운드 수집 대기열 최우선순위로 등록했습니다. 이미 캐시된 파일은 다시 가져오지 않고, 빠진 파일만 추가로 수집합니다.`
         );
       }
     } catch (err: any) {
@@ -945,14 +948,22 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                       아직 수집 안됨 {history.uncachedCrids.length.toLocaleString()}건
                     </span>
                   )}
-                  {history.uncachedCrids.length > 0 && (
+                  {history.partiallyCachedCrids.length > 0 && (
+                    <span
+                      className="px-2 py-0.5 rounded-md bg-orange-500/15 border border-orange-500/30 text-orange-400 font-mono"
+                      title="이 CR이 실제로 가진 파일 수보다 캐시된 파일 수가 적어, 화면에 안 보이는 파일이 있을 수 있습니다."
+                    >
+                      일부만 수집됨 {history.partiallyCachedCrids.length.toLocaleString()}건
+                    </span>
+                  )}
+                  {(history.uncachedCrids.length > 0 || history.partiallyCachedCrids.length > 0) && (
                     <button
                       onClick={handleCollectUncached}
                       disabled={isCollecting}
                       className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-medium transition-colors"
                     >
                       <Download className={`w-3 h-3 ${isCollecting ? 'animate-spin' : ''}`} />
-                      미수집분 우선 수집 요청
+                      미수집·부분수집분 우선 수집 요청
                     </button>
                   )}
                 </div>
@@ -1111,10 +1122,18 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                                   e.stopPropagation();
                                   setRetryingCrid(entry.crid);
                                   try {
-                                    await fetchAndCacheCRDiffAPI({ crid: entry.crid, id: entry.id } as any, sshConfig, undefined, true);
-                                    if (selectedVob) loadHistory(selectedVob);
+                                    // Queue onto the background indexer instead of waiting on it
+                                    // synchronously — a CR can have hundreds/thousands of files
+                                    // (SSH fetched one at a time), which easily exceeds any
+                                    // reasonable frontend request timeout. The indexer picks this
+                                    // CR up immediately (priority queue) and only fetches what's
+                                    // actually missing, not a full re-fetch.
+                                    if (selectedVob) {
+                                      await collectVobUncachedCRs(selectedVob, [entry.crid]);
+                                      setCollectMessage(`CR #${entry.crid} 재수집을 백그라운드 대기열에 등록했습니다. 잠시 후 새로고침하면 반영됩니다.`);
+                                    }
                                   } catch (err: any) {
-                                    alert('재조회 실패: ' + (err.message || '서버 응답 없음'));
+                                    alert('재수집 요청 실패: ' + (err.message || '서버 응답 없음'));
                                   } finally {
                                     setRetryingCrid(null);
                                   }
@@ -1123,7 +1142,7 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                                 className="px-2 py-1 rounded bg-rose-900/60 hover:bg-rose-800 text-rose-100 text-[10px] shrink-0 font-sans flex items-center gap-1 cursor-pointer transition-colors"
                               >
                                 <RefreshCw className={`w-3 h-3 ${retryingCrid === entry.crid ? 'animate-spin' : ''}`} />
-                                다시 시도
+                                재수집 요청
                               </button>
                             </div>
                           )}
