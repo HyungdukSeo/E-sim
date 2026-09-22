@@ -306,21 +306,25 @@ export function getCRDiffCache(crid) {
 
 // Shared post-processing: drop directory elements / branch pseudo-entries and
 // entries that are actually a parent directory of another entry in the same
-// list. O(n) via a Set lookup instead of the O(n^2) Array#some scan, which
+// list. O(n) via parent Set lookup instead of O(n^2) Array#some scan, which
 // matters once a single CR's cache reaches hundreds of files.
 function filterOutDirectoryEntries(files) {
   if (!Array.isArray(files) || files.length === 0) return files || [];
-  const pathSet = new Set(files.map(f => f.filePath || f.fileName || ''));
+  const pathSet = new Set(files.map(f => f.filePath || f.fileName || '').filter(Boolean));
+  const dirPaths = new Set();
+  for (const p of pathSet) {
+    let parent = p;
+    let slashIdx;
+    while ((slashIdx = parent.lastIndexOf('/')) > 0) {
+      parent = parent.slice(0, slashIdx);
+      if (pathSet.has(parent)) dirPaths.add(parent);
+    }
+  }
   return files.filter(f => {
     if (f.isDirectory) return false;
     if (isDirectoryElement(f.fileName, f.filePath, f.unifiedDiff)) return false;
     const fp = f.filePath || f.fileName || '';
-    if (fp) {
-      const slashIdx = fp.length;
-      for (const other of pathSet) {
-        if (other !== fp && other.length > slashIdx && other.startsWith(fp + '/')) return false;
-      }
-    }
+    if (fp && dirPaths.has(fp)) return false;
     return true;
   });
 }
@@ -827,12 +831,22 @@ export async function getVobHistory(vobName, allCrs) {
     }
 
     const cachedByPath = new Map(cached.files.map(f => [f.filePath, f]));
+    const cachedFilePathSet = new Set(cached.files.map(f => f.filePath).filter(Boolean));
+    const cachedDirPaths = new Set();
+    for (const cf of cached.files) {
+      let parent = cf.filePath;
+      let slashIdx;
+      while ((slashIdx = parent?.lastIndexOf('/')) > 0) {
+        parent = parent.slice(0, slashIdx);
+        if (cachedFilePathSet.has(parent)) cachedDirPaths.add(parent);
+      }
+    }
 
     for (const f of cached.files) {
       if (extractVobFromPath(f.filePath) !== vobName) continue; // this CR's other files may be in a different VOB
       // Skip directory elements and branch pseudo-elements completely
       if (f.isDirectory || isDirectoryElement(f.fileName, f.filePath, f.unifiedDiff)) continue;
-      if (cached.files.some(other => other.filePath !== f.filePath && other.filePath.startsWith(f.filePath + '/'))) continue;
+      if (cachedDirPaths.has(f.filePath)) continue;
 
       entries.push({
         crid: cr.crid,
@@ -867,10 +881,14 @@ export async function getVobHistory(vobName, allCrs) {
     // is visible instead of looking like the file was never part of the CR.
     if (isPartial) {
       const filePaths = cr.filePaths || [];
+      const rawPathSet = new Set(filePaths);
       const dirPaths = new Set();
-      for (const fp of filePaths) {
-        if (filePaths.some(other => other !== fp && other.startsWith(fp + '/'))) {
-          dirPaths.add(fp);
+      for (const p of filePaths) {
+        let parent = p;
+        let slashIdx;
+        while ((slashIdx = parent.lastIndexOf('/')) > 0) {
+          parent = parent.slice(0, slashIdx);
+          if (rawPathSet.has(parent)) dirPaths.add(parent);
         }
       }
       for (let i = 0; i < filePaths.length; i++) {

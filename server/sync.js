@@ -171,10 +171,14 @@ export function parseCheckinLog(log) {
   // Detect ClearCase directory elements:
   // When a file is added/deleted/renamed in ClearCase, its parent directory element is checked in too.
   // Any path that has children in the same check-in list is 100% a directory element.
+  const rawPathSet = new Set(uniquePaths);
   const dirPaths = new Set();
   for (const p of uniquePaths) {
-    if (uniquePaths.some(other => other !== p && other.startsWith(p + '/'))) {
-      dirPaths.add(p);
+    let parent = p;
+    let slashIdx;
+    while ((slashIdx = parent.lastIndexOf('/')) > 0) {
+      parent = parent.slice(0, slashIdx);
+      if (rawPathSet.has(parent)) dirPaths.add(parent);
     }
   }
 
