@@ -586,6 +586,7 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
   const results = Array.from(alreadyCachedByPath.values());
   let processed = 0;
   let newlyFetchedCount = 0;
+  let lastIncrementalSaveAt = Date.now();
 
   // If a targetVob was specified (e.g. from VOB History collect), prioritize
   // files belonging to that VOB so the user sees results immediately instead
@@ -654,8 +655,21 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
       newlyFetchedCount++;
     }
 
-    // Incremental disk save every 5 newly fetched files so VOB history immediately reflects progress
-    if (newlyFetchedCount > 0 && newlyFetchedCount % 5 === 0) {
+    // Incremental disk save so VOB history reflects progress before the whole
+    // CR finishes — throttled by elapsed time rather than a fixed file count.
+    // A fixed "every N files" checkpoint re-serializes the ENTIRE results
+    // array each time, and that array only grows — for a 1000+ file CR every
+    // N=5 files becomes 200+ saves, with the later ones each re-writing
+    // several hundred MB (measured: ~3.4s per save once the array reaches
+    // ~830 entries on real data), pushing total collection time for one
+    // large CR into the range of minutes even though nothing here blocks
+    // the server itself (saveCRDiffCacheAsync already offloads big payloads
+    // to a worker thread). A time-based interval keeps the "show progress
+    // soon" benefit while keeping the number of saves proportional to how
+    // long collection takes, not how many files exist.
+    const INCREMENTAL_SAVE_INTERVAL_MS = 15000;
+    if (newlyFetchedCount > 0 && Date.now() - lastIncrementalSaveAt >= INCREMENTAL_SAVE_INTERVAL_MS) {
+      lastIncrementalSaveAt = Date.now();
       try {
         await saveCRDiffCacheAsync(crid, {
           crid,
