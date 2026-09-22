@@ -1,3 +1,12 @@
+// Must be set before any fs/dns/crypto async call touches libuv's threadpool
+// (env vars read at startup only) — the default of 4 threads is easily
+// saturated by a single large diff-cache file read (some CRs' cache reaches
+// several hundred MB) plus the worker threads' own file I/O, which then
+// queues up unrelated async file reads elsewhere in the app behind it.
+if (!process.env.UV_THREADPOOL_SIZE) {
+  process.env.UV_THREADPOOL_SIZE = '16';
+}
+
 const { app, BrowserWindow, Tray, Menu, Notification, shell, nativeImage } = require('electron');
 const path = require('path');
 const http = require('http');

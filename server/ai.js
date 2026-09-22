@@ -290,7 +290,7 @@ export function analyzeQueryLocally(query, allCrs) {
 }
 
 import { fetchFileDiffSSH } from './ssh.js';
-import { getCRDiffCache } from './diff-cache.js';
+import { getCRDiffCacheAsync } from './diff-cache.js';
 
 const BINARY_EXTS = new Set(['.exe', '.o', '.a', '.so', '.dll', '.tar', '.gz', '.zip', '.class', '.jar', '.png', '.jpg', '.pdf']);
 
@@ -302,7 +302,7 @@ async function collectDeepDiffs(localAnalysis, sshConfig) {
     if (!cr.files) continue;
     
     // Check if we have local cache first!
-    const cached = getCRDiffCache(cr.crid);
+    const cached = await getCRDiffCacheAsync(cr.crid);
     if (cached && cached.files && cached.files.length > 0) {
       for (const f of cached.files) {
         if (f.hasChanges && f.unifiedDiff) {

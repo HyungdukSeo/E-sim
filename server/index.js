@@ -11,7 +11,7 @@ import { syncMantisData, getLocalDatabase, reloadDatabase, importDatabase, fetch
 import { processAiQuery, analyzeSingleCRDiff, compareMultipleCRDiffs } from './ai.js';
 import { testSSHConnection, fetchFileDiffSSH, fetchFileVersionHistorySSH, fetchFileVersionsSSH } from './ssh.js';
 import { getClaudeModels, getAntigravityModels, getCodexModels, getOmniRouteModels, getAIProvidersStatus, checkOmniRouteStatus, findCommandPath } from './cli-models.js';
-import { getCRDiffCache, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, initCacheIndex, batchIndexDiffs, backgroundDiffIndexer, getVobList, getVobHistory, mapFileVersionsToCRs, isBinaryFile } from './diff-cache.js';
+import { getCRDiffCache, getCRDiffCacheAsync, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, initCacheIndex, batchIndexDiffs, backgroundDiffIndexer, getVobList, getVobHistory, mapFileVersionsToCRs, isBinaryFile, prewarmDiffCacheWorkers } from './diff-cache.js';
 import { sshPool } from './ssh-pool.js';
 import { searchCRs } from './search.js';
 
@@ -838,10 +838,10 @@ app.get('/api/diff-cache/vobs', (req, res) => {
   }
 });
 
-app.get('/api/diff-cache/vobs/:vob/history', (req, res) => {
+app.get('/api/diff-cache/vobs/:vob/history', async (req, res) => {
   try {
     const { crs } = getLocalDatabase();
-    const history = getVobHistory(req.params.vob, crs);
+    const history = await getVobHistory(req.params.vob, crs);
     res.json({ ok: true, ...history });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -853,7 +853,7 @@ app.get('/api/diff-cache/vobs/:vob/history', (req, res) => {
 // already cached from any CR that touched it. Cache lookup is by-crid, so this
 // scans the small set of CRs whose checkinLog actually mentions the file rather
 // than the whole diff cache index.
-app.get('/api/diff-cache/file-version-chain', (req, res) => {
+app.get('/api/diff-cache/file-version-chain', async (req, res) => {
   try {
     const filePath = req.query.filePath;
     if (!filePath) {
@@ -867,12 +867,16 @@ app.get('/api/diff-cache/file-version-chain', (req, res) => {
     const versionNumbers = Array.from(versionToCr.keys()).sort((a, b) => a - b);
     const latestVersion = versionNumbers.length ? versionNumbers[versionNumbers.length - 1] : null;
 
+    // Cache reads are async (getCRDiffCacheAsync) since a version chain can
+    // easily touch a large release-style CR whose cache file reaches
+    // hundreds of MB — a sync read here would stall the whole server for
+    // every other request while this single chain request is served.
     const chain = [];
     for (let v = 0; v <= (latestVersion ?? -1); v++) {
       const match = versionToCr.get(v);
       let cached = null;
       if (match) {
-        const cachedDiff = getCRDiffCache(match.crid);
+        const cachedDiff = await getCRDiffCacheAsync(match.crid);
         const fileEntry = cachedDiff?.files?.find(f => f.filePath === filePath);
         if (fileEntry && fileEntry.status === 'success') {
           cached = {
@@ -914,10 +918,10 @@ app.post('/api/diff-cache/vobs/:vob/collect', (req, res) => {
   }
 });
 
-app.get('/api/diff-cache/:crid', (req, res) => {
+app.get('/api/diff-cache/:crid', async (req, res) => {
   try {
     const { crid } = req.params;
-    const cached = getCRDiffCache(crid);
+    const cached = await getCRDiffCacheAsync(crid);
     if (cached) {
       return res.json({ ok: true, cached: true, data: cached });
     }
@@ -947,7 +951,7 @@ app.post('/api/diff-cache/fetch', async (req, res) => {
     // here with far fewer files than the CR, and short-circuiting on it here
     // would return that stale, incomplete data forever instead of ever
     // reaching fetchAndCacheCRDiff's own (now incremental) missing-file fetch.
-    const cached = getCRDiffCache(targetCrid);
+    const cached = await getCRDiffCacheAsync(targetCrid);
     const hasErrorInCache = cached?.files?.some(f => f.status === 'error');
     const crFileCount = targetCR ? (targetCR.files || []).length : 0;
     const isFullyCached = cached && cached.files && cached.files.length > 0 &&
@@ -1005,7 +1009,7 @@ app.post('/api/ai/analyze-cr-diff', async (req, res) => {
     }
 
     // Get diffs (from cache or SSH)
-    let diffPayload = getCRDiffCache(targetCrid);
+    let diffPayload = await getCRDiffCacheAsync(targetCrid);
     if (!diffPayload) {
       const servers = resolveAllSSHServers(sshServers, sshConfig);
       if (servers.length > 0) {
@@ -1019,7 +1023,7 @@ app.post('/api/ai/analyze-cr-diff', async (req, res) => {
       config
     });
 
-    res.json({ ok: true, ...result, cached: !!getCRDiffCache(targetCrid) });
+    res.json({ ok: true, ...result, cached: !!(await getCRDiffCacheAsync(targetCrid)) });
   } catch (err) {
     console.error('[AI Analyze CR Diff Error]', err.message);
     res.status(500).json({ ok: false, error: err.message });
@@ -1044,7 +1048,7 @@ app.post('/api/ai/compare-crs', async (req, res) => {
     // Collect diffs for all selected CRs
     const diffMap = {};
     for (const cr of targetCRs) {
-      let diffData = getCRDiffCache(cr.crid);
+      let diffData = await getCRDiffCacheAsync(cr.crid);
       if (!diffData && servers.length > 0) {
         try {
           diffData = await fetchAndCacheCRDiff(cr, servers, 5);
@@ -1102,7 +1106,14 @@ export function startServer(defaultPort = PORT) {
         process.env.ACTIVE_PORT = String(p);
         console.log(`[Backend] Mantis CR API Server running on http://localhost:${p}`);
         console.log(`[Backend] Portable DB file location: ${DB_FILE}`);
-        
+
+        // Start these worker threads now rather than on first use — spawning
+        // a worker_thread has its own multi-second startup cost, and paying
+        // that during boot (while the user is still looking at a splash
+        // screen) is far better than the first request that happens to hit
+        // a large cached CR eating it on top of its own work.
+        prewarmDiffCacheWorkers();
+
         const { crs } = getLocalDatabase();
         if (crs.length === 0) {
           console.log('[Backend] DB is empty. Performing initial fetch from Mantis...');

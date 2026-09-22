@@ -200,15 +200,31 @@ export function parseCheckinLog(log) {
  */
 export function cleanCRFilePaths(cr) {
   if (!cr || !Array.isArray(cr.filePaths) || cr.filePaths.length === 0) return cr;
-  
+
   const rawPaths = cr.filePaths;
+  // A path is a directory element if some OTHER path in this same list
+  // starts with "<path>/" (i.e. it has a child in this same check-in).
+  // Checking that via Array#some inside a loop over every path is O(n^2) —
+  // negligible for the typical CR with a handful of files, but this runs
+  // for every CR on every server boot (getLocalDatabase's first call), and
+  // a large release-style CR can have 1000+ filePaths, making this single
+  // function the dominant cost of loading the whole database (measured:
+  // ~26s for 7746 CRs, almost entirely this one CR's O(n^2) scan).
+  // A directory path is by definition a strict PARENT of some other path
+  // (i.e. that other path, with its last "/segment" removed, equals this
+  // one) — so build the set of "parent of X" for every X once, in O(n),
+  // instead of comparing every pair of paths.
+  const rawPathSet = new Set(rawPaths);
   const dirPaths = new Set();
   for (const p of rawPaths) {
-    if (rawPaths.some(other => other !== p && other.startsWith(p + '/'))) {
-      dirPaths.add(p);
+    let parent = p;
+    let slashIdx;
+    while ((slashIdx = parent.lastIndexOf('/')) > 0) {
+      parent = parent.slice(0, slashIdx);
+      if (rawPathSet.has(parent)) dirPaths.add(parent);
     }
   }
-  
+
   const filteredPaths = [];
   const filteredFiles = [];
   for (let i = 0; i < rawPaths.length; i++) {
@@ -219,7 +235,7 @@ export function cleanCRFilePaths(cr) {
       filteredFiles.push(fn);
     }
   }
-  
+
   return {
     ...cr,
     filePaths: filteredPaths,

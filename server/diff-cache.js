@@ -1,9 +1,142 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { Worker } from 'worker_threads';
 import { fetchFileDiffSSH } from './ssh.js';
 import { sshPool } from './ssh-pool.js';
 import { DATA_DIR, ROOT_DIR } from './sync.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// A cache file below this size is parsed inline (JSON.parse cost is trivial
+// enough that spinning up a worker round-trip would be pure overhead).
+// Above it, parsing happens on the dedicated worker thread below so a
+// large CR's multi-second JSON.parse never blocks the main event loop —
+// see json-parse-worker.js for why this matters.
+const WORKER_PARSE_THRESHOLD_BYTES = 5 * 1024 * 1024; // 5MB
+
+let jsonParseWorker = null;
+let workerRequestId = 0;
+const pendingWorkerRequests = new Map();
+
+function getJsonParseWorker() {
+  if (jsonParseWorker) return jsonParseWorker;
+  jsonParseWorker = new Worker(path.join(__dirname, 'json-parse-worker.js'));
+  jsonParseWorker.on('message', (msg) => {
+    const pending = pendingWorkerRequests.get(msg.id);
+    if (!pending) return;
+    pendingWorkerRequests.delete(msg.id);
+    if (msg.ok) pending.resolve(msg);
+    else pending.reject(new Error(msg.error));
+  });
+  jsonParseWorker.on('error', (err) => {
+    // Fail every in-flight request rather than hanging forever, then let the
+    // next call spin up a fresh worker.
+    for (const pending of pendingWorkerRequests.values()) pending.reject(err);
+    pendingWorkerRequests.clear();
+    jsonParseWorker = null;
+  });
+  jsonParseWorker.unref(); // Don't keep the process alive just for this worker
+  return jsonParseWorker;
+}
+
+/**
+ * Spin up the parse/stringify worker threads immediately at server startup
+ * instead of lazily on the first large-cache read. Spawning a worker_thread
+ * (loading its module, starting its own V8 isolate) is itself a real cost —
+ * on Windows in this environment, on the order of several seconds — so
+ * paying it once during startup means the first real request that happens
+ * to hit a large CR isn't also stuck waiting for the worker to come up.
+ */
+export function prewarmDiffCacheWorkers() {
+  try { getJsonParseWorker(); } catch (e) {}
+  try { getJsonStringifyWorker(); } catch (e) {}
+}
+
+// Parse a JSON file off the main thread. Falls back to inline sync parsing
+// if the worker itself fails to start (e.g. sandboxed/restricted environment)
+// so a worker_threads issue never turns into a total cache-read failure.
+function parseJsonFileOffThread(filePath) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finishInline = () => {
+      if (settled) return;
+      settled = true;
+      try {
+        const content = fs.readFileSync(filePath, 'utf8');
+        resolve({ ok: true, parsed: JSON.parse(content), sizeBytes: Buffer.byteLength(content, 'utf8') });
+      } catch (err) {
+        resolve({ ok: false, error: err.message });
+      }
+    };
+
+    try {
+      const worker = getJsonParseWorker();
+      const id = ++workerRequestId;
+      pendingWorkerRequests.set(id, {
+        resolve: (msg) => { if (!settled) { settled = true; resolve(msg); } },
+        reject: () => finishInline()
+      });
+      worker.postMessage({ id, filePath });
+    } catch (err) {
+      finishInline();
+    }
+  });
+}
+
+// Mirror of the parse worker, for JSON.stringify + write of large payloads —
+// see json-stringify-worker.js.
+let jsonStringifyWorker = null;
+let stringifyRequestId = 0;
+const pendingStringifyRequests = new Map();
+
+function getJsonStringifyWorker() {
+  if (jsonStringifyWorker) return jsonStringifyWorker;
+  jsonStringifyWorker = new Worker(path.join(__dirname, 'json-stringify-worker.js'));
+  jsonStringifyWorker.on('message', (msg) => {
+    const pending = pendingStringifyRequests.get(msg.id);
+    if (!pending) return;
+    pendingStringifyRequests.delete(msg.id);
+    if (msg.ok) pending.resolve(msg);
+    else pending.reject(new Error(msg.error));
+  });
+  jsonStringifyWorker.on('error', (err) => {
+    for (const pending of pendingStringifyRequests.values()) pending.reject(err);
+    pendingStringifyRequests.clear();
+    jsonStringifyWorker = null;
+  });
+  jsonStringifyWorker.unref();
+  return jsonStringifyWorker;
+}
+
+function stringifyAndWriteOffThread(filePath, diffData) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finishInline = () => {
+      if (settled) return;
+      settled = true;
+      try {
+        const jsonStr = JSON.stringify(diffData);
+        fs.writeFileSync(filePath, jsonStr, 'utf8');
+        resolve({ ok: true, sizeBytes: Buffer.byteLength(jsonStr, 'utf8') });
+      } catch (err) {
+        resolve({ ok: false, error: err.message });
+      }
+    };
+
+    try {
+      const worker = getJsonStringifyWorker();
+      const id = ++stringifyRequestId;
+      pendingStringifyRequests.set(id, {
+        resolve: (msg) => { if (!settled) { settled = true; resolve(msg); } },
+        reject: () => finishInline()
+      });
+      worker.postMessage({ id, filePath, diffData });
+    } catch (err) {
+      finishInline();
+    }
+  });
+}
 
 export const DIFF_CACHE_DIR = path.join(DATA_DIR, 'diff_cache');
 
@@ -22,31 +155,6 @@ let totalCachedFiles = 0;
 let totalCachedBytes = 0;
 let isIndexInitialized = false;
 
-// Fast extraction of the top-level "fileCount" field WITHOUT parsing the
-// whole cache file — files can be 250KB+ each and there are thousands of
-// them, so reading only the first couple KB (fileCount always appears near
-// the start, right after the CR metadata fields) keeps index rebuilds fast
-// while still letting callers detect a CR whose cache has fewer files than
-// its current filePaths (e.g. an old cache saved back when file collection
-// was capped at 5-10 files per CR).
-const FILE_COUNT_RE = /"fileCount"\s*:\s*(\d+)/;
-const PARTIAL_READ_BYTES = 2048;
-
-function readCachedFileCount(fullPath) {
-  let fd;
-  try {
-    fd = fs.openSync(fullPath, 'r');
-    const buf = Buffer.alloc(PARTIAL_READ_BYTES);
-    const bytesRead = fs.readSync(fd, buf, 0, PARTIAL_READ_BYTES, 0);
-    const m = FILE_COUNT_RE.exec(buf.toString('utf8', 0, bytesRead));
-    return m ? parseInt(m[1], 10) : null;
-  } catch (e) {
-    return null;
-  } finally {
-    if (fd !== undefined) { try { fs.closeSync(fd); } catch (e) {} }
-  }
-}
-
 export function initCacheIndex(forceReset = false) {
   if (isIndexInitialized && !forceReset) return;
   isIndexInitialized = true;
@@ -55,6 +163,15 @@ export function initCacheIndex(forceReset = false) {
   totalCachedBytes = 0;
   if (!fs.existsSync(DIFF_CACHE_DIR)) return;
 
+  // Only stat() here — with thousands of cache files this alone is already
+  // a real synchronous cost, and reading the first couple KB of every one
+  // of them (to also learn fileCount up front) turned a ~1s scan into a
+  // 6+ second one on a real dataset, blocking the server's very first
+  // request right after startup. fileCount starts undefined (meaning
+  // "unknown, treat as incomplete" per the callers below) and gets filled
+  // in lazily the moment each CR's cache is actually read through
+  // getCRDiffCache/getCRDiffCacheAsync, which every real code path already
+  // goes through before trusting a cache as complete.
   try {
     const files = fs.readdirSync(DIFF_CACHE_DIR);
     for (const f of files) {
@@ -63,15 +180,13 @@ export function initCacheIndex(forceReset = false) {
       const fullPath = path.join(DIFF_CACHE_DIR, f);
       try {
         const stat = fs.statSync(fullPath);
-        const fileCount = readCachedFileCount(fullPath);
         cacheIndex.set(crid, {
           sizeBytes: stat.size,
           mtimeMs: stat.mtimeMs,
           cachedAt: new Date(stat.mtimeMs).toISOString(),
-          fileCount: fileCount ?? undefined
+          fileCount: undefined
         });
         totalCachedBytes += stat.size;
-        if (fileCount) totalCachedFiles += fileCount;
       } catch (e) {}
     }
   } catch (err) {
@@ -166,17 +281,10 @@ export function getCRDiffCache(crid) {
     try {
       const content = fs.readFileSync(filePath, 'utf8');
       const parsed = JSON.parse(content);
-      
+
       // Filter out directory elements and branch pseudo-elements from files list
       if (parsed && Array.isArray(parsed.files)) {
-        const filePaths = parsed.files.map(f => f.filePath || f.fileName || '');
-        parsed.files = parsed.files.filter(f => {
-          if (f.isDirectory) return false;
-          if (isDirectoryElement(f.fileName, f.filePath, f.unifiedDiff)) return false;
-          const fp = f.filePath || f.fileName || '';
-          if (fp && filePaths.some(other => other !== fp && other.startsWith(fp + '/'))) return false;
-          return true;
-        });
+        parsed.files = filterOutDirectoryEntries(parsed.files);
       }
 
       // Keep index updated
@@ -194,6 +302,92 @@ export function getCRDiffCache(crid) {
     }
   }
   return null;
+}
+
+// Shared post-processing: drop directory elements / branch pseudo-entries and
+// entries that are actually a parent directory of another entry in the same
+// list. O(n) via a Set lookup instead of the O(n^2) Array#some scan, which
+// matters once a single CR's cache reaches hundreds of files.
+function filterOutDirectoryEntries(files) {
+  if (!Array.isArray(files) || files.length === 0) return files || [];
+  const pathSet = new Set(files.map(f => f.filePath || f.fileName || ''));
+  return files.filter(f => {
+    if (f.isDirectory) return false;
+    if (isDirectoryElement(f.fileName, f.filePath, f.unifiedDiff)) return false;
+    const fp = f.filePath || f.fileName || '';
+    if (fp) {
+      const slashIdx = fp.length;
+      for (const other of pathSet) {
+        if (other !== fp && other.length > slashIdx && other.startsWith(fp + '/')) return false;
+      }
+    }
+    return true;
+  });
+}
+
+/**
+ * Async twin of getCRDiffCache, for callers that run inside the background
+ * indexer's loop and must not block the event loop. A CR's cache file can
+ * legitimately reach several hundred MB (a release-style CR with 1000+
+ * files, each carrying a full unified diff) — fs.readFileSync + JSON.parse
+ * on a file that size stalls the whole process for multiple seconds, and
+ * with several concurrent workers each doing that to their own large CR,
+ * the server can become unresponsive to every other request for a stretch.
+ * Reading async keeps the disk I/O off the event loop; files above
+ * WORKER_PARSE_THRESHOLD_BYTES additionally have their JSON.parse done on a
+ * separate worker thread so even that CPU cost doesn't stall anything else
+ * the server is doing.
+ */
+export async function getCRDiffCacheAsync(crid) {
+  if (!isIndexInitialized) initCacheIndex();
+  const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+
+  let filePath = path.join(DIFF_CACHE_DIR, `${safeId}.json`);
+  let stat;
+  try {
+    stat = await fs.promises.stat(filePath);
+  } catch {
+    if (ROOT_DIR) {
+      const fallback = path.join(ROOT_DIR, 'data', 'diff_cache', `${safeId}.json`);
+      try {
+        stat = await fs.promises.stat(fallback);
+        filePath = fallback;
+      } catch {
+        return null;
+      }
+    } else {
+      return null;
+    }
+  }
+
+  try {
+    let parsed, sizeBytes;
+    if (stat.size >= WORKER_PARSE_THRESHOLD_BYTES) {
+      const result = await parseJsonFileOffThread(filePath);
+      if (!result.ok) throw new Error(result.error);
+      parsed = result.parsed;
+      sizeBytes = result.sizeBytes;
+    } else {
+      const content = await fs.promises.readFile(filePath, 'utf8');
+      parsed = JSON.parse(content);
+      sizeBytes = Buffer.byteLength(content, 'utf8');
+    }
+
+    if (parsed && Array.isArray(parsed.files)) {
+      parsed.files = filterOutDirectoryEntries(parsed.files);
+    }
+    if (parsed.cachedAt) {
+      cacheIndex.set(safeId, {
+        sizeBytes,
+        fileCount: (parsed.files || []).length,
+        cachedAt: parsed.cachedAt
+      });
+    }
+    return parsed;
+  } catch (e) {
+    console.warn(`[DiffCache] Corrupted cache for CR #${crid}:`, e.message);
+    return null;
+  }
 }
 
 /**
@@ -235,6 +429,53 @@ export function saveCRDiffCache(crid, diffData) {
 }
 
 /**
+ * Async twin of saveCRDiffCache for the background indexer's own save path.
+ * A large CR's payload (hundreds of files, each with a full unified diff)
+ * makes JSON.stringify itself a multi-second synchronous CPU cost — moving
+ * it to the same worker thread used for parsing keeps that off the main
+ * event loop too, matching getCRDiffCacheAsync's read-side handling.
+ */
+export async function saveCRDiffCacheAsync(crid, diffData) {
+  if (!isIndexInitialized) initCacheIndex();
+  const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+  const filePath = path.join(DIFF_CACHE_DIR, `${safeId}.json`);
+  const fileCount = Array.isArray(diffData.files) ? diffData.files.length : 0;
+
+  try {
+    // Rough size estimate to decide worker vs. inline without stringifying
+    // twice — good enough since this only gates which code path runs.
+    const estimatedSize = fileCount * 50000; // ~50KB/file average is a safe over-estimate for routing purposes
+    let sizeBytes;
+    if (estimatedSize >= WORKER_PARSE_THRESHOLD_BYTES) {
+      const result = await stringifyAndWriteOffThread(filePath, diffData);
+      if (!result.ok) throw new Error(result.error);
+      sizeBytes = result.sizeBytes;
+    } else {
+      const jsonStr = JSON.stringify(diffData);
+      sizeBytes = Buffer.byteLength(jsonStr, 'utf8');
+      await fs.promises.writeFile(filePath, jsonStr, 'utf8');
+    }
+
+    const existing = cacheIndex.get(safeId);
+    if (existing) {
+      totalCachedBytes -= (existing.sizeBytes || 0);
+      totalCachedFiles -= (existing.fileCount || 0);
+    }
+    cacheIndex.set(safeId, {
+      sizeBytes,
+      fileCount,
+      cachedAt: diffData.cachedAt || new Date().toISOString()
+    });
+    totalCachedBytes += sizeBytes;
+    totalCachedFiles += fileCount;
+    return true;
+  } catch (e) {
+    console.error(`[DiffCache] Failed to write cache for CR #${crid}:`, e.message);
+    return false;
+  }
+}
+
+/**
  * Fetch and cache diffs for a CR using SSH. maxFiles defaults to unlimited —
  * a CR's filePaths can legitimately run into the hundreds or low thousands
  * (e.g. a single large release/deployment check-in touching every Makefile
@@ -250,7 +491,7 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
   const crid = cr.crid;
 
   // 1. Check existing cache
-  const cached = getCRDiffCache(crid);
+  const cached = await getCRDiffCacheAsync(crid);
   // Files already successfully cached, keyed by filePath — reused below so a
   // partial cache (e.g. one saved back when collection was capped at 5-10
   // files per CR) only fetches what's actually MISSING over SSH instead of
@@ -402,7 +643,7 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
     files: results
   };
 
-  saveCRDiffCache(crid, cachePayload);
+  await saveCRDiffCacheAsync(crid, cachePayload);
   return cachePayload;
 }
 
@@ -503,7 +744,7 @@ export function getVobList(allCrs) {
  * show "N건 아직 수집되지 않음" and optionally queue them via
  * backgroundDiffIndexer.queuePriority() rather than block the response on them.
  */
-export function getVobHistory(vobName, allCrs) {
+export async function getVobHistory(vobName, allCrs) {
   if (!isIndexInitialized) initCacheIndex();
 
   const matchingCrs = (allCrs || []).filter(cr =>
@@ -514,12 +755,31 @@ export function getVobHistory(vobName, allCrs) {
   const uncachedCrids = [];
   const partiallyCachedCrids = [];
 
+  const toRead = [];
   for (const cr of matchingCrs) {
     if (!hasCRDiffCache(cr.crid)) {
       uncachedCrids.push(cr.crid);
-      continue;
+    } else {
+      toRead.push(cr);
     }
-    const cached = getCRDiffCache(cr.crid);
+  }
+
+  // Read every matching CR's cache concurrently rather than one at a time —
+  // a VOB can easily match 200-300+ CRs, and awaiting getCRDiffCacheAsync
+  // sequentially means every small, fast CR still waits behind whatever
+  // large one happens to sit earlier in the list. Batched so a VOB with an
+  // extreme number of matches doesn't open hundreds of file handles at once.
+  const READ_BATCH_SIZE = 25;
+  const readResults = [];
+  for (let i = 0; i < toRead.length; i += READ_BATCH_SIZE) {
+    const batch = toRead.slice(i, i + READ_BATCH_SIZE);
+    const batchResults = await Promise.all(batch.map(cr => getCRDiffCacheAsync(cr.crid)));
+    readResults.push(...batchResults);
+  }
+
+  for (let i = 0; i < toRead.length; i++) {
+    const cr = toRead[i];
+    const cached = readResults[i];
     if (!cached || !Array.isArray(cached.files)) continue;
 
     // Cache exists but has fewer files than the CR actually has (e.g. saved
@@ -604,7 +864,7 @@ export async function batchIndexDiffs(crs, sshConfig, options = {}) {
 
   for (let i = 0; i < targets.length; i++) {
     const cr = targets[i];
-    const cached = getCRDiffCache(cr.crid);
+    const cached = await getCRDiffCacheAsync(cr.crid);
     if (cached && cached.files && cached.files.length > 0) {
       skippedCount++;
       if (onProgress) onProgress({ current: i + 1, total: targets.length, crid: cr.crid, status: 'cached' });
@@ -629,6 +889,15 @@ export async function batchIndexDiffs(crs, sshConfig, options = {}) {
   };
 }
 
+// A CR at or above this many files can have a cache file reaching several
+// hundred MB (each entry carries a full unified diff). Reading/parsing one
+// of those still costs real event-loop time even with async I/O, so only
+// one such CR is ever processed concurrently — letting several workers pile
+// onto several large CRs at once was what made the whole server go
+// unresponsive for stretches while multiple 500MB+ JSON.parse calls
+// competed for the single JS thread.
+const LARGE_CR_FILE_THRESHOLD = 200;
+
 /**
  * Background Automatic Diff Indexer Service
  * High-performance concurrent worker pool (up to 10 workers) for parallel diff collection
@@ -641,6 +910,7 @@ class BackgroundDiffIndexer {
     this.concurrency = 3; // 1 ~ 10 parallel workers (default 3)
     this.activeWorkers = 0;
     this.activeCrids = new Set(); // Currently processing CR IDs
+    this.activeLargeCrids = new Set(); // Subset of activeCrids whose file count exceeds LARGE_CR_FILE_THRESHOLD
     this.priorityQueue = []; // CR IDs to process immediately (e.g. newly synced CRs)
     this.sshConfig = null;
     this.lastError = null;
@@ -750,7 +1020,11 @@ class BackgroundDiffIndexer {
       const safeId = String(cr.crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
       const meta = cacheIndex.get(safeId);
       if (!meta) continue;
-      if (typeof meta.fileCount === 'number' && cr.files.length > meta.fileCount) continue;
+      // A corrupted/truncated cache file (e.g. left behind by a hard kill
+      // mid-write) has no readable fileCount at all — treat that the same
+      // as under-collected, not as done, or it never gets re-picked.
+      if (typeof meta.fileCount !== 'number') continue;
+      if (cr.files.length > meta.fileCount) continue;
       cachedTargetCRs++;
     }
 
@@ -789,9 +1063,13 @@ class BackgroundDiffIndexer {
     }
 
     // 2. Find next un-cached or modified/stale CR with files not currently in activeCrids
+    const largeSlotTaken = this.activeLargeCrids.size > 0;
     for (const cr of allCrs) {
       if (!cr.files || cr.files.length === 0) continue;
       if (this.activeCrids.has(cr.crid)) continue;
+      // Don't start a second large CR while one is already being processed —
+      // see LARGE_CR_FILE_THRESHOLD above.
+      if (largeSlotTaken && cr.files.length >= LARGE_CR_FILE_THRESHOLD) continue;
       const safeId = String(cr.crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
       const meta = cacheIndex.get(safeId);
 
@@ -811,6 +1089,13 @@ class BackgroundDiffIndexer {
         }
       }
 
+      // A corrupted/truncated cache (e.g. left by a hard process kill
+      // mid-write) has no readable fileCount — re-pick it exactly like an
+      // under-collected one, since it's effectively "nothing usable cached".
+      if (typeof meta.fileCount !== 'number') {
+        return cr;
+      }
+
       // Re-pick CRs whose cache was written back when per-CR file collection
       // was capped (5-10 files) — those caches were saved as "complete" with
       // far fewer files than the CR actually has, so this check is the only
@@ -820,7 +1105,7 @@ class BackgroundDiffIndexer {
       // significantly-fewer-than heuristic as fetchAndCacheCRDiff's own
       // stale check so a CR isn't endlessly re-picked over the handful of
       // files legitimately skipped as directory elements or binaries.
-      if (typeof meta.fileCount === 'number' && cr.files.length > meta.fileCount) {
+      if (cr.files.length > meta.fileCount) {
         return cr;
       }
     }
@@ -829,8 +1114,10 @@ class BackgroundDiffIndexer {
 
   async _processCRWorker(targetCR) {
     const crid = targetCR.crid;
+    const isLarge = (targetCR.files || []).length >= LARGE_CR_FILE_THRESHOLD;
     this.activeWorkers++;
     this.activeCrids.add(crid);
+    if (isLarge) this.activeLargeCrids.add(crid);
     this.status = 'running';
 
     try {
@@ -845,6 +1132,7 @@ class BackgroundDiffIndexer {
       console.warn(`[BackgroundDiffIndexer] Error caching #${crid}:`, err.message);
     } finally {
       this.activeCrids.delete(crid);
+      if (isLarge) this.activeLargeCrids.delete(crid);
       this.activeWorkers = Math.max(0, this.activeWorkers - 1);
       await new Promise(res => setImmediate(res));
     }
@@ -899,11 +1187,13 @@ class BackgroundDiffIndexer {
           const safeId = String(cr.crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
           const meta = cacheIndex.get(safeId);
           if (!meta) return true;
-          // Same under-collected check as _pickNextCR — otherwise the loop
-          // considers itself "100% complete" while CRs whose cache was
-          // capped under the old per-CR file limit sit there forever,
-          // getting picked up only once every 30s sleep instead of promptly.
-          if (typeof meta.fileCount === 'number' && cr.files.length > meta.fileCount) return true;
+          // Same under-collected/corrupted check as _pickNextCR — otherwise
+          // the loop considers itself "100% complete" while CRs whose cache
+          // was capped under the old per-CR file limit (or corrupted by a
+          // hard kill mid-write) sit there forever, getting picked up only
+          // once every 30s sleep instead of promptly.
+          if (typeof meta.fileCount !== 'number') return true;
+          if (cr.files.length > meta.fileCount) return true;
           return false;
         });
 
