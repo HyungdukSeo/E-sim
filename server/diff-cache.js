@@ -384,7 +384,9 @@ export async function getCRDiffCacheAsync(crid) {
       cacheIndex.set(safeId, {
         sizeBytes,
         fileCount: (parsed.files || []).length,
-        cachedAt: parsed.cachedAt
+        isComplete: parsed.isComplete === true,
+        cachedAt: parsed.cachedAt,
+        mtimeMs: stat.mtimeMs
       });
     }
     return parsed;
@@ -421,7 +423,9 @@ export function saveCRDiffCache(crid, diffData) {
     cacheIndex.set(safeId, {
       sizeBytes,
       fileCount,
-      cachedAt: diffData.cachedAt || new Date().toISOString()
+      isComplete: diffData.isComplete === true,
+      cachedAt: diffData.cachedAt || new Date().toISOString(),
+      mtimeMs: Date.now()
     });
     totalCachedBytes += sizeBytes;
     totalCachedFiles += fileCount;
@@ -468,7 +472,9 @@ export async function saveCRDiffCacheAsync(crid, diffData) {
     cacheIndex.set(safeId, {
       sizeBytes,
       fileCount,
-      cachedAt: diffData.cachedAt || new Date().toISOString()
+      isComplete: diffData.isComplete === true,
+      cachedAt: diffData.cachedAt || new Date().toISOString(),
+      mtimeMs: Date.now()
     });
     totalCachedBytes += sizeBytes;
     totalCachedFiles += fileCount;
@@ -526,11 +532,11 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
       const crFileCount = (cr.files || []).length;
       const cachedFileCount = cached.files.length;
       const hasErrors = cached.files.some(f => f.status === 'error');
-      if (!hasErrors && (crFileCount === 0 || crFileCount === cachedFileCount)) {
+      if (!hasErrors && (cached.isComplete || crFileCount === 0 || crFileCount === cachedFileCount)) {
         // Fully cached, nothing missing, nothing failed — done.
         return cached;
       }
-      console.log(`[DiffCache] CR #${crid} has ${cachedFileCount}/${crFileCount} files cached (errors: ${hasErrors}). Fetching only what's missing/failed...`);
+      console.log(`[DiffCache] CR #${crid} has ${cachedFileCount}/${crFileCount} files cached (errors: ${hasErrors}, isComplete: ${Boolean(cached.isComplete)}). Fetching only what's missing/failed...`);
     }
   }
 
@@ -693,6 +699,7 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
     customer: cr.customer || '',
     cachedAt: new Date().toISOString(),
     fileCount: results.length,
+    isComplete: true,
     files: results
   };
 
@@ -1035,6 +1042,8 @@ class BackgroundDiffIndexer {
     this.lastError = null;
     this.lastProcessedAt = null;
     this.processedCount = 0;
+    this.completedCrids = new Set(); // CR IDs successfully indexed during current session
+    this.failedAttempts = new Map(); // crid -> { count, lastFailedAt }
     this.allCrsProvider = null;
     this._wakeResolve = null;
   }
@@ -1084,6 +1093,8 @@ class BackgroundDiffIndexer {
   }
 
   queuePriority(crid, targetVob = null) {
+    this.completedCrids.delete(crid);
+    this.failedAttempts.delete(crid);
     if (targetVob) {
       this.priorityVobs.set(crid, targetVob);
     }
@@ -1103,8 +1114,12 @@ class BackgroundDiffIndexer {
     if (!Array.isArray(crList)) return;
     for (const cr of crList) {
       const crid = cr?.crid || cr;
-      if (crid && !this.priorityQueue.includes(crid)) {
-        this.priorityQueue.push(crid);
+      if (crid) {
+        this.completedCrids.delete(crid);
+        this.failedAttempts.delete(crid);
+        if (!this.priorityQueue.includes(crid)) {
+          this.priorityQueue.push(crid);
+        }
       }
     }
     this.wake();
@@ -1158,10 +1173,18 @@ class BackgroundDiffIndexer {
     // etc.), just not instantly at cold boot.
     let cachedTargetCRs = 0;
     for (const cr of crsWithFiles) {
+      if (this.completedCrids.has(cr.crid)) {
+        cachedTargetCRs++;
+        continue;
+      }
       const safeId = String(cr.crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
       const meta = cacheIndex.get(safeId);
       if (!meta) continue;
-      if (typeof meta.fileCount === 'number' && cr.files.length > meta.fileCount) continue;
+      if (meta.isComplete) {
+        cachedTargetCRs++;
+        continue;
+      }
+      if (typeof meta.fileCount === 'number' && meta.fileCount <= 10 && cr.files.length > 15) continue;
       cachedTargetCRs++;
     }
 
@@ -1201,18 +1224,35 @@ class BackgroundDiffIndexer {
 
     // 2. Find next un-cached or modified/stale CR with files not currently in activeCrids
     const largeSlotTaken = this.activeLargeCrids.size > 0;
+    const now = Date.now();
     for (const cr of allCrs) {
       if (!cr.files || cr.files.length === 0) continue;
       if (this.activeCrids.has(cr.crid)) continue;
+      if (this.completedCrids.has(cr.crid)) continue;
+
+      // Exponential backoff check for failed CRs (prevents CPU-burning infinite retry loops)
+      const failure = this.failedAttempts.get(cr.crid);
+      if (failure) {
+        const backoffMs = Math.min(1800000, 30000 * Math.pow(4, failure.count - 1));
+        if (now - failure.lastFailedAt < backoffMs) {
+          continue; // In backoff cooldown, skip for now
+        }
+      }
+
       // Don't start a second large CR while one is already being processed —
       // see LARGE_CR_FILE_THRESHOLD above.
       if (largeSlotTaken && cr.files.length >= LARGE_CR_FILE_THRESHOLD) continue;
       const safeId = String(cr.crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
       const meta = cacheIndex.get(safeId);
 
-      // If not cached in memory, pick immediately! (0ms, 0 disk I/O)
+      // If not cached at all in memory, pick immediately! (0ms, 0 disk I/O)
       if (!meta) {
         return cr;
+      }
+
+      // If marked as fully complete and not updated in Mantis since cachedAt, skip
+      if (meta.isComplete && (!cr.lastUpdated || !meta.mtimeMs || new Date(cr.lastUpdated).getTime() <= meta.mtimeMs)) {
+        continue;
       }
 
       // Check if stale using pre-cached millisecond timestamp (0 Date object allocations per tick)
@@ -1226,28 +1266,10 @@ class BackgroundDiffIndexer {
         }
       }
 
-      // meta.fileCount is undefined until this CR's cache has actually been
-      // read once (initCacheIndex only stat()s at boot to stay fast). Right
-      // after startup essentially every cached CR is in that state — do NOT
-      // treat that as "needs re-collecting" here, or the indexer re-picks
-      // (and re-reads) every single already-complete CR once right after
-      // boot. fetchAndCacheCRDiff reads the real cache itself and reuses
-      // whatever's already successfully cached, so skipping the re-pick
-      // here costs nothing — a genuinely corrupted or under-collected cache
-      // still gets caught the moment anything actually reads it (VOB
-      // history, CR detail, this same check on a later pass once fileCount
-      // is known, etc).
-      //
-      // Re-pick CRs whose cache was written back when per-CR file collection
-      // was capped (5-10 files) — those caches were saved as "complete" with
-      // far fewer files than the CR actually has, so this check is the only
-      // thing that gets them collected in full without waiting for Mantis to
-      // report the CR as modified (it never will, since nothing changed in
-      // Mantis — only the collection limit changed). Uses the same
-      // significantly-fewer-than heuristic as fetchAndCacheCRDiff's own
-      // stale check so a CR isn't endlessly re-picked over the handful of
-      // files legitimately skipped as directory elements or binaries.
-      if (typeof meta.fileCount === 'number' && cr.files.length > meta.fileCount) {
+      // Re-pick only CRs whose cache was saved back when per-CR file collection was capped
+      // (<= 10 files while the CR actually has > 15 files). Normal CRs whose file count difference
+      // is merely skipped directory elements or binary files are never endlessly re-picked.
+      if (!meta.isComplete && typeof meta.fileCount === 'number' && meta.fileCount <= 10 && cr.files.length > 15) {
         return cr;
       }
     }
@@ -1266,19 +1288,24 @@ class BackgroundDiffIndexer {
 
     try {
       // Yield to event loop
-      await new Promise(res => setImmediate(res));
+      await new Promise(res => setTimeout(res, 100));
       await fetchAndCacheCRDiff(targetCR, this.sshConfig, Infinity, false, targetVob);
       this.processedCount++;
       this.lastProcessedAt = new Date().toISOString();
       this.lastError = null;
+      this.completedCrids.add(crid);
+      this.failedAttempts.delete(crid);
     } catch (err) {
       this.lastError = `CR #${crid}: ${err.message}`;
       console.warn(`[BackgroundDiffIndexer] Error caching #${crid}:`, err.message);
+      const prevCount = this.failedAttempts.get(crid)?.count || 0;
+      this.failedAttempts.set(crid, { count: prevCount + 1, lastFailedAt: Date.now() });
     } finally {
       this.activeCrids.delete(crid);
       if (isLarge) this.activeLargeCrids.delete(crid);
       this.activeWorkers = Math.max(0, this.activeWorkers - 1);
-      await new Promise(res => setImmediate(res));
+      // Essential breathing cooldown (800ms) between CRs so Electron UI and OS stay fluid
+      await new Promise(res => setTimeout(res, 800));
     }
   }
 
@@ -1322,24 +1349,21 @@ class BackgroundDiffIndexer {
         }
         // Launch worker in background (unawaited) so other workers can start concurrently
         this._processCRWorker(targetCR);
-        // Micro-yield between dispatches so the event loop remains ultra responsive
-        await new Promise(res => setImmediate(res));
+        // Throttle dispatch bursts (500ms) so the Node event loop and Electron UI stay ultra responsive
+        await new Promise(res => setTimeout(res, 500));
       }
 
       if (this.activeWorkers === 0) {
         const anyRemaining = allCrs.some(cr => {
           if (!cr.files || cr.files.length === 0) return false;
+          if (this.completedCrids.has(cr.crid)) return false;
+          const failure = this.failedAttempts.get(cr.crid);
+          if (failure && failure.count >= 3) return false;
           const safeId = String(cr.crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
           const meta = cacheIndex.get(safeId);
           if (!meta) return true;
-          // Same rule as _pickNextCR: an unread fileCount (undefined) is not
-          // "remaining work" by itself — only a fileCount that's actually
-          // been read and found short counts. Otherwise this and
-          // _pickNextCR would disagree right after boot (this says "still
-          // remaining", _pickNextCR refuses to pick any of them), and the
-          // loop would spin without making progress or ever reaching
-          // "completed".
-          if (typeof meta.fileCount === 'number' && cr.files.length > meta.fileCount) return true;
+          if (meta.isComplete) return false;
+          if (typeof meta.fileCount === 'number' && meta.fileCount <= 10 && cr.files.length > 15) return true;
           return false;
         });
 
@@ -1350,13 +1374,13 @@ class BackgroundDiffIndexer {
           continue;
         } else {
           this.status = 'idle';
-          // Idle with no eligible targets: sleep 5 seconds
-          await this._sleep(5000);
+          // Idle with no eligible targets: sleep 3 seconds
+          await this._sleep(3000);
           continue;
         }
       } else {
         this.status = 'running';
-        await this._sleep(600);
+        await this._sleep(1000);
       }
     }
   }
