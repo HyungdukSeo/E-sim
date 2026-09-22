@@ -22,7 +22,7 @@ function sanitizeHost(host) {
  * In-Memory Fast LRU Cache for Committed ClearCase Diffs (0ms response on repeat)
  */
 const diffCache = new Map();
-const MAX_CACHE_ENTRIES = 300;
+const MAX_CACHE_ENTRIES = 40; // Lean LRU cache (saves ~400MB RAM compared to 300 entries)
 
 function getCacheKey(host, filePath, prevVer, currVer) {
   return `${host}:${filePath}:${prevVer}:${currVer}`;
@@ -183,7 +183,17 @@ export function execSSHBuffer(conn, command, timeoutMs = 6000, streamRef) {
       if (streamRef) streamRef.stream = s;
 
       const chunks = [];
-      stream.on('data', (data) => chunks.push(data));
+      let totalBytes = 0;
+      const MAX_STREAM_BYTES = 25 * 1024 * 1024; // 25MB ceiling to protect against runaway buffer memory
+      stream.on('data', (data) => {
+        totalBytes += data.length;
+        if (totalBytes > MAX_STREAM_BYTES) {
+          try { stream.destroy(); } catch (e) {}
+          settle(() => reject(new Error('명령어 출력 크기 초과 (최대 25MB) - 메모리 보호를 위해 중단됨')));
+          return;
+        }
+        chunks.push(data);
+      });
       stream.stderr.on('data', () => {}); // Ignore stderr
       stream.on('close', () => {
         const buffer = Buffer.concat(chunks);

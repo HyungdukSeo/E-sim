@@ -32,9 +32,17 @@ export function createRawSSHClient(config) {
     const port = parseInt(config.port, 10) || 22;
     const username = (config.username || 'dev').trim();
 
+    let handshakeTimer = setTimeout(() => {
+      try { socket.destroy(); } catch (e) {}
+      try { conn.destroy(); } catch (e) {}
+      settle(() => reject(new Error(`SSH 연결/핸드셰이크 시간 초과 (16초) - [${host}:${port}]`)));
+    }, 16000);
+
     function settle(fn) {
       if (!isSettled) {
         isSettled = true;
+        if (tcpTimer) clearTimeout(tcpTimer);
+        if (handshakeTimer) clearTimeout(handshakeTimer);
         fn();
       }
     }
@@ -376,11 +384,18 @@ class SSHConnectionPool {
     for (const [hostKey, hostPool] of this.pools.entries()) {
       for (let i = hostPool.length - 1; i >= 0; i--) {
         const h = hostPool[i];
-        if (!h.inUse && (now - h.lastUsed > IDLE_TIMEOUT_MS)) {
-          // Gracefully close idle socket
+        const isDead = !h.conn || h.conn._sock?.destroyed || !h.conn._sock?.writable;
+        if (isDead || (!h.inUse && (now - h.lastUsed > IDLE_TIMEOUT_MS))) {
+          // Gracefully close and destroy idle or dead socket
           try { h.conn.end(); } catch (e) {}
+          try { h.conn.destroy(); } catch (e) {}
           hostPool.splice(i, 1);
         }
+      }
+      if (hostPool.length === 0 && (!this.queues.get(hostKey) || this.queues.get(hostKey).length === 0)) {
+        this.pools.delete(hostKey);
+        this.queues.delete(hostKey);
+        this.connectingCounts.delete(hostKey);
       }
     }
   }

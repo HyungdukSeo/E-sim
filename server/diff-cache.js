@@ -634,6 +634,10 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
       if (diffRes.isDirectory || (diffRes.unifiedDiff && diffRes.unifiedDiff.includes('[DIRECTORY:'))) {
         continue;
       }
+      let uDiff = diffRes.unifiedDiff || '';
+      if (uDiff.length > 2 * 1024 * 1024) {
+        uDiff = uDiff.slice(0, 2 * 1024 * 1024) + '\n\n... [Diff truncated: file exceeds 2MB limit to preserve system memory] ...';
+      }
       results.push({
         fileName,
         filePath,
@@ -644,7 +648,7 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
         serverName: diffRes.serverName || null,
         oldVersion: diffRes.oldVersion || '',
         newVersion: diffRes.newVersion || '',
-        unifiedDiff: diffRes.unifiedDiff || '',
+        unifiedDiff: uDiff,
         fetchedAt: new Date().toISOString()
       });
       newlyFetchedCount++;

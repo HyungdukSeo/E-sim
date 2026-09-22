@@ -240,11 +240,9 @@ export function cleanCRFilePaths(cr) {
     }
   }
 
-  return {
-    ...cr,
-    filePaths: filteredPaths,
-    files: filteredFiles
-  };
+  cr.filePaths = filteredPaths;
+  cr.files = filteredFiles;
+  return cr;
 }
 
 /**
@@ -260,9 +258,13 @@ export function getLocalDatabase() {
   }
 
   try {
-    const raw = fs.readFileSync(DB_FILE, 'utf-8');
+    let raw = fs.readFileSync(DB_FILE, 'utf-8');
     const parsedCrs = JSON.parse(raw);
-    inMemoryCrs = parsedCrs.map(cleanCRFilePaths);
+    raw = null; // Release 234MB raw UTF-8 string immediately to reduce peak heap allocation
+    for (let i = 0; i < parsedCrs.length; i++) {
+      cleanCRFilePaths(parsedCrs[i]);
+    }
+    inMemoryCrs = parsedCrs;
     inMemoryMeta = { status: 'cached', totalCount: inMemoryCrs.length, lastSyncTime: null };
     if (fs.existsSync(META_FILE)) {
       inMemoryMeta = JSON.parse(fs.readFileSync(META_FILE, 'utf-8'));
