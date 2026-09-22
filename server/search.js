@@ -53,15 +53,20 @@ export function searchCRs(allCrs, q, limit = 20) {
   const max = Math.max(1, Math.min(100, Number(limit) || 20));
   if (!query) return [];
 
-  const isNumericQuery = /^\d+$/.test(query);
-  if (isNumericQuery) {
-    const padded = query.padStart(7, '0');
+  // "crdb00016126", "CR-16126" 처럼 영문자 prefix + 숫자 형식도 CR 번호 조회로 인식한다 —
+  // prefix 를 떼고 뒤에 남은 게 순수 숫자뿐이면 그 숫자를 crid 로 취급.
+  const numericMatch = query.match(/^[A-Za-z\-_]*?(\d+)$/);
+  if (numericMatch) {
+    // prefix 가 이미 0을 포함해 숫자를 zero-pad 해서 적었을 수 있으므로(crdb00016126처럼)
+    // 앞자리 0을 먼저 떼고 crid 자릿수(7자리)로 다시 맞춘다.
+    const digits = numericMatch[1].replace(/^0+(?=\d)/, '');
+    const padded = digits.padStart(7, '0');
     const exact = [];
     const partial = [];
     for (const cr of allCrs) {
       const crid = String(cr.crid || '');
       if (crid === padded) exact.push(cr);
-      else if (crid.includes(query)) partial.push(cr);
+      else if (crid.includes(digits)) partial.push(cr);
     }
     return [...exact, ...partial].slice(0, max).map(toSummary);
   }
