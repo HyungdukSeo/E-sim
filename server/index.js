@@ -935,17 +935,25 @@ app.post('/api/diff-cache/fetch', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'CR 정보 또는 crid가 필요합니다.' });
     }
 
-    // Check cache first (skip if forceRefresh or existing cache has any failed files)
-    const cached = getCRDiffCache(targetCrid);
-    const hasErrorInCache = cached?.files?.some(f => f.status === 'error');
-    if (!forceRefresh && !hasErrorInCache && cached && cached.files && cached.files.length > 0) {
-      return res.json({ ok: true, cached: true, data: cached });
-    }
-
     let targetCR = cr;
     if (!targetCR || !targetCR.files) {
       const { crs } = getLocalDatabase();
       targetCR = crs.find(c => c.crid === targetCrid || String(c.id) === String(targetCrid));
+    }
+
+    // Check cache first (skip only if fully collected, no errors, and not forced) —
+    // "has some cache" is not the same as "has everything this CR actually
+    // has": a cache saved back when per-CR file collection was capped can sit
+    // here with far fewer files than the CR, and short-circuiting on it here
+    // would return that stale, incomplete data forever instead of ever
+    // reaching fetchAndCacheCRDiff's own (now incremental) missing-file fetch.
+    const cached = getCRDiffCache(targetCrid);
+    const hasErrorInCache = cached?.files?.some(f => f.status === 'error');
+    const crFileCount = targetCR ? (targetCR.files || []).length : 0;
+    const isFullyCached = cached && cached.files && cached.files.length > 0 &&
+      (crFileCount === 0 || crFileCount <= cached.files.length);
+    if (!forceRefresh && !hasErrorInCache && isFullyCached) {
+      return res.json({ ok: true, cached: true, data: cached });
     }
 
     if (!targetCR) {
@@ -953,7 +961,11 @@ app.post('/api/diff-cache/fetch', async (req, res) => {
     }
 
     const servers = resolveAllSSHServers(sshServers, sshConfig);
-    const fetched = await fetchAndCacheCRDiff(targetCR, servers, 10, true);
+    // forceRefresh here only forwards the caller's explicit request (e.g. the
+    // "다시 시도" retry button); a routine fetch that merely found a partial
+    // cache should NOT force a full re-fetch — fetchAndCacheCRDiff already
+    // reuses already-successful files and only fetches what's missing.
+    const fetched = await fetchAndCacheCRDiff(targetCR, servers, Infinity, !!forceRefresh);
     res.json({ ok: true, cached: false, data: fetched });
   } catch (err) {
     console.error('[Diff Cache Fetch Error]', err.message);
@@ -963,7 +975,7 @@ app.post('/api/diff-cache/fetch', async (req, res) => {
 
 app.post('/api/diff-cache/batch', async (req, res) => {
   try {
-    const { crids = [], maxFilesPerCR = 5, sshConfig, sshServers } = req.body;
+    const { crids = [], maxFilesPerCR = Infinity, sshConfig, sshServers } = req.body;
     const { crs } = getLocalDatabase();
     const targetCRs = crids.length > 0 
       ? crs.filter(c => crids.includes(c.crid))

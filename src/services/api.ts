@@ -298,6 +298,7 @@ export async function fetchVobHistory(vob: string): Promise<{
   totalCrs: number;
   cachedCrs: number;
   uncachedCrids: string[];
+  partiallyCachedCrids: string[];
   entries: VobHistoryEntry[];
 }> {
   const resp = await axios.get(`${API_BASE}/diff-cache/vobs/${encodeURIComponent(vob)}/history`);
