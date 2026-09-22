@@ -1015,16 +1015,25 @@ class BackgroundDiffIndexer {
     // has (e.g. saved back when collection was capped) must not count as
     // done, or the progress bar shows 100% while VOB history and everything
     // else reading the cache is still missing most of that CR's files.
+    //
+    // meta.fileCount is undefined until a CR's cache is actually read once
+    // through getCRDiffCache/getCRDiffCacheAsync (initCacheIndex only
+    // stat()s files at boot to stay fast — see its comment). Right after
+    // startup essentially every cached CR is in that "not yet read" state,
+    // so treating undefined as "incomplete" made the progress bar show
+    // 0/N right after a fresh install even though most CRs were already
+    // fully cached. Since the cache file EXISTING is still real signal
+    // (the CR was collected at some point), count it as done by default
+    // and only flag it incomplete once fileCount has actually been read
+    // and found to fall short — under-collected CRs still surface
+    // correctly as soon as anything reads them (VOB history, CR detail,
+    // etc.), just not instantly at cold boot.
     let cachedTargetCRs = 0;
     for (const cr of crsWithFiles) {
       const safeId = String(cr.crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
       const meta = cacheIndex.get(safeId);
       if (!meta) continue;
-      // A corrupted/truncated cache file (e.g. left behind by a hard kill
-      // mid-write) has no readable fileCount at all — treat that the same
-      // as under-collected, not as done, or it never gets re-picked.
-      if (typeof meta.fileCount !== 'number') continue;
-      if (cr.files.length > meta.fileCount) continue;
+      if (typeof meta.fileCount === 'number' && cr.files.length > meta.fileCount) continue;
       cachedTargetCRs++;
     }
 
@@ -1089,13 +1098,18 @@ class BackgroundDiffIndexer {
         }
       }
 
-      // A corrupted/truncated cache (e.g. left by a hard process kill
-      // mid-write) has no readable fileCount — re-pick it exactly like an
-      // under-collected one, since it's effectively "nothing usable cached".
-      if (typeof meta.fileCount !== 'number') {
-        return cr;
-      }
-
+      // meta.fileCount is undefined until this CR's cache has actually been
+      // read once (initCacheIndex only stat()s at boot to stay fast). Right
+      // after startup essentially every cached CR is in that state — do NOT
+      // treat that as "needs re-collecting" here, or the indexer re-picks
+      // (and re-reads) every single already-complete CR once right after
+      // boot. fetchAndCacheCRDiff reads the real cache itself and reuses
+      // whatever's already successfully cached, so skipping the re-pick
+      // here costs nothing — a genuinely corrupted or under-collected cache
+      // still gets caught the moment anything actually reads it (VOB
+      // history, CR detail, this same check on a later pass once fileCount
+      // is known, etc).
+      //
       // Re-pick CRs whose cache was written back when per-CR file collection
       // was capped (5-10 files) — those caches were saved as "complete" with
       // far fewer files than the CR actually has, so this check is the only
@@ -1105,7 +1119,7 @@ class BackgroundDiffIndexer {
       // significantly-fewer-than heuristic as fetchAndCacheCRDiff's own
       // stale check so a CR isn't endlessly re-picked over the handful of
       // files legitimately skipped as directory elements or binaries.
-      if (cr.files.length > meta.fileCount) {
+      if (typeof meta.fileCount === 'number' && cr.files.length > meta.fileCount) {
         return cr;
       }
     }
@@ -1187,13 +1201,14 @@ class BackgroundDiffIndexer {
           const safeId = String(cr.crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
           const meta = cacheIndex.get(safeId);
           if (!meta) return true;
-          // Same under-collected/corrupted check as _pickNextCR — otherwise
-          // the loop considers itself "100% complete" while CRs whose cache
-          // was capped under the old per-CR file limit (or corrupted by a
-          // hard kill mid-write) sit there forever, getting picked up only
-          // once every 30s sleep instead of promptly.
-          if (typeof meta.fileCount !== 'number') return true;
-          if (cr.files.length > meta.fileCount) return true;
+          // Same rule as _pickNextCR: an unread fileCount (undefined) is not
+          // "remaining work" by itself — only a fileCount that's actually
+          // been read and found short counts. Otherwise this and
+          // _pickNextCR would disagree right after boot (this says "still
+          // remaining", _pickNextCR refuses to pick any of them), and the
+          // loop would spin without making progress or ever reaching
+          // "completed".
+          if (typeof meta.fileCount === 'number' && cr.files.length > meta.fileCount) return true;
           return false;
         });
 
