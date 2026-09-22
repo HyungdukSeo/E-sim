@@ -786,9 +786,12 @@ export async function getVobHistory(vobName, allCrs) {
     // back when per-CR collection was capped) — what's cached is still shown
     // below, but flagged separately so the caller can offer "재수집" instead
     // of implying the CR is fully collected.
-    if ((cr.files || []).length > cached.files.length) {
+    const isPartial = (cr.files || []).length > cached.files.length;
+    if (isPartial) {
       partiallyCachedCrids.push(cr.crid);
     }
+
+    const cachedByPath = new Map(cached.files.map(f => [f.filePath, f]));
 
     for (const f of cached.files) {
       if (extractVobFromPath(f.filePath) !== vobName) continue; // this CR's other files may be in a different VOB
@@ -817,6 +820,54 @@ export async function getVobHistory(vobName, allCrs) {
         fetchedAt: f.fetchedAt,
         checkinLog: cr.checkinLog || ''
       });
+    }
+
+    // A partially-cached CR can have files that were never even attempted —
+    // e.g. collection was interrupted mid-CR (app force-quit, connection
+    // drop) between one file's SSH fetch and the next, so the file has
+    // neither a success entry NOR an error entry in the cache. Those
+    // silently vanished from the VOB history view entirely (not listed,
+    // not shown as a failure) since the loop above only ever iterates what
+    // IS in cached.files. Surface them explicitly as "수집 중단" so the gap
+    // is visible instead of looking like the file was never part of the CR.
+    if (isPartial) {
+      const filePaths = cr.filePaths || [];
+      const dirPaths = new Set();
+      for (const fp of filePaths) {
+        if (filePaths.some(other => other !== fp && other.startsWith(fp + '/'))) {
+          dirPaths.add(fp);
+        }
+      }
+      for (let i = 0; i < filePaths.length; i++) {
+        const fp = filePaths[i];
+        if (extractVobFromPath(fp) !== vobName) continue;
+        if (cachedByPath.has(fp)) continue; // already has a success/error entry above
+        const fn = (cr.files && cr.files[i]) || fp.split('/').pop() || '';
+        if (isDirectoryElement(fn, fp) || dirPaths.has(fp)) continue; // never meant to be fetched
+        if (isBinaryFile(fn, fp)) continue; // never meant to be fetched
+
+        entries.push({
+          crid: cr.crid,
+          id: cr.id,
+          summary: cr.cleanSummary || cr.summary || '',
+          customer: cr.customer || '',
+          module: cr.module || '',
+          dateSubmitted: cr.dateSubmitted || '',
+          lastUpdated: cr.lastUpdated || '',
+          reporter: cr.reporter || '',
+          fileName: fn,
+          filePath: fp,
+          isDirectory: false,
+          status: 'not_collected',
+          hasChanges: false,
+          error: '아직 수집되지 않음 (수집이 중단되었을 수 있습니다)',
+          oldVersion: '',
+          newVersion: '',
+          unifiedDiff: '',
+          fetchedAt: null,
+          checkinLog: cr.checkinLog || ''
+        });
+      }
     }
   }
 

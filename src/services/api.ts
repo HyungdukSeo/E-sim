@@ -283,7 +283,7 @@ export interface VobHistoryEntry {
   oldVersion: string;
   newVersion: string;
   unifiedDiff: string;
-  fetchedAt: string;
+  fetchedAt: string | null;
   checkinLog?: string;
 }
 
