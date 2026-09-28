@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import { Worker } from 'worker_threads';
 import { fetchFileDiffSSH } from './ssh.js';
 import { sshPool } from './ssh-pool.js';
-import { DATA_DIR, ROOT_DIR } from './sync.js';
+import { DATA_DIR, ROOT_DIR } from './paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
