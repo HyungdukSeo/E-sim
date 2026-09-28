@@ -4,6 +4,7 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import axios from 'axios';
 import { parse } from 'csv-parse/sync';
+import { deleteCRDiffCache, backgroundDiffIndexer } from './diff-cache.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -332,11 +333,14 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
   let addedCount = 0;
   let updatedCount = 0;
   let unchangedCount = 0;
+  let deletedCount = 0;
   const changedCrs = [];
+  const serverCridSet = new Set();
 
   for (let index = 0; index < records.length; index++) {
     const row = records[index];
     const crid = (row['CRID'] || row['\ufeffCRID'] || row['id'] || String(index + 1)).padStart(7, '0');
+    serverCridSet.add(crid);
     const numericId = parseInt(crid, 10) || (index + 1);
     const summary = row['제목'] || row['Summary'] || row['summary'] || '';
     const checkinLogRaw = row['Check-in Log'] || row['check_in_log'] || '';
@@ -409,6 +413,22 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
     }
   }
 
+  // Automatically prune CRs that were deleted on Mantis server
+  // Safety guard: only purge if records has a plausible count (> 100) to protect against truncated downloads
+  if (records.length >= 100) {
+    for (const [crid, _] of crMap.entries()) {
+      if (!serverCridSet.has(crid)) {
+        crMap.delete(crid);
+        deletedCount++;
+        console.log(`[Sync] Pruned deleted CR #${crid} from local database.`);
+        try {
+          deleteCRDiffCache(crid);
+          backgroundDiffIndexer.removeCR(crid);
+        } catch (_) {}
+      }
+    }
+  }
+
   const allMergedCrs = Array.from(crMap.values());
   allMergedCrs.sort((a, b) => b.id - a.id);
 
@@ -425,6 +445,7 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
     addedCount,
     updatedCount,
     unchangedCount,
+    deletedCount,
     durationMs,
     dbFilePath: DB_FILE,
     status: 'success'
@@ -436,9 +457,9 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
   inMemoryCrs = allMergedCrs;
   inMemoryMeta = meta;
 
-  console.log(`[Sync Summary] Total: ${allMergedCrs.length} CRs (Added: ${addedCount}, Updated: ${updatedCount}, Unchanged: ${unchangedCount}) in ${durationMs}ms`);
+  console.log(`[Sync Summary] Total: ${allMergedCrs.length} CRs (Added: ${addedCount}, Updated: ${updatedCount}, Unchanged: ${unchangedCount}, Deleted: ${deletedCount}) in ${durationMs}ms`);
 
-  return { meta, crs: allMergedCrs, changedCrs };
+  return { meta, crs: allMergedCrs, changedCrs, deletedCount };
 }
 
 export function importDatabase(importedCrs) {

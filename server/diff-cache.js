@@ -486,6 +486,31 @@ export async function saveCRDiffCacheAsync(crid, diffData) {
 }
 
 /**
+ * Delete a CR diff cache from disk and memory index
+ */
+export function deleteCRDiffCache(crid) {
+  if (!isIndexInitialized) initCacheIndex();
+  const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+  const filePath = path.join(DIFF_CACHE_DIR, `${safeId}.json`);
+  if (fs.existsSync(filePath)) {
+    try {
+      fs.unlinkSync(filePath);
+      const existing = cacheIndex.get(safeId);
+      if (existing) {
+        totalCachedBytes -= (existing.sizeBytes || 0);
+        totalCachedFiles -= (existing.fileCount || 0);
+        cacheIndex.delete(safeId);
+      }
+      console.log(`[DiffCache] Deleted diff cache file for #${crid}`);
+      return true;
+    } catch (e) {
+      console.warn(`[DiffCache] Error deleting cache for #${crid}:`, e.message);
+    }
+  }
+  return false;
+}
+
+/**
  * Fetch and cache diffs for a CR using SSH. maxFiles defaults to unlimited —
  * a CR's filePaths can legitimately run into the hundreds or low thousands
  * (e.g. a single large release/deployment check-in touching every Makefile
@@ -1182,6 +1207,16 @@ class BackgroundDiffIndexer {
       }
     }
     this.wake();
+  }
+
+  removeCR(crid) {
+    const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+    this.completedCrids.delete(safeId);
+    this.failedAttempts.delete(safeId);
+    this.activeTasks.delete(safeId);
+    this.activeCrids.delete(safeId);
+    this.priorityQueue = this.priorityQueue.filter(id => id !== safeId);
+    deleteCRDiffCache(safeId);
   }
 
   start() {

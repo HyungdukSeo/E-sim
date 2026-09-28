@@ -11,7 +11,7 @@ import { syncMantisData, getLocalDatabase, reloadDatabase, importDatabase, fetch
 import { processAiQuery, analyzeSingleCRDiff, compareMultipleCRDiffs } from './ai.js';
 import { testSSHConnection, fetchFileDiffSSH, fetchFileVersionHistorySSH, fetchFileVersionsSSH } from './ssh.js';
 import { getClaudeModels, getAntigravityModels, getCodexModels, getOmniRouteModels, getAIProvidersStatus, checkOmniRouteStatus, findCommandPath } from './cli-models.js';
-import { getCRDiffCache, getCRDiffCacheAsync, saveCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, initCacheIndex, batchIndexDiffs, backgroundDiffIndexer, getVobList, getVobHistory, mapFileVersionsToCRs, isBinaryFile, prewarmDiffCacheWorkers } from './diff-cache.js';
+import { getCRDiffCache, getCRDiffCacheAsync, saveCRDiffCache, deleteCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, initCacheIndex, batchIndexDiffs, backgroundDiffIndexer, getVobList, getVobHistory, mapFileVersionsToCRs, isBinaryFile, prewarmDiffCacheWorkers } from './diff-cache.js';
 import { sshPool } from './ssh-pool.js';
 import { searchCRs } from './search.js';
 
@@ -526,6 +526,31 @@ app.get('/api/cr/:id', async (req, res) => {
     cr: found,
     similar
   });
+});
+
+// Delete Single CR from local database and diff cache
+app.delete('/api/cr/:id', (req, res) => {
+  const { crs } = getLocalDatabase();
+  const idStr = String(req.params.id).trim().padStart(7, '0');
+  const numericId = parseInt(req.params.id, 10);
+
+  const idx = crs.findIndex(c => c.crid === idStr || c.id === numericId);
+  if (idx === -1) {
+    return res.status(404).json({ ok: false, error: `CR #${req.params.id}를 찾을 수 없습니다.` });
+  }
+
+  const targetCR = crs[idx];
+  crs.splice(idx, 1);
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(crs), 'utf-8');
+    deleteCRDiffCache(targetCR.crid);
+    backgroundDiffIndexer.removeCR(targetCR.crid);
+    console.log(`[Manual Delete] Successfully deleted CR #${targetCR.crid} from local DB and diff cache.`);
+    res.json({ ok: true, message: `CR #${targetCR.crid}가 정상적으로 삭제되었습니다.` });
+  } catch (err) {
+    console.error(`[Manual Delete Error for #${req.params.id}]`, err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 // 7. Aggregated Statistics
@@ -1080,7 +1105,15 @@ if (fs.existsSync(DIST_DIR)) {
   app.use(express.static(DIST_DIR));
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api')) return next();
-    res.sendFile(path.join(DIST_DIR, 'index.html'));
+    const indexPath = path.join(DIST_DIR, 'index.html');
+    try {
+      // Use fs.readFileSync directly to bypass Electron asar temp file extraction issues
+      const html = fs.readFileSync(indexPath, 'utf8');
+      res.type('html').send(html);
+    } catch (err) {
+      console.error('[Backend Static Error] Failed to read index.html:', err.message);
+      res.status(500).send(`Frontend index.html 로드 실패: ${err.message}`);
+    }
   });
 } else {
   console.warn(`[Backend] Warning: Frontend dist directory not found at ${DIST_DIR}`);
