@@ -70,6 +70,7 @@ export interface SyncMeta {
   addedCount?: number;
   updatedCount?: number;
   unchangedCount?: number;
+  deletedCount?: number;
   dbFilePath?: string;
   status: 'idle' | 'syncing' | 'success' | 'error' | 'cached';
   error?: string;

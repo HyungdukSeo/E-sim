@@ -83,6 +83,11 @@ export function App() {
       const data = await fetchAllCRs();
       const loadedCrs = data.crs || [];
       setAllCrs(loadedCrs);
+      setSelectedCR(prev => {
+        if (!prev) return null;
+        const exists = loadedCrs.some(c => c.crid === prev.crid || c.id === prev.id);
+        return exists ? prev : null;
+      });
       setMeta(data.meta || { status: 'idle', totalCount: loadedCrs.length, lastSyncTime: null });
 
       // If empty on initial load, auto-trigger Mantis sync
@@ -144,15 +149,24 @@ export function App() {
   const handleSync = async () => {
     if (isSyncing) return;
     setIsSyncing(true);
-    setSyncToast({ message: 'Mantis 서버(192.168.16.200)에서 7,700여 개 전체 CR 데이터를 자동 수집 및 인덱싱 중입니다...', type: 'success' });
+    setSyncToast({ message: 'Mantis 서버(192.168.16.200)에서 최신 CR 데이터를 수집하고 변경사항 및 삭제된 CR을 동기화하는 중입니다...', type: 'success' });
 
     try {
       const res = await triggerSync(settings.mantisUrl);
       if (res.meta) {
         setMeta(res.meta);
         await loadData(false);
+        const delMsg = res.meta.deletedCount && res.meta.deletedCount > 0
+          ? `, 삭제된 CR ${res.meta.deletedCount}건 정리 완료`
+          : '';
+        const addMsg = res.meta.addedCount && res.meta.addedCount > 0
+          ? `, 신규 ${res.meta.addedCount}건 추가`
+          : '';
+        const updMsg = res.meta.updatedCount && res.meta.updatedCount > 0
+          ? `, 갱신 ${res.meta.updatedCount}건`
+          : '';
         setSyncToast({
-          message: `인덱싱 완료! 총 ${res.count.toLocaleString()}건 저장 완료`,
+          message: `동기화 완료! 총 ${res.count.toLocaleString()}건 최신화${addMsg}${updMsg}${delMsg}`,
           type: 'success'
         });
       }
@@ -163,7 +177,7 @@ export function App() {
       });
     } finally {
       setIsSyncing(false);
-      setTimeout(() => setSyncToast(null), 4000);
+      setTimeout(() => setSyncToast(null), 5000);
     }
   };
 

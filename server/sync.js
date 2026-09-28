@@ -326,8 +326,10 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
   const { crs: existingCrs } = getLocalDatabase();
   const crMap = new Map();
   
+  // Normalize existing CR keys to 7-digit padded IDs for consistent lookup
   for (const cr of existingCrs) {
-    crMap.set(cr.crid, cr);
+    const safeKey = String(cr.crid || cr.id).replace(/^[#\s]+/, '').trim().padStart(7, '0');
+    crMap.set(safeKey, cr);
   }
 
   let addedCount = 0;
@@ -337,17 +339,57 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
   const changedCrs = [];
   const serverCridSet = new Set();
 
+  function getFieldValue(row, ...candidateKeys) {
+    for (const key of candidateKeys) {
+      if (row[key] !== undefined && row[key] !== null && String(row[key]).trim() !== '') {
+        return String(row[key]).trim();
+      }
+    }
+    // Case-insensitive / BOM-strip fallback
+    const entries = Object.entries(row);
+    for (const key of candidateKeys) {
+      const target = key.replace(/^\ufeff/, '').toLowerCase().trim();
+      for (const [k, v] of entries) {
+        if (v !== undefined && v !== null && String(v).trim() !== '') {
+          const cleanK = k.replace(/^\ufeff/, '').toLowerCase().trim();
+          if (cleanK === target) {
+            return String(v).trim();
+          }
+        }
+      }
+    }
+    return '';
+  }
+
   for (let index = 0; index < records.length; index++) {
     const row = records[index];
-    const crid = (row['CRID'] || row['\ufeffCRID'] || row['id'] || String(index + 1)).padStart(7, '0');
-    serverCridSet.add(crid);
-    const numericId = parseInt(crid, 10) || (index + 1);
-    const summary = row['제목'] || row['Summary'] || row['summary'] || '';
-    const checkinLogRaw = row['Check-in Log'] || row['check_in_log'] || '';
-    const lastUpdated = row['최종 갱신'] || row['Last Update'] || '';
-    const status = (row['상태'] || row['Status'] || 'opened').toLowerCase().trim();
+    const rawCrid = getFieldValue(row, 'CRID', 'id', 'Id', 'ID', '이슈 ID', 'Issue ID', 'issue_id', '번호', '아이디');
+    const cleanNumStr = rawCrid ? rawCrid.replace(/^[#\s]+/, '').trim() : '';
+    const numericId = cleanNumStr ? (parseInt(cleanNumStr, 10) || (index + 1)) : (index + 1);
+    const crid = cleanNumStr ? String(numericId).padStart(7, '0') : String(index + 1).padStart(7, '0');
 
-    const existing = crMap.get(crid);
+    // Register all valid ID representations to prevent false-positive deletions
+    if (cleanNumStr) {
+      serverCridSet.add(crid);
+      serverCridSet.add(cleanNumStr);
+      serverCridSet.add(String(numericId));
+    } else {
+      serverCridSet.add(crid);
+    }
+
+    const summary = getFieldValue(row, '제목', 'Summary', 'summary');
+    const checkinLogRaw = getFieldValue(row, 'Check-in Log', 'check_in_log', '체크인 로그', 'Checkin Log');
+    const lastUpdated = getFieldValue(row, '최종 갱신', 'Last Update', 'updated', '수정일시');
+    const status = (getFieldValue(row, '상태', 'Status', 'status') || 'opened').toLowerCase().trim();
+    const project = getFieldValue(row, '프로젝트', 'Project', 'project') || '기타';
+    const reporter = getFieldValue(row, '보고자', 'Reporter', 'reporter');
+    const assignee = getFieldValue(row, '담당자', 'Handler', 'Assignee', 'assignee');
+    const productVersion = getFieldValue(row, '제품 버전', 'Product Version', 'product_version');
+    const dateSubmitted = getFieldValue(row, '보고 날짜', 'Date Submitted', 'date_submitted', '등록일시');
+    const viewState = getFieldValue(row, '상태 보기', 'View Status', 'view_status') || '공개';
+    const targetVersion = getFieldValue(row, '적용 버전', 'Target Version', 'target_version');
+
+    const existing = crMap.get(crid) || crMap.get(cleanNumStr) || crMap.get(String(numericId));
 
     if (existing) {
       if (existing.lastUpdated !== lastUpdated || existing.status !== status || existing.summary !== summary || existing.checkinLog !== checkinLogRaw) {
@@ -356,16 +398,16 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
 
         const updatedCr = {
           ...existing,
-          project: row['프로젝트'] || row['Project'] || existing.project,
-          reporter: row['보고자'] || row['Reporter'] || existing.reporter,
-          assignee: row['담당자'] || row['Handler'] || row['Assignee'] || existing.assignee,
-          productVersion: row['제품 버전'] || row['Product Version'] || existing.productVersion,
-          dateSubmitted: row['보고 날짜'] || row['Date Submitted'] || existing.dateSubmitted,
-          viewState: row['상태 보기'] || row['View Status'] || existing.viewState,
+          project: project || existing.project,
+          reporter: reporter || existing.reporter,
+          assignee: assignee || existing.assignee,
+          productVersion: productVersion || existing.productVersion,
+          dateSubmitted: dateSubmitted || existing.dateSubmitted,
+          viewState: viewState || existing.viewState,
           lastUpdated,
           summary,
           status,
-          targetVersion: row['적용 버전'] || row['Target Version'] || existing.targetVersion,
+          targetVersion: targetVersion || existing.targetVersion,
           checkinLog: checkinLogRaw,
           customer: titleParsed.customer,
           vob: titleParsed.vob,
@@ -388,16 +430,16 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
       const newCr = {
         crid,
         id: numericId,
-        project: row['프로젝트'] || row['Project'] || '기타',
-        reporter: row['보고자'] || row['Reporter'] || '',
-        assignee: row['담당자'] || row['Handler'] || row['Assignee'] || '',
-        productVersion: row['제품 버전'] || row['Product Version'] || '',
-        dateSubmitted: row['보고 날짜'] || row['Date Submitted'] || '',
-        viewState: row['상태 보기'] || row['View Status'] || '공개',
+        project,
+        reporter,
+        assignee,
+        productVersion,
+        dateSubmitted,
+        viewState,
         lastUpdated,
         summary,
         status,
-        targetVersion: row['적용 버전'] || row['Target Version'] || '',
+        targetVersion,
         checkinLog: checkinLogRaw,
         customer: titleParsed.customer,
         vob: titleParsed.vob,
@@ -414,19 +456,39 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
   }
 
   // Automatically prune CRs that were deleted on Mantis server
-  // Safety guard: only purge if records has a plausible count (> 100) to protect against truncated downloads
-  if (records.length >= 100) {
-    for (const [crid, _] of crMap.entries()) {
-      if (!serverCridSet.has(crid)) {
-        crMap.delete(crid);
+  // Safety guard: only purge if records has a plausible count (> 10) to protect against truncated downloads
+  if (records.length >= 10) {
+    const deletedCridList = [];
+    for (const [existingKey, existingCr] of crMap.entries()) {
+      const paddedKey = String(existingKey).replace(/^[#\s]+/, '').trim().padStart(7, '0');
+      const rawNumKey = String(existingCr.id || parseInt(existingKey, 10));
+
+      const isPresent = serverCridSet.has(existingKey) || 
+                        serverCridSet.has(paddedKey) || 
+                        serverCridSet.has(rawNumKey);
+
+      if (!isPresent) {
+        crMap.delete(existingKey);
         deletedCount++;
-        console.log(`[Sync] Pruned deleted CR #${crid} from local database.`);
+        deletedCridList.push(existingKey);
+        console.log(`[Sync] Pruned deleted CR #${existingKey} (id: ${rawNumKey}) from local database.`);
         try {
-          deleteCRDiffCache(crid);
-          backgroundDiffIndexer.removeCR(crid);
-        } catch (_) {}
+          deleteCRDiffCache(paddedKey);
+          deleteCRDiffCache(existingKey);
+          deleteCRDiffCache(rawNumKey);
+          backgroundDiffIndexer.removeCR(paddedKey);
+          backgroundDiffIndexer.removeCR(existingKey);
+          backgroundDiffIndexer.removeCR(rawNumKey);
+        } catch (e) {
+          console.warn(`[Sync] Error cleaning cache for deleted CR #${existingKey}:`, e.message);
+        }
       }
     }
+    if (deletedCount > 0) {
+      console.log(`[Sync] Successfully pruned ${deletedCount} deleted CRs from local DB: ${deletedCridList.slice(0, 30).join(', ')}${deletedCridList.length > 30 ? '...' : ''}`);
+    }
+  } else if (existingCrs.length > 20 && records.length < 10) {
+    console.warn(`[Sync] Safety guard triggered: Mantis returned only ${records.length} records while local DB has ${existingCrs.length}. Skipping deleted CR pruning.`);
   }
 
   const allMergedCrs = Array.from(crMap.values());

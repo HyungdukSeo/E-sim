@@ -490,24 +490,46 @@ export async function saveCRDiffCacheAsync(crid, diffData) {
  */
 export function deleteCRDiffCache(crid) {
   if (!isIndexInitialized) initCacheIndex();
-  const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
-  const filePath = path.join(DIFF_CACHE_DIR, `${safeId}.json`);
-  if (fs.existsSync(filePath)) {
-    try {
-      fs.unlinkSync(filePath);
-      const existing = cacheIndex.get(safeId);
-      if (existing) {
-        totalCachedBytes -= (existing.sizeBytes || 0);
-        totalCachedFiles -= (existing.fileCount || 0);
-        cacheIndex.delete(safeId);
+  const rawStr = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+  if (!rawStr) return false;
+
+  const paddedStr = rawStr.padStart(7, '0');
+  const unpaddedStr = String(parseInt(rawStr, 10) || rawStr);
+  const idVariants = Array.from(new Set([rawStr, paddedStr, unpaddedStr]));
+
+  let anyDeleted = false;
+  for (const id of idVariants) {
+    const candidatePaths = [
+      path.join(DIFF_CACHE_DIR, `${id}.json`)
+    ];
+    if (ROOT_DIR) {
+      candidatePaths.push(path.join(ROOT_DIR, 'data', 'diff_cache', `${id}.json`));
+    }
+
+    for (const filePath of candidatePaths) {
+      if (fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+          anyDeleted = true;
+        } catch (e) {
+          console.warn(`[DiffCache] Error unlinking ${filePath}:`, e.message);
+        }
       }
-      console.log(`[DiffCache] Deleted diff cache file for #${crid}`);
-      return true;
-    } catch (e) {
-      console.warn(`[DiffCache] Error deleting cache for #${crid}:`, e.message);
+    }
+
+    const existing = cacheIndex.get(id);
+    if (existing) {
+      totalCachedBytes -= (existing.sizeBytes || 0);
+      totalCachedFiles -= (existing.fileCount || 0);
+      cacheIndex.delete(id);
+      anyDeleted = true;
     }
   }
-  return false;
+
+  if (anyDeleted) {
+    console.log(`[DiffCache] Deleted diff cache for CR #${crid}`);
+  }
+  return anyDeleted;
 }
 
 /**
