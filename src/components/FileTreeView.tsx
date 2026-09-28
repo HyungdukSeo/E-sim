@@ -45,7 +45,7 @@ function getFileIcon(fileName: string) {
   if (lower.endsWith('.sh') || lower.endsWith('.csh') || lower.endsWith('.bash')) {
     return <Terminal className="w-4 h-4 text-amber-400 flex-shrink-0" />;
   }
-  if (lower.endsWith('.sql') || lower.includes('.tbl') || lower.includes('.db')) {
+  if (lower.endsWith('.sql') || lower.includes('.tbl') || lower.includes('.db') || lower.endsWith('.dat') || lower.endsWith('.fmt')) {
     return <Database className="w-4 h-4 text-emerald-400 flex-shrink-0" />;
   }
   if (lower.startsWith('makefile') || lower === 'makeall' || lower.endsWith('.mk')) {
@@ -60,7 +60,7 @@ const KNOWN_CODE_EXTS = new Set([
   'java', 'go', 'rs', 'js', 'ts', 'jsx', 'tsx', 'json', 'xml',
   'yaml', 'yml', 'sql', 'tbl', 'awk', 'sed', 'mk', 'mak',
   'cfg', 'conf', 'ini', 'properties', 'txt', 'md', 'csv', 'log',
-  'diff', 'patch', 'pc', 'ec', 'sqc', 'def', 'idl'
+  'diff', 'patch', 'pc', 'ec', 'sqc', 'def', 'idl', 'dat', 'fmt'
 ]);
 
 export function isDirectoryElement(path: string): boolean {

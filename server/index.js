@@ -982,7 +982,9 @@ app.post('/api/diff-cache/fetch', async (req, res) => {
     const crFileCount = targetCR ? (targetCR.files || []).length : 0;
     const isFullyCached = cached && cached.files && cached.files.length > 0 &&
       (crFileCount === 0 || crFileCount <= cached.files.length);
-    if (!forceRefresh && !hasErrorInCache && isFullyCached) {
+    const isMantisStale = targetCR?.lastUpdated && cached?.cachedAt &&
+      new Date(targetCR.lastUpdated).getTime() > new Date(cached.cachedAt).getTime();
+    if (!forceRefresh && !hasErrorInCache && isFullyCached && !isMantisStale) {
       return res.json({ ok: true, cached: true, data: cached });
     }
 

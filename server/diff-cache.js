@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Worker } from 'worker_threads';
-import { fetchFileDiffSSH } from './ssh.js';
+import { fetchFileDiffSSH, findCheckinLogEntry } from './ssh.js';
 import { sshPool } from './ssh-pool.js';
 import { DATA_DIR, ROOT_DIR } from './paths.js';
 
@@ -194,7 +194,7 @@ export function initCacheIndex(forceReset = false) {
   }
 }
 
-export const BINARY_FILE_RE = /\.(so|a|o|exe|dll|dylib|bin|dat|class|jar|war|ear|tar|gz|tgz|zip|7z|rar|iso|img|rpm|deb|png|jpg|jpeg|gif|bmp|ico|pdf)(\.\d+)*$/i;
+export const BINARY_FILE_RE = /\.(so|a|o|exe|dll|dylib|bin|class|jar|war|ear|tar|gz|tgz|zip|7z|rar|iso|img|rpm|deb|png|jpg|jpeg|gif|bmp|ico|pdf)(\.\d+)*$/i;
 
 export function isBinaryFile(fileName, filePath = '') {
   const target = (fileName || filePath || '').toLowerCase().trim();
@@ -206,7 +206,7 @@ export function isBinaryFile(fileName, filePath = '') {
 const BINARY_EXTS = new Set([
   '.exe', '.o', '.a', '.so', '.dll', '.tar', '.gz', '.zip', 
   '.class', '.jar', '.png', '.jpg', '.jpeg', '.gif', '.pdf', 
-  '.bin', '.dat'
+  '.bin'
 ]);
 
 const KNOWN_CODE_EXTS = new Set([
@@ -215,7 +215,7 @@ const KNOWN_CODE_EXTS = new Set([
   'java', 'go', 'rs', 'js', 'ts', 'jsx', 'tsx', 'json', 'xml',
   'yaml', 'yml', 'sql', 'tbl', 'awk', 'sed', 'mk', 'mak',
   'cfg', 'conf', 'ini', 'properties', 'txt', 'md', 'csv', 'log',
-  'diff', 'patch', 'pc', 'ec', 'sqc', 'def', 'idl'
+  'diff', 'patch', 'pc', 'ec', 'sqc', 'def', 'idl', 'dat', 'fmt'
 ]);
 
 /**
@@ -574,17 +574,61 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
       }
     }
     if (modifiedInMantis) {
-      alreadyCachedByPath.clear();
-    } else {
-      const crFileCount = (cr.files || []).length;
-      const cachedFileCount = cached.files.length;
-      const hasErrors = cached.files.some(f => f.status === 'error');
-      if (!hasErrors && (cached.isComplete || crFileCount === 0 || crFileCount === cachedFileCount)) {
-        // Fully cached, nothing missing, nothing failed — done.
-        return cached;
+      // Smart incremental update: ClearCase version diffs are immutable.
+      // If checkinLog has not changed, NO files were changed in ClearCase (only Mantis ticket info changed).
+      // If checkinLog changed, only invalidate files whose version number actually changed!
+      const currentCheckinLog = (cr.checkinLog || '').trim();
+      const cachedCheckinLog = (cached.checkinLog || '').trim();
+
+      if (cachedCheckinLog && currentCheckinLog && cachedCheckinLog === currentCheckinLog) {
+        console.log(`[DiffCache] CR #${crid} Mantis metadata was updated, but checkinLog is unchanged. Reusing all ${alreadyCachedByPath.size} cached file diffs.`);
+      } else {
+        let invalidatedCount = 0;
+        for (const [filePath, cachedFile] of alreadyCachedByPath.entries()) {
+          const logEntry = findCheckinLogEntry(currentCheckinLog, filePath);
+          if (logEntry) {
+            let parsedVer = String(cachedFile.newVersion || cachedFile.currVersion || '').trim();
+            if (!parsedVer && cachedFile.unifiedDiff) {
+              const diffHeaderMatch = cachedFile.unifiedDiff.match(/\+\+\+ [^\t\n]+@@([^\t\n\r]+)/);
+              if (diffHeaderMatch) parsedVer = diffHeaderMatch[1].trim();
+            }
+
+            const matchesVersion = parsedVer && (
+              parsedVer.endsWith(`/${logEntry.verNum}`) || 
+              parsedVer === String(logEntry.verNum) || 
+              parsedVer.endsWith(`/${logEntry.branchPath}/${logEntry.verNum}`) ||
+              parsedVer.includes(`/${logEntry.verNum}`)
+            );
+
+            if (!matchesVersion && parsedVer) {
+              alreadyCachedByPath.delete(filePath);
+              invalidatedCount++;
+            }
+          }
+        }
+        console.log(`[DiffCache] CR #${crid} modified in Mantis. Retained ${alreadyCachedByPath.size} unchanged files, re-fetching ${invalidatedCount} modified/new files.`);
       }
-      console.log(`[DiffCache] CR #${crid} has ${cachedFileCount}/${crFileCount} files cached (errors: ${hasErrors}, isComplete: ${Boolean(cached.isComplete)}). Fetching only what's missing/failed...`);
     }
+
+    const crFileCount = (cr.files || []).length;
+    const hasErrors = cached.files.some(f => f.status === 'error');
+    const allFilesCached = crFileCount === 0 || cr.files.every(fn => {
+      return Array.from(alreadyCachedByPath.keys()).some(fp => fp.endsWith('/' + fn) || fp === fn);
+    });
+
+    if (!hasErrors && allFilesCached && alreadyCachedByPath.size >= crFileCount) {
+      if (modifiedInMantis) {
+        cached.summary = cr.summary || cached.summary;
+        cached.cleanSummary = cr.cleanSummary || cached.cleanSummary;
+        cached.module = cr.module || cached.module;
+        cached.customer = cr.customer || cached.customer;
+        cached.checkinLog = cr.checkinLog || cached.checkinLog;
+        cached.cachedAt = new Date().toISOString();
+        await saveCRDiffCacheAsync(crid, cached);
+      }
+      return cached;
+    }
+    console.log(`[DiffCache] CR #${crid} has ${alreadyCachedByPath.size}/${crFileCount} files cached. Fetching only missing/changed files...`);
   }
 
   let servers = Array.isArray(sshConfig) 
@@ -706,7 +750,8 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
       if (uDiff.length > 2 * 1024 * 1024) {
         uDiff = uDiff.slice(0, 2 * 1024 * 1024) + '\n\n... [Diff truncated: file exceeds 2MB limit to preserve system memory] ...';
       }
-      results.push({
+      const existingIdx = results.findIndex(r => r.filePath === filePath || (r.fileName === fileName && r.filePath.endsWith('/' + fileName)));
+      const newEntry = {
         fileName,
         filePath,
         status: diffRes.ok ? 'success' : 'error',
@@ -714,14 +759,22 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
         error: diffRes.error || null,
         serverHost: diffRes.serverHost || null,
         serverName: diffRes.serverName || null,
-        oldVersion: diffRes.oldVersion || '',
-        newVersion: diffRes.newVersion || '',
+        oldVersion: diffRes.oldVersion || diffRes.prevVersion || '',
+        newVersion: diffRes.newVersion || diffRes.currVersion || '',
+        prevVersion: diffRes.prevVersion || '',
+        currVersion: diffRes.currVersion || '',
         unifiedDiff: uDiff,
         fetchedAt: new Date().toISOString()
-      });
+      };
+      if (existingIdx >= 0) {
+        results[existingIdx] = newEntry;
+      } else {
+        results.push(newEntry);
+      }
       newlyFetchedCount++;
     } catch (err) {
-      results.push({
+      const existingIdx = results.findIndex(r => r.filePath === filePath || (r.fileName === fileName && r.filePath.endsWith('/' + fileName)));
+      const errEntry = {
         fileName,
         filePath,
         status: 'error',
@@ -729,7 +782,12 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
         error: err.message,
         unifiedDiff: '',
         fetchedAt: new Date().toISOString()
-      });
+      };
+      if (existingIdx >= 0) {
+        results[existingIdx] = errEntry;
+      } else {
+        results.push(errEntry);
+      }
       newlyFetchedCount++;
     }
 
@@ -757,6 +815,7 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
           cleanSummary: cr.cleanSummary || cr.summary || '',
           module: cr.module || '',
           customer: cr.customer || '',
+          checkinLog: cr.checkinLog || '',
           cachedAt: new Date().toISOString(),
           fileCount: results.length,
           files: results
@@ -771,6 +830,7 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
     cleanSummary: cr.cleanSummary || cr.summary || '',
     module: cr.module || '',
     customer: cr.customer || '',
+    checkinLog: cr.checkinLog || '',
     cachedAt: new Date().toISOString(),
     fileCount: results.length,
     isComplete: true,

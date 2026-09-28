@@ -38,7 +38,7 @@ import { SideBySideDiffViewer } from './SideBySideDiffViewer';
 import { MultiVersionDiffViewer } from './MultiVersionDiffViewer';
 import { copyToClipboard } from '../utils/clipboard';
 
-export const BINARY_FILE_RE = /\.(so|a|o|exe|dll|dylib|bin|dat|class|jar|war|ear|tar|gz|tgz|zip|7z|rar|iso|img|rpm|deb|png|jpg|jpeg|gif|bmp|ico|pdf)(\.\d+)*$/i;
+export const BINARY_FILE_RE = /\.(so|a|o|exe|dll|dylib|bin|class|jar|war|ear|tar|gz|tgz|zip|7z|rar|iso|img|rpm|deb|png|jpg|jpeg|gif|bmp|ico|pdf)(\.\d+)*$/i;
 
 export function isBinaryFile(fileName: string, filePath: string = ''): boolean {
   const target = (fileName || filePath || '').toLowerCase().trim();
@@ -77,7 +77,7 @@ function getFileIcon(fileName: string) {
   if (lower.endsWith('.sh') || lower.endsWith('.csh') || lower.endsWith('.bash')) {
     return <Terminal className="w-3.5 h-3.5 text-amber-400 shrink-0" />;
   }
-  if (lower.endsWith('.sql') || lower.includes('.tbl') || lower.includes('.db')) {
+  if (lower.endsWith('.sql') || lower.includes('.tbl') || lower.includes('.db') || lower.endsWith('.dat') || lower.endsWith('.fmt')) {
     return <Database className="w-3.5 h-3.5 text-emerald-400 shrink-0" />;
   }
   if (lower.startsWith('makefile') || lower === 'makeall' || lower.endsWith('.mk')) {
