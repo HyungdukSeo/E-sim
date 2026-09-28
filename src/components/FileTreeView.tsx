@@ -19,6 +19,7 @@ import {
   Minimize2,
   GitCompare
 } from 'lucide-react';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface FileTreeViewProps {
   filePaths: string[];
@@ -234,14 +235,18 @@ const TreeNodeItem: React.FC<{
           </div>
 
           <button
-            onClick={e => {
+            onClick={async e => {
               e.stopPropagation();
-              onCopyPath(node.fullPath);
+              await onCopyPath(node.fullPath);
             }}
-            className="opacity-0 group-hover:opacity-100 p-1 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-main transition-all text-[10px] flex items-center gap-1"
-            title="폴더 경로 복사"
+            className={`p-1 rounded-lg hover:bg-slate-700 transition-all text-[10px] flex items-center gap-1 ${
+              copiedPath === node.fullPath
+                ? 'opacity-100 text-emerald-400 bg-emerald-500/10'
+                : 'opacity-0 group-hover:opacity-100 text-slate-400 hover:text-slate-200'
+            }`}
+            title={copiedPath === node.fullPath ? '폴더 경로 복사 완료!' : '폴더 경로 복사'}
           >
-            {copiedPath === node.fullPath ? <Check className="w-3 h-3 text-mantis-600 dark:text-mantis-400" /> : <Copy className="w-3 h-3" />}
+            {copiedPath === node.fullPath ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
           </button>
         </div>
 
@@ -291,11 +296,18 @@ const TreeNodeItem: React.FC<{
         )}
 
         <button
-          onClick={() => onCopyPath(node.fullPath)}
-          className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-main transition-all"
-          title="파일 전체 경로 복사"
+          onClick={async e => {
+            e.stopPropagation();
+            await onCopyPath(node.fullPath);
+          }}
+          className={`p-1 rounded hover:bg-slate-700 transition-all ${
+            copiedPath === node.fullPath
+              ? 'opacity-100 text-emerald-400 bg-emerald-500/10'
+              : 'opacity-0 group-hover:opacity-100 text-slate-400 hover:text-slate-200'
+          }`}
+          title={copiedPath === node.fullPath ? '파일 경로 복사 완료!' : '파일 전체 경로 복사'}
         >
-          {copiedPath === node.fullPath ? <Check className="w-3 h-3 text-mantis-600 dark:text-mantis-400" /> : <Copy className="w-3 h-3" />}
+          {copiedPath === node.fullPath ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
         </button>
       </div>
     </div>
@@ -365,16 +377,20 @@ export const FileTreeView: React.FC<FileTreeViewProps> = ({ filePaths, onOpenDif
     setOpenFolders(new Set());
   };
 
-  const handleCopyPath = (path: string) => {
-    navigator.clipboard.writeText(path);
-    setCopiedPath(path);
-    setTimeout(() => setCopiedPath(null), 1500);
+  const handleCopyPath = async (path: string) => {
+    const ok = await copyToClipboard(path);
+    if (ok) {
+      setCopiedPath(path);
+      setTimeout(() => setCopiedPath(null), 1500);
+    }
   };
 
-  const handleCopyAll = () => {
-    navigator.clipboard.writeText(filteredPaths.join('\n'));
-    setCopiedPath('all');
-    setTimeout(() => setCopiedPath(null), 1500);
+  const handleCopyAll = async () => {
+    const ok = await copyToClipboard(filteredPaths.join('\n'));
+    if (ok) {
+      setCopiedPath('all');
+      setTimeout(() => setCopiedPath(null), 1500);
+    }
   };
 
   if (!filePaths || filePaths.length === 0) {
@@ -538,11 +554,17 @@ export const FileTreeView: React.FC<FileTreeViewProps> = ({ filePaths, onOpenDif
                     )}
 
                     <button
-                      onClick={() => handleCopyPath(fPath)}
-                      className="opacity-0 group-hover:opacity-100 p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-main transition-all flex-shrink-0"
-                      title="경로 복사"
+                      onClick={async () => {
+                        await handleCopyPath(fPath);
+                      }}
+                      className={`p-1 rounded bg-slate-800 hover:bg-slate-700 transition-all flex-shrink-0 ${
+                        copiedPath === fPath
+                          ? 'opacity-100 text-emerald-400 bg-emerald-500/10'
+                          : 'opacity-0 group-hover:opacity-100 text-slate-400 hover:text-slate-200'
+                      }`}
+                      title={copiedPath === fPath ? '경로 복사 완료!' : '경로 복사'}
                     >
-                      {copiedPath === fPath ? <Check className="w-3 h-3 text-mantis-600 dark:text-mantis-400" /> : <Copy className="w-3 h-3" />}
+                      {copiedPath === fPath ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                     </button>
                   </div>
                 </div>

@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import { SideBySideDiffViewer } from './SideBySideDiffViewer';
 import { MultiVersionDiffViewer } from './MultiVersionDiffViewer';
+import { copyToClipboard } from '../utils/clipboard';
 
 export const BINARY_FILE_RE = /\.(so|a|o|exe|dll|dylib|bin|dat|class|jar|war|ear|tar|gz|tgz|zip|7z|rar|iso|img|rpm|deb|png|jpg|jpeg|gif|bmp|ico|pdf)(\.\d+)*$/i;
 
@@ -1094,17 +1095,23 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                             <div className="flex items-center gap-1.5 font-mono text-slate-500 text-[10px] bg-slate-950/70 px-2 py-1 rounded-md border border-slate-800 max-w-full">
                               <span className="truncate">{entry.filePath}</span>
                               <button
-                                onClick={(e) => {
+                                onClick={async (e) => {
                                   e.stopPropagation();
-                                  navigator.clipboard.writeText(entry.filePath);
-                                  setCopiedFilePath(entry.filePath);
-                                  setTimeout(() => setCopiedFilePath(null), 1500);
+                                  const ok = await copyToClipboard(entry.filePath);
+                                  if (ok) {
+                                    setCopiedFilePath(entry.filePath);
+                                    setTimeout(() => setCopiedFilePath(null), 1500);
+                                  }
                                 }}
-                                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors shrink-0"
-                                title="파일 전체 경로 복사"
+                                className={`p-1 rounded transition-colors shrink-0 ${
+                                  copiedFilePath === entry.filePath
+                                    ? 'text-emerald-400 bg-emerald-500/10'
+                                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                                }`}
+                                title={copiedFilePath === entry.filePath ? '경로 복사 완료!' : '파일 전체 경로 복사'}
                               >
                                 {copiedFilePath === entry.filePath ? (
-                                  <Check className="w-3 h-3 text-mantis-400" />
+                                  <Check className="w-3 h-3 text-emerald-400" />
                                 ) : (
                                   <Copy className="w-3 h-3" />
                                 )}

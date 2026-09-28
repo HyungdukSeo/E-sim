@@ -15,6 +15,7 @@ import {
   GitCompare
 } from 'lucide-react';
 import { CRItem } from '../types/cr';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface CRCodeChangesViewProps {
   cr: CRItem;
@@ -28,10 +29,12 @@ export const CRCodeChangesView: React.FC<CRCodeChangesViewProps> = ({ cr, mantis
   const details = cr.details;
   const mantisLink = `${mantisUrl.replace(/\/$/, '')}/view.php?id=${cr.id}`;
 
-  const handleCopy = (text: string, key: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedKey(key);
-    setTimeout(() => setCopiedKey(null), 1500);
+  const handleCopy = async (text: string, key: string) => {
+    const ok = await copyToClipboard(text);
+    if (ok) {
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(null), 1500);
+    }
   };
 
   return (

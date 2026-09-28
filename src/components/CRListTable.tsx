@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { CRItem } from '../types/cr';
 import { highlightText } from '../services/searchEngine';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface CRListTableProps {
   items: CRItem[];
@@ -97,11 +98,13 @@ export const CRListTable: React.FC<CRListTableProps> = ({
     }
   };
 
-  const handleCopyId = (e: React.MouseEvent, crid: string) => {
+  const handleCopyId = async (e: React.MouseEvent, crid: string) => {
     e.stopPropagation();
-    navigator.clipboard.writeText(crid);
-    setCopiedId(crid);
-    setTimeout(() => setCopiedId(null), 1500);
+    const ok = await copyToClipboard(crid);
+    if (ok) {
+      setCopiedId(crid);
+      setTimeout(() => setCopiedId(null), 1500);
+    }
   };
 
   const getStatusBadgeClass = (status: string) => {

@@ -23,6 +23,7 @@ import { CRItem, AppSettings, SSHConfig } from '../types/cr';
 import { compareCRsAPI, fetchCRDiffCache, loadSettings } from '../services/api';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { copyToClipboard } from '../utils/clipboard';
 import { DiffViewerModal } from './DiffViewerModal';
 
 interface CRComparisonModalProps {
@@ -107,11 +108,13 @@ export const CRComparisonModal: React.FC<CRComparisonModalProps> = ({
     }
   };
 
-  const handleCopy = () => {
+  const handleCopy = async () => {
     if (!analysisResult) return;
-    navigator.clipboard.writeText(analysisResult);
-    setCopiedText(true);
-    setTimeout(() => setCopiedText(false), 1500);
+    const ok = await copyToClipboard(analysisResult);
+    if (ok) {
+      setCopiedText(true);
+      setTimeout(() => setCopiedText(false), 1500);
+    }
   };
 
   return (

@@ -25,6 +25,7 @@ import { SSHConfig, DiffResult } from '../types/cr';
 import { fetchFileDiff } from '../services/api';
 import { MultiVersionCompareModal } from './MultiVersionCompareModal';
 import { Layers } from 'lucide-react';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface DiffViewerModalProps {
   isOpen: boolean;
@@ -173,10 +174,12 @@ export const DiffViewerModal: React.FC<DiffViewerModalProps> = ({
 
   const vimdiffCmd = diffData?.vimdiffCommand || fallbackVimdiff;
 
-  const handleCopyVimdiff = () => {
-    navigator.clipboard.writeText(vimdiffCmd);
-    setCopiedVimdiff(true);
-    setTimeout(() => setCopiedVimdiff(false), 2000);
+  const handleCopyVimdiff = async () => {
+    const ok = await copyToClipboard(vimdiffCmd);
+    if (ok) {
+      setCopiedVimdiff(true);
+      setTimeout(() => setCopiedVimdiff(false), 2000);
+    }
   };
 
   // Build True Aligned Side-by-Side Diff Matrix with dynamic Left & Right Encoding

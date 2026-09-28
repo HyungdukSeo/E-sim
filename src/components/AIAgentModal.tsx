@@ -32,6 +32,7 @@ import { CRCodeChangesView } from './CRCodeChangesView';
 import { DiffViewerModal } from './DiffViewerModal';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface AIAgentModalProps {
   isOpen: boolean;
@@ -219,10 +220,12 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
     setPreviewCR(fullCR);
   };
 
-  const handleCopy = (text: string, fieldName: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedField(fieldName);
-    setTimeout(() => setCopiedField(null), 1500);
+  const handleCopy = async (text: string, fieldName: string) => {
+    const ok = await copyToClipboard(text);
+    if (ok) {
+      setCopiedField(fieldName);
+      setTimeout(() => setCopiedField(null), 1500);
+    }
   };
 
   const getStatusBadgeClass = (status: string) => {
