@@ -203,6 +203,11 @@ export function App() {
     saveSettings(newSettings);
   };
 
+  const handleUpdateCR = (updated: CRItem) => {
+    setSelectedCR(updated);
+    setAllCrs(prev => prev.map(c => c.crid === updated.crid ? updated : c));
+  };
+
   // Global Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -352,6 +357,7 @@ export function App() {
                                 setIsAIOpen(true);
                               }}
                               isSplitView={true}
+                              onUpdateCR={handleUpdateCR}
                             />
                           ) : (
                             <div className="h-full glass-panel rounded-2xl border border-slate-800 flex flex-col items-center justify-center text-slate-500 p-8 text-center space-y-2">
@@ -432,6 +438,7 @@ export function App() {
             setIsAIOpen(true);
           }}
           isSplitView={false}
+          onUpdateCR={handleUpdateCR}
         />
       )}
 

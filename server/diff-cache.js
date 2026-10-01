@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import { Worker } from 'worker_threads';
 import { fetchFileDiffSSH, findCheckinLogEntry } from './ssh.js';
@@ -1043,56 +1044,55 @@ export async function getVobHistory(vobName, allCrs) {
       });
     }
 
-    // A partially-cached CR can have files that were never even attempted —
-    // e.g. collection was interrupted mid-CR (app force-quit, connection
-    // drop) between one file's SSH fetch and the next, so the file has
-    // neither a success entry NOR an error entry in the cache. Those
-    // silently vanished from the VOB history view entirely (not listed,
-    // not shown as a failure) since the loop above only ever iterates what
-    // IS in cached.files. Surface them explicitly as "수집 중단" so the gap
-    // is visible instead of looking like the file was never part of the CR.
-    if (isPartial) {
-      const filePaths = cr.filePaths || [];
-      const rawPathSet = new Set(filePaths);
-      const dirPaths = new Set();
-      for (const p of filePaths) {
-        let parent = p;
-        let slashIdx;
-        while ((slashIdx = parent.lastIndexOf('/')) > 0) {
-          parent = parent.slice(0, slashIdx);
-          if (rawPathSet.has(parent)) dirPaths.add(parent);
-        }
+    // Surface any files in cr.filePaths that are not yet in cached.files (e.g. newly added checkins,
+    // uncollected files, or interrupted fetch) so they are NEVER hidden from the user.
+    const filePaths = cr.filePaths || [];
+    const rawPathSet = new Set(filePaths);
+    const dirPaths = new Set();
+    for (const p of filePaths) {
+      let parent = p;
+      let slashIdx;
+      while ((slashIdx = parent.lastIndexOf('/')) > 0) {
+        parent = parent.slice(0, slashIdx);
+        if (rawPathSet.has(parent)) dirPaths.add(parent);
       }
-      for (let i = 0; i < filePaths.length; i++) {
-        const fp = filePaths[i];
-        if (extractVobFromPath(fp) !== vobName) continue;
-        if (cachedByPath.has(fp)) continue; // already has a success/error entry above
-        const fn = fp.split('/').pop() || (cr.files && cr.files[i]) || '';
-        if (isDirectoryElement(fn, fp) || dirPaths.has(fp)) continue; // never meant to be fetched
-        const isBin = isBinaryFile(fn, fp);
+    }
 
-        entries.push({
-          crid: cr.crid,
-          id: cr.id,
-          summary: cr.cleanSummary || cr.summary || '',
-          customer: cr.customer || '',
-          module: cr.module || '',
-          dateSubmitted: cr.dateSubmitted || '',
-          lastUpdated: cr.lastUpdated || '',
-          reporter: cr.reporter || '',
-          fileName: fn,
-          filePath: fp,
-          isDirectory: false,
-          status: isBin ? 'binary' : 'not_collected',
-          hasChanges: false,
-          error: isBin ? null : '아직 수집되지 않음 (수집이 중단되었을 수 있습니다)',
-          oldVersion: '',
-          newVersion: '',
-          unifiedDiff: '',
-          fetchedAt: null,
-          checkinLog: cr.checkinLog || ''
-        });
-      }
+    let hasUncachedFiles = false;
+    for (let j = 0; j < filePaths.length; j++) {
+      const fp = filePaths[j];
+      if (extractVobFromPath(fp) !== vobName) continue;
+      if (cachedByPath.has(fp)) continue; // already has a success/error entry above
+      const fn = fp.split('/').pop() || (cr.files && cr.files[j]) || '';
+      if (isDirectoryElement(fn, fp) || dirPaths.has(fp)) continue; // directory element
+      const isBin = isBinaryFile(fn, fp);
+
+      hasUncachedFiles = true;
+      entries.push({
+        crid: cr.crid,
+        id: cr.id,
+        summary: cr.cleanSummary || cr.summary || '',
+        customer: cr.customer || '',
+        module: cr.module || '',
+        dateSubmitted: cr.dateSubmitted || '',
+        lastUpdated: cr.lastUpdated || '',
+        reporter: cr.reporter || '',
+        fileName: fn,
+        filePath: fp,
+        isDirectory: false,
+        status: isBin ? 'binary' : 'not_collected',
+        hasChanges: false,
+        error: isBin ? null : '아직 Diff 미수집 (우선 수집 요청을 클릭하세요)',
+        oldVersion: '',
+        newVersion: '',
+        unifiedDiff: '',
+        fetchedAt: null,
+        checkinLog: cr.checkinLog || ''
+      });
+    }
+
+    if (hasUncachedFiles || (cr.files || []).length > cached.files.length) {
+      partiallyCachedCrids.push(cr.crid);
     }
   }
 
@@ -1109,8 +1109,141 @@ export async function getVobHistory(vobName, allCrs) {
     totalCrs: matchingCrs.length,
     cachedCrs: matchingCrs.length - uncachedCrids.length,
     uncachedCrids,
-    partiallyCachedCrids,
+    partiallyCachedCrids: Array.from(new Set(partiallyCachedCrids)),
     entries
+  };
+}
+
+/**
+ * Automated audit & priority collection routine for a VOB:
+ * 1. Audits all candidate CRs in this VOB.
+ * 2. Re-parses checkinLogs to restore any previously omitted files (e.g. extensionless, binary, or new checkins).
+ * 3. Scrapes live Mantis pages for target/recent CRs to catch newly added checkin items.
+ * 4. Updates the local DB file immediately if new files or changes were discovered.
+ * 5. Reconciles diff caches: checks if cached files match cr.filePaths. If files are missing, queues priority collection.
+ * 6. Wakes background indexer and returns comprehensive audit report.
+ */
+export async function auditAndCollectVob(vobName, requestedCrids = [], mantisUrl) {
+  if (!isIndexInitialized) initCacheIndex();
+  const { fetchCRPageDetails, parseCheckinLog, getLocalDatabase, DB_FILE } = await import('./sync.js');
+  const { crs, meta } = getLocalDatabase();
+  const effectiveMantisUrl = mantisUrl || meta?.mantisUrl || 'http://192.168.16.200';
+
+  let newlyDiscoveredFiles = 0;
+  let updatedCrsCount = 0;
+  let dbChanged = false;
+  const queuedCrids = new Set((requestedCrids || []).filter(Boolean));
+
+  // 1. Identify all CRs that touch this VOB or mention this VOB in checkinLog
+  const candidateCrs = (crs || []).filter(cr => {
+    if (requestedCrids.includes(cr.crid) || requestedCrids.includes(String(cr.id))) return true;
+    if ((cr.filePaths || []).some(fp => extractVobFromPath(fp) === vobName)) return true;
+    if (cr.checkinLog && (cr.checkinLog.includes(vobName) || cr.checkinLog.includes('/vobs/'))) return true;
+    if (cr.vob && cr.vob.includes(vobName)) return true;
+    return false;
+  });
+
+  // 2. Re-audit checkinLogs using the latest parser
+  for (const cr of candidateCrs) {
+    if (!cr.checkinLog) continue;
+    const parsed = parseCheckinLog(cr.checkinLog);
+    const existingPathSet = new Set(cr.filePaths || []);
+    const newlyFound = (parsed.filePaths || []).filter(p => !existingPathSet.has(p));
+
+    if (newlyFound.length > 0) {
+      cr.filePaths = Array.from(new Set([...(cr.filePaths || []), ...parsed.filePaths]));
+      cr.files = Array.from(new Set([...(cr.files || []), ...parsed.files]));
+      newlyDiscoveredFiles += newlyFound.length;
+      updatedCrsCount++;
+      dbChanged = true;
+      queuedCrids.add(cr.crid);
+    }
+  }
+
+  // 3. For target CRs or CRs with 0 files touching this VOB, check live Mantis page in parallel
+  const liveAuditTargets = candidateCrs.filter(cr =>
+    requestedCrids.includes(cr.crid) ||
+    !cr.filePaths?.length ||
+    (cr.lastUpdated && cr.lastUpdated.includes('2026'))
+  ).slice(0, 15);
+
+  if (liveAuditTargets.length > 0) {
+    await Promise.allSettled(liveAuditTargets.map(async cr => {
+      try {
+        const details = await fetchCRPageDetails(cr.id, effectiveMantisUrl);
+        if (details && details.checkinLog) {
+          const parsed = parseCheckinLog(details.checkinLog);
+          const existingPathSet = new Set(cr.filePaths || []);
+          const newlyFound = (parsed.filePaths || []).filter(p => !existingPathSet.has(p));
+          if (newlyFound.length > 0 || (parsed.filePaths && parsed.filePaths.length > (cr.filePaths?.length || 0))) {
+            cr.checkinLog = details.checkinLog;
+            cr.filePaths = parsed.filePaths;
+            cr.files = parsed.files;
+            newlyDiscoveredFiles += newlyFound.length;
+            updatedCrsCount++;
+            dbChanged = true;
+            queuedCrids.add(cr.crid);
+          }
+        }
+      } catch (err) {
+        // Non-fatal
+      }
+    }));
+  }
+
+  // 4. Save DB to disk if updated
+  if (dbChanged) {
+    try {
+      fs.writeFileSync(DB_FILE, JSON.stringify(crs), 'utf8');
+      const altPaths = [
+        path.join(os.homedir(), 'Library', 'Application Support', 'mantis-cr-search-hub', 'data', 'cr_database.json'),
+        path.join(os.homedir(), 'Library', 'Application Support', 'Mantis CR Ultra Hub', 'data', 'cr_database.json')
+      ];
+      for (const p of altPaths) {
+        try {
+          if (fs.existsSync(p)) fs.writeFileSync(p, JSON.stringify(crs), 'utf8');
+        } catch (_) {}
+      }
+      console.log(`[DiffCache Audit] Successfully updated ${updatedCrsCount} CRs with ${newlyDiscoveredFiles} newly discovered files.`);
+    } catch (e) {
+      console.warn('[DiffCache Audit] DB save error:', e.message);
+    }
+  }
+
+  // 5. Diff-cache reconciliation: check if any file in cr.filePaths (for this VOB) is missing from the cache
+  for (const cr of candidateCrs) {
+    const vobFiles = (cr.filePaths || []).filter(fp => extractVobFromPath(fp) === vobName && !isDirectoryElement(fp));
+    if (vobFiles.length === 0) continue;
+
+    if (!hasCRDiffCache(cr.crid)) {
+      queuedCrids.add(cr.crid);
+    } else {
+      const cached = await getCRDiffCacheAsync(cr.crid);
+      if (!cached || !Array.isArray(cached.files)) {
+        queuedCrids.add(cr.crid);
+      } else {
+        const cachedPaths = new Set(cached.files.map(f => f.filePath));
+        const missingVobFiles = vobFiles.filter(fp => !cachedPaths.has(fp));
+        if (missingVobFiles.length > 0) {
+          queuedCrids.add(cr.crid);
+        }
+      }
+    }
+  }
+
+  // 6. Queue priority indexing
+  for (const crid of queuedCrids) {
+    backgroundDiffIndexer.queuePriority(crid, vobName);
+  }
+  backgroundDiffIndexer.wake();
+
+  return {
+    ok: true,
+    auditedCount: candidateCrs.length,
+    updatedCrsCount,
+    newlyDiscoveredFiles,
+    queued: queuedCrids.size,
+    queuedCrids: Array.from(queuedCrids)
   };
 }
 

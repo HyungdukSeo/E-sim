@@ -173,8 +173,12 @@ export async function triggerSync(mantisUrl: string): Promise<{ meta: SyncMeta; 
   }
 }
 
-export async function fetchCRDetail(crid: string, mantisUrl?: string): Promise<{ cr: CRItem; similar: CRItem[] }> {
-  const url = mantisUrl ? `${API_BASE}/cr/${crid}?mantisUrl=${encodeURIComponent(mantisUrl)}` : `${API_BASE}/cr/${crid}`;
+export async function fetchCRDetail(crid: string, mantisUrl?: string, options?: { refresh?: boolean }): Promise<{ cr: CRItem; similar: CRItem[] }> {
+  const params = new URLSearchParams();
+  if (mantisUrl) params.set('mantisUrl', mantisUrl);
+  if (options?.refresh) params.set('refresh', 'true');
+  const qs = params.toString();
+  const url = `${API_BASE}/cr/${crid}${qs ? `?${qs}` : ''}`;
   const resp = await axios.get(url);
   return resp.data;
 }
@@ -319,7 +323,14 @@ export async function fetchVobHistory(vob: string): Promise<{
   return resp.data;
 }
 
-export async function collectVobUncachedCRs(vob: string, crids: string[]): Promise<{ ok: boolean; queued: number }> {
+export async function collectVobUncachedCRs(vob: string, crids: string[]): Promise<{
+  ok: boolean;
+  queued: number;
+  auditedCount?: number;
+  updatedCrsCount?: number;
+  newlyDiscoveredFiles?: number;
+  queuedCrids?: string[];
+}> {
   const resp = await axios.post(`${API_BASE}/diff-cache/vobs/${encodeURIComponent(vob)}/collect`, { crids });
   return resp.data;
 }

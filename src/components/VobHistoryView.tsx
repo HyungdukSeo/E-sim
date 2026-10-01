@@ -854,15 +854,22 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
   const handleCollectUncached = async () => {
     if (!selectedVob || !history) return;
     const targets = Array.from(new Set([...history.uncachedCrids, ...history.partiallyCachedCrids]));
-    if (targets.length === 0) return;
     setIsCollecting(true);
     setCollectMessage(null);
     try {
       const res = await collectVobUncachedCRs(selectedVob, targets);
       if (res.ok) {
-        setCollectMessage(
-          `${res.queued}건을 백그라운드 수집 대기열 최우선순위로 등록했습니다. 이미 캐시된 파일은 다시 가져오지 않고, 빠진 파일만 추가로 수집합니다.`
-        );
+        if (res.newlyDiscoveredFiles && res.newlyDiscoveredFiles > 0) {
+          setCollectMessage(
+            `점검 완료: 누락/신규 체크인 파일 ${res.newlyDiscoveredFiles}건을 새로 발견하여 DB에 반영하고 최우선 수집 대기열(${res.queued}건)에 등록했습니다. 타임라인을 갱신합니다.`
+          );
+        } else {
+          setCollectMessage(
+            `${res.queued}건을 점검하고 백그라운드 수집 대기열 최우선순위로 등록했습니다. 이미 캐시된 파일은 다시 가져오지 않고, 빠진 파일만 추가로 수집합니다.`
+          );
+        }
+        // Immediately reload history so newly discovered files appear right away
+        loadHistory(selectedVob);
       }
     } catch (err: any) {
       setCollectMessage(`요청 실패: ${err.message}`);
@@ -946,16 +953,17 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                       일부만 수집됨 {history.partiallyCachedCrids.length.toLocaleString()}건
                     </span>
                   )}
-                  {(history.uncachedCrids.length > 0 || history.partiallyCachedCrids.length > 0) && (
-                    <button
-                      onClick={handleCollectUncached}
-                      disabled={isCollecting}
-                      className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-medium transition-colors"
-                    >
-                      <Download className={`w-3 h-3 ${isCollecting ? 'animate-spin' : ''}`} />
-                      미수집·부분수집분 우선 수집 요청
-                    </button>
-                  )}
+                  <button
+                    onClick={handleCollectUncached}
+                    disabled={isCollecting}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-medium transition-colors cursor-pointer"
+                    title="Mantis 실시간 체크인 및 누락/미수집 파일을 점검하고 최우선순위로 수집합니다"
+                  >
+                    <Download className={`w-3 h-3 ${isCollecting ? 'animate-spin' : ''}`} />
+                    {history.uncachedCrids.length > 0 || history.partiallyCachedCrids.length > 0
+                      ? '미수집·부분수집분 우선 수집 요청'
+                      : '누락 파일 점검 및 수집'}
+                  </button>
                 </div>
               )}
 
@@ -1042,11 +1050,19 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                             <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-500/15 border border-rose-500/30 text-rose-300 font-mono">
                               조회 실패
                             </span>
+                          ) : effectiveStatus === 'not_collected' ? (
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono">
+                              미수집
+                            </span>
                           ) : effectiveHasChanges ? (
                             <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-mono">
                               변경됨
                             </span>
-                          ) : null}
+                          ) : (
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800/80 border border-slate-700/60 text-slate-400 font-mono" title="파일이 체크인되었으나 이전 버전과 내용 차이(Diff)가 없습니다">
+                              변경사항 없음
+                            </span>
+                          )}
 
                           <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
                             <Clock className="w-3 h-3" />

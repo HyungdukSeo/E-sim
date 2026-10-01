@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import axios from 'axios';
 import { parse } from 'csv-parse/sync';
 import { ROOT_DIR, BUNDLED_DATA_DIR, DATA_DIR, DB_FILE, META_FILE } from './paths.js';
@@ -595,7 +596,8 @@ export async function fetchCRPageDetails(bugId, mantisUrl = 'http://192.168.16.2
   
   try {
     const resp = await axios.get(url, {
-      timeout: 8000,
+      timeout: 3500,
+      signal: AbortSignal.timeout(3500),
       headers: {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
         'Accept': 'text/html,*/*'
@@ -650,16 +652,30 @@ export async function fetchCRPageDetails(bugId, mantisUrl = 'http://192.168.16.2
     if (found) {
       found.details = details;
       found.detailsFetched = true;
-      if (details.checkinLog && (details.checkinLog.length > (found.checkinLog || '').length || details.checkinLog !== found.checkinLog)) {
+      if (details.checkinLog) {
         found.checkinLog = details.checkinLog;
-        found.files = details.files || found.files;
-        found.filePaths = details.filePaths || found.filePaths;
+      }
+      if (Array.isArray(details.filePaths) && details.filePaths.length > 0) {
+        const existingCount = Array.isArray(found.filePaths) ? found.filePaths.length : 0;
+        if (details.filePaths.length >= existingCount || !found.filePaths) {
+          found.filePaths = details.filePaths;
+          found.files = details.files || found.files;
+        }
       }
 
-      // Save asynchronously
+      // Save to primary DB and all app data locations asynchronously
       setTimeout(() => {
         try {
           fs.writeFileSync(DB_FILE, JSON.stringify(crs), 'utf-8');
+          const altPaths = [
+            path.join(os.homedir(), 'Library', 'Application Support', 'mantis-cr-search-hub', 'data', 'cr_database.json'),
+            path.join(os.homedir(), 'Library', 'Application Support', 'Mantis CR Ultra Hub', 'data', 'cr_database.json')
+          ];
+          for (const p of altPaths) {
+            try {
+              if (fs.existsSync(p)) fs.writeFileSync(p, JSON.stringify(crs), 'utf-8');
+            } catch (_) {}
+          }
         } catch (e) {
           console.warn('[DB Save Details Error]', e.message);
         }

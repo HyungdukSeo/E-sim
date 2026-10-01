@@ -21,6 +21,7 @@ import {
   AlertTriangle,
   Search,
   RotateCcw,
+  RefreshCw,
   Trash2,
   Paperclip
 } from 'lucide-react';
@@ -50,6 +51,7 @@ interface CRDetailModalProps {
   sshServers?: SSHConfig[];
   aiSettings?: AppSettings['ai'];
   onOpenSettings?: () => void;
+  onUpdateCR?: (updated: CRItem) => void;
 }
 
 export const CRDetailModal: React.FC<CRDetailModalProps> = ({
@@ -66,7 +68,8 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
   sshConfig,
   sshServers,
   aiSettings,
-  onOpenSettings
+  onOpenSettings,
+  onUpdateCR
 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'details' | 'checkin' | 'raw' | 'aiDiff'>('details');
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -82,18 +85,35 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
 
   useEffect(() => {
     setCurrentCR(cr);
-    if (cr && (!cr.detailsFetched || !Array.isArray(cr.details?.attachments))) {
+    if (cr && (!cr.detailsFetched || !Array.isArray(cr.details?.attachments) || !cr.filePaths?.length)) {
       setLoadingDetails(true);
       fetchCRDetail(cr.crid, mantisUrl)
         .then(res => {
           if (res && res.cr) {
             setCurrentCR(res.cr);
+            onUpdateCR?.(res.cr);
           }
         })
         .catch(err => console.warn('Failed to fetch full CR details:', err))
         .finally(() => setLoadingDetails(false));
     }
   }, [cr, mantisUrl]);
+
+  const handleRefreshFromMantis = async () => {
+    if (!currentCR || loadingDetails) return;
+    setLoadingDetails(true);
+    try {
+      const res = await fetchCRDetail(currentCR.crid, mantisUrl, { refresh: true });
+      if (res && res.cr) {
+        setCurrentCR(res.cr);
+        onUpdateCR?.(res.cr);
+      }
+    } catch (err) {
+      console.warn('Failed to refresh CR from Mantis:', err);
+    } finally {
+      setLoadingDetails(false);
+    }
+  };
 
   // Check diff cache status for current CR
   useEffect(() => {
@@ -228,6 +248,17 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
             title="CRID 복사"
           >
             {copiedField === 'crid' ? <Check className="w-4 h-4 text-mantis-400" /> : <Copy className="w-4 h-4" />}
+          </button>
+
+          {/* Refresh from Mantis live */}
+          <button
+            onClick={handleRefreshFromMantis}
+            disabled={loadingDetails}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
+            title="Mantis 서버에서 최신 Check-in 로그 및 첨부파일을 실시간 재조회하여 갱신합니다"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-mantis-400 ${loadingDetails ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">Mantis 갱신</span>
           </button>
 
           {/* Open in Mantis */}
