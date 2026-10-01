@@ -76,24 +76,74 @@ export function parseTitleTags(title) {
   return { customer, vob, module, authorInTitle, cleanSummary: cleanSummary || title };
 }
 
+const KNOWN_CODE_EXTS = new Set([
+  'c', 'h', 'cpp', 'cc', 'cxx', 'hpp', 'hh', 'hxx', 's', 'asm',
+  'sh', 'bash', 'csh', 'ksh', 'tcsh', 'py', 'pl', 'pm', 'rb',
+  'java', 'go', 'rs', 'js', 'ts', 'jsx', 'tsx', 'json', 'xml',
+  'yaml', 'yml', 'sql', 'tbl', 'awk', 'sed', 'mk', 'mak',
+  'cfg', 'conf', 'ini', 'properties', 'txt', 'md', 'csv', 'log',
+  'diff', 'patch', 'pc', 'ec', 'sqc', 'def', 'idl', 'dat', 'fmt',
+  'ctl', 'dg', 'xdb', 'ucf', 'tab', 'dil', 'rlt'
+]);
+
+const BINARY_EXTS = new Set([
+  '.exe', '.o', '.a', '.so', '.dll', '.tar', '.gz', '.zip', 
+  '.class', '.jar', '.png', '.jpg', '.jpeg', '.gif', '.pdf', 
+  '.bin'
+]);
+
 /**
  * Determine if an entry is a ClearCase directory element or branch activity rather than a source file
  */
 export function isDirectoryElement(fileName, filePath = '') {
-  if (!fileName) return false;
+  const fn = fileName || '';
+  const fp = filePath || '';
+  if (!fn && !fp) return false;
+
   // ClearCase branch activity names
-  if (fileName.startsWith('crdb') || fileName.startsWith('cr_')) return true;
+  if (fn.startsWith('crdb') || fn.startsWith('cr_') || fp.includes('/crdb') || fp.includes('/cr_')) {
+    return true;
+  }
 
-  const cleanName = fileName.split('/').pop() || fileName;
-  const hasExt = cleanName.includes('.') && !cleanName.startsWith('.');
-  if (hasExt) return false; // Typical source file with extension
+  const cleanName = fn.split('/').pop() || fn;
+  const cleanPathName = fp.split('/').pop() || '';
 
-  // Known extensionless files
+  // Platform/arch build output directories (e.g. Linux_2.6.32_ICC, SunOS_5.10, etc.)
+  if (/^(linux|sunos|aix|hp-ux|solaris)_/i.test(cleanName) || /^(linux|sunos|aix|hp-ux|solaris)_/i.test(cleanPathName)) {
+    return true;
+  }
+
+  // Known build/doc files without extension
   const lower = cleanName.toLowerCase();
+  const pathLower = cleanPathName.toLowerCase();
   const knownFiles = new Set(['makefile', 'makeall', 'dockerfile', 'readme', 'license', 'cmakelists.txt']);
-  if (knownFiles.has(lower) || lower.startsWith('makefile')) return false;
+  if (
+    knownFiles.has(lower) ||
+    lower.startsWith('makefile') ||
+    knownFiles.has(pathLower) ||
+    pathLower.startsWith('makefile')
+  ) {
+    return false;
+  }
 
-  // Extensionless and not a known build file -> Directory element in ClearCase
+  // Recognized source/code/config or binary file extension
+  const dotIndex = cleanName.lastIndexOf('.');
+  if (dotIndex > 0) {
+    const ext = cleanName.slice(dotIndex + 1).toLowerCase();
+    if (KNOWN_CODE_EXTS.has(ext) || BINARY_EXTS.has('.' + ext)) {
+      return false;
+    }
+  }
+
+  const pathDotIndex = cleanPathName.lastIndexOf('.');
+  if (pathDotIndex > 0) {
+    const ext = cleanPathName.slice(pathDotIndex + 1).toLowerCase();
+    if (KNOWN_CODE_EXTS.has(ext) || BINARY_EXTS.has('.' + ext)) {
+      return false;
+    }
+  }
+
+  // Without recognized extension and not a known build file -> Directory element in ClearCase
   return true;
 }
 
@@ -135,20 +185,20 @@ export function parseCheckinLog(log) {
     }
   }
 
-  const filesSet = new Set();
-  const filePathsSet = new Set();
+  const filesList = [];
+  const filePathsList = [];
 
   for (const p of uniquePaths) {
     if (dirPaths.has(p)) continue;
     const fileName = p.split('/').pop() || '';
     if (isDirectoryElement(fileName, p)) continue;
-    filesSet.add(fileName);
-    filePathsSet.add(p);
+    filesList.push(fileName);
+    filePathsList.push(p);
   }
 
   return {
-    files: Array.from(filesSet),
-    filePaths: Array.from(filePathsSet)
+    files: filesList,
+    filePaths: filePathsList
   };
 }
 
@@ -159,18 +209,6 @@ export function cleanCRFilePaths(cr) {
   if (!cr || !Array.isArray(cr.filePaths) || cr.filePaths.length === 0) return cr;
 
   const rawPaths = cr.filePaths;
-  // A path is a directory element if some OTHER path in this same list
-  // starts with "<path>/" (i.e. it has a child in this same check-in).
-  // Checking that via Array#some inside a loop over every path is O(n^2) —
-  // negligible for the typical CR with a handful of files, but this runs
-  // for every CR on every server boot (getLocalDatabase's first call), and
-  // a large release-style CR can have 1000+ filePaths, making this single
-  // function the dominant cost of loading the whole database (measured:
-  // ~26s for 7746 CRs, almost entirely this one CR's O(n^2) scan).
-  // A directory path is by definition a strict PARENT of some other path
-  // (i.e. that other path, with its last "/segment" removed, equals this
-  // one) — so build the set of "parent of X" for every X once, in O(n),
-  // instead of comparing every pair of paths.
   const rawPathSet = new Set(rawPaths);
   const dirPaths = new Set();
   for (const p of rawPaths) {
@@ -186,10 +224,10 @@ export function cleanCRFilePaths(cr) {
   const filteredFiles = [];
   for (let i = 0; i < rawPaths.length; i++) {
     const fp = rawPaths[i];
-    const fn = (cr.files && cr.files[i]) || fp.split('/').pop() || '';
-    if (!dirPaths.has(fp) && !isDirectoryElement(fn, fp)) {
+    const actualFileName = fp.split('/').pop() || '';
+    if (!dirPaths.has(fp) && !isDirectoryElement(actualFileName, fp)) {
       filteredPaths.push(fp);
-      filteredFiles.push(fn);
+      filteredFiles.push(actualFileName);
     }
   }
 

@@ -215,34 +215,45 @@ const KNOWN_CODE_EXTS = new Set([
   'java', 'go', 'rs', 'js', 'ts', 'jsx', 'tsx', 'json', 'xml',
   'yaml', 'yml', 'sql', 'tbl', 'awk', 'sed', 'mk', 'mak',
   'cfg', 'conf', 'ini', 'properties', 'txt', 'md', 'csv', 'log',
-  'diff', 'patch', 'pc', 'ec', 'sqc', 'def', 'idl', 'dat', 'fmt'
+  'diff', 'patch', 'pc', 'ec', 'sqc', 'def', 'idl', 'dat', 'fmt',
+  'ctl', 'dg', 'xdb', 'ucf', 'tab', 'dil', 'rlt'
 ]);
 
 /**
  * Determine if an entry is a ClearCase directory element or branch activity rather than a source file
  */
 export function isDirectoryElement(fileName, filePath = '', unifiedDiff = '') {
-  if (!fileName) return false;
+  const fn = fileName || '';
+  const fp = filePath || '';
+  if (!fn && !fp) return false;
+
   // ClearCase branch activity names
-  if (fileName.startsWith('crdb') || fileName.startsWith('cr_')) return true;
+  if (fn.startsWith('crdb') || fn.startsWith('cr_') || fp.includes('/crdb') || fp.includes('/cr_')) return true;
   // Explicit directory marker in unified diff
   if (unifiedDiff && unifiedDiff.includes('[DIRECTORY:')) return true;
 
-  const cleanName = fileName.split('/').pop() || fileName;
-  const lower = cleanName.toLowerCase();
-
-  // Known build/doc files without extension
-  const knownFiles = new Set(['makefile', 'makeall', 'dockerfile', 'readme', 'license', 'cmakelists.txt']);
-  if (knownFiles.has(lower) || lower.startsWith('makefile')) return false;
+  const cleanName = fn.split('/').pop() || fn;
+  const cleanPathName = fp.split('/').pop() || '';
 
   // Platform/arch directories (e.g. Linux_2.6.32_ICC, SunOS_5.10, etc.)
-  if (/^(linux|sunos|aix|hp-ux|solaris)_/i.test(cleanName)) return true;
+  if (/^(linux|sunos|aix|hp-ux|solaris)_/i.test(cleanName) || /^(linux|sunos|aix|hp-ux|solaris)_/i.test(cleanPathName)) return true;
 
-  // Recognized source/code/config file extension
+  // Known build/doc files without extension
+  const lower = cleanName.toLowerCase();
+  const pathLower = cleanPathName.toLowerCase();
+  const knownFiles = new Set(['makefile', 'makeall', 'dockerfile', 'readme', 'license', 'cmakelists.txt']);
+  if (knownFiles.has(lower) || lower.startsWith('makefile') || knownFiles.has(pathLower) || pathLower.startsWith('makefile')) return false;
+
+  // Recognized source/code/config or binary file extension
   const dotIndex = cleanName.lastIndexOf('.');
   if (dotIndex > 0) {
     const ext = cleanName.slice(dotIndex + 1).toLowerCase();
-    if (KNOWN_CODE_EXTS.has(ext)) return false;
+    if (KNOWN_CODE_EXTS.has(ext) || BINARY_EXTS.has('.' + ext)) return false;
+  }
+  const pathDotIndex = cleanPathName.lastIndexOf('.');
+  if (pathDotIndex > 0) {
+    const ext = cleanPathName.slice(pathDotIndex + 1).toLowerCase();
+    if (KNOWN_CODE_EXTS.has(ext) || BINARY_EXTS.has('.' + ext)) return false;
   }
 
   // Without recognized extension and not a known build file -> Directory element in ClearCase
@@ -1063,7 +1074,7 @@ export async function getVobHistory(vobName, allCrs) {
         const fp = filePaths[i];
         if (extractVobFromPath(fp) !== vobName) continue;
         if (cachedByPath.has(fp)) continue; // already has a success/error entry above
-        const fn = (cr.files && cr.files[i]) || fp.split('/').pop() || '';
+        const fn = fp.split('/').pop() || (cr.files && cr.files[i]) || '';
         if (isDirectoryElement(fn, fp) || dirPaths.has(fp)) continue; // never meant to be fetched
         if (isBinaryFile(fn, fp)) continue; // never meant to be fetched
 

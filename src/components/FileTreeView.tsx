@@ -20,6 +20,13 @@ import {
   GitCompare
 } from 'lucide-react';
 import { copyToClipboard } from '../utils/clipboard';
+import { 
+  isDirectoryElement, 
+  filterOutDirectories, 
+  KNOWN_CODE_EXTS 
+} from '../utils/fileUtils';
+
+export { isDirectoryElement, filterOutDirectories };
 
 interface FileTreeViewProps {
   filePaths: string[];
@@ -52,53 +59,6 @@ function getFileIcon(fileName: string) {
     return <Settings className="w-4 h-4 text-rose-400 flex-shrink-0" />;
   }
   return <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />;
-}
-
-const KNOWN_CODE_EXTS = new Set([
-  'c', 'h', 'cpp', 'cc', 'cxx', 'hpp', 'hh', 'hxx', 's', 'asm',
-  'sh', 'bash', 'csh', 'ksh', 'tcsh', 'py', 'pl', 'pm', 'rb',
-  'java', 'go', 'rs', 'js', 'ts', 'jsx', 'tsx', 'json', 'xml',
-  'yaml', 'yml', 'sql', 'tbl', 'awk', 'sed', 'mk', 'mak',
-  'cfg', 'conf', 'ini', 'properties', 'txt', 'md', 'csv', 'log',
-  'diff', 'patch', 'pc', 'ec', 'sqc', 'def', 'idl', 'dat', 'fmt'
-]);
-
-export function isDirectoryElement(path: string): boolean {
-  if (!path) return false;
-  const fileName = path.split('/').pop() || path;
-  if (fileName.startsWith('crdb') || fileName.startsWith('cr_')) return true;
-
-  const cleanName = fileName;
-  const lower = cleanName.toLowerCase();
-  const knownFiles = new Set(['makefile', 'makeall', 'dockerfile', 'readme', 'license', 'cmakelists.txt']);
-  if (knownFiles.has(lower) || lower.startsWith('makefile')) return false;
-
-  // Platform/arch directories (e.g. Linux_2.6.32_ICC, SunOS_5.10, etc.)
-  if (/^(linux|sunos|aix|hp-ux|solaris)_/i.test(cleanName)) return true;
-
-  const dotIndex = cleanName.lastIndexOf('.');
-  if (dotIndex > 0) {
-    const ext = cleanName.slice(dotIndex + 1).toLowerCase();
-    if (KNOWN_CODE_EXTS.has(ext)) return false;
-  }
-  return true;
-}
-
-export function filterOutDirectories(paths: string[]): string[] {
-  if (!paths || paths.length === 0) return [];
-  // 1. Detect any path that is a parent prefix of another path
-  const dirSet = new Set<string>();
-  for (const p of paths) {
-    if (paths.some(other => other !== p && other.startsWith(p + '/'))) {
-      dirSet.add(p);
-    }
-  }
-
-  return paths.filter(p => {
-    if (dirSet.has(p)) return false;
-    if (isDirectoryElement(p)) return false;
-    return true;
-  });
 }
 
 // Build raw tree from paths

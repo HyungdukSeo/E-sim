@@ -37,6 +37,7 @@ import {
 import { SideBySideDiffViewer } from './SideBySideDiffViewer';
 import { MultiVersionDiffViewer } from './MultiVersionDiffViewer';
 import { copyToClipboard } from '../utils/clipboard';
+import { isDirectoryElement } from '../utils/fileUtils';
 
 export const BINARY_FILE_RE = /\.(so|a|o|exe|dll|dylib|bin|class|jar|war|ear|tar|gz|tgz|zip|7z|rar|iso|img|rpm|deb|png|jpg|jpeg|gif|bmp|ico|pdf)(\.\d+)*$/i;
 
@@ -873,20 +874,8 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
   const filteredEntries = useMemo(() => {
     if (!history) return [];
     // Completely exclude ClearCase directory elements and branch pseudo-elements from timeline list
-    const isDir = (name: string, diff?: string) => {
-      if (!name) return false;
-      if (name.startsWith('crdb') || name.startsWith('cr_')) return true;
-      if (diff && diff.includes('[DIRECTORY:')) return true;
-      const clean = name.split('/').pop() || name;
-      if (clean.includes('.') && !clean.startsWith('.')) return false;
-      const lower = clean.toLowerCase();
-      const known = new Set(['makefile', 'makeall', 'dockerfile', 'readme', 'license', 'cmakelists.txt']);
-      if (known.has(lower) || lower.startsWith('makefile')) return false;
-      return true;
-    };
-
     const nonDirEntries = (history.entries || []).filter(
-      e => !e.isDirectory && !isDir(e.fileName, e.unifiedDiff)
+      e => !e.isDirectory && !isDirectoryElement(e.fileName, e.filePath, e.unifiedDiff)
     );
     const q = fileQuery.trim().toLowerCase();
     if (!q) return nonDirEntries;
