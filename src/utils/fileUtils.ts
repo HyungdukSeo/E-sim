@@ -46,38 +46,7 @@ export function isDirectoryElement(fileName?: string, filePath?: string, unified
     return true;
   }
 
-  // Known extensionless files
-  const lower = cleanName.toLowerCase();
-  const pathLower = cleanPathName.toLowerCase();
-  const knownFiles = new Set(['makefile', 'makeall', 'dockerfile', 'readme', 'license', 'cmakelists.txt']);
-  if (
-    knownFiles.has(lower) ||
-    lower.startsWith('makefile') ||
-    knownFiles.has(pathLower) ||
-    pathLower.startsWith('makefile')
-  ) {
-    return false;
-  }
-
-  // Recognized source/code/config or binary file extension
-  const dotIndex = cleanName.lastIndexOf('.');
-  if (dotIndex > 0) {
-    const ext = cleanName.slice(dotIndex + 1).toLowerCase();
-    if (KNOWN_CODE_EXTS.has(ext) || BINARY_EXTS.has(ext)) {
-      return false;
-    }
-  }
-
-  const pathDotIndex = cleanPathName.lastIndexOf('.');
-  if (pathDotIndex > 0) {
-    const ext = cleanPathName.slice(pathDotIndex + 1).toLowerCase();
-    if (KNOWN_CODE_EXTS.has(ext) || BINARY_EXTS.has(ext)) {
-      return false;
-    }
-  }
-
-  // Without recognized extension and not a known build file -> Directory element in ClearCase
-  return true;
+  return false;
 }
 
 /**

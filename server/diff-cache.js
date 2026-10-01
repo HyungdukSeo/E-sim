@@ -238,26 +238,7 @@ export function isDirectoryElement(fileName, filePath = '', unifiedDiff = '') {
   // Platform/arch directories (e.g. Linux_2.6.32_ICC, SunOS_5.10, etc.)
   if (/^(linux|sunos|aix|hp-ux|solaris)_/i.test(cleanName) || /^(linux|sunos|aix|hp-ux|solaris)_/i.test(cleanPathName)) return true;
 
-  // Known build/doc files without extension
-  const lower = cleanName.toLowerCase();
-  const pathLower = cleanPathName.toLowerCase();
-  const knownFiles = new Set(['makefile', 'makeall', 'dockerfile', 'readme', 'license', 'cmakelists.txt']);
-  if (knownFiles.has(lower) || lower.startsWith('makefile') || knownFiles.has(pathLower) || pathLower.startsWith('makefile')) return false;
-
-  // Recognized source/code/config or binary file extension
-  const dotIndex = cleanName.lastIndexOf('.');
-  if (dotIndex > 0) {
-    const ext = cleanName.slice(dotIndex + 1).toLowerCase();
-    if (KNOWN_CODE_EXTS.has(ext) || BINARY_EXTS.has('.' + ext)) return false;
-  }
-  const pathDotIndex = cleanPathName.lastIndexOf('.');
-  if (pathDotIndex > 0) {
-    const ext = cleanPathName.slice(pathDotIndex + 1).toLowerCase();
-    if (KNOWN_CODE_EXTS.has(ext) || BINARY_EXTS.has('.' + ext)) return false;
-  }
-
-  // Without recognized extension and not a known build file -> Directory element in ClearCase
-  return true;
+  return false;
 }
 
 function getCacheFilePath(crid) {
@@ -713,7 +694,6 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
     const fn = files[idx];
     const fp = filePaths[idx] || fn;
     if (isDirectoryElement(fn, fp) || dirPaths.has(fp)) return false;
-    if (isBinaryFile(fn, fp)) return false;
     return true;
   });
   const totalEligibleCount = eligibleIndices.length || files.length;
@@ -730,8 +710,21 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
     // Skip directory elements & branch pseudo-elements
     if (isDirectoryElement(fileName, filePath) || dirPaths.has(filePath)) continue;
 
-    // Skip binary files (e.g. .so, .so.1.1, .a, .exe, .dll, etc.)
-    if (isBinaryFile(fileName, filePath)) continue;
+    // Binary files (e.g. .so, .so.1.1, .a, .exe, .dll, etc.) - keep in cache with status: 'binary'
+    if (isBinaryFile(fileName, filePath)) {
+      results.push({
+        fileName,
+        filePath,
+        oldVersion: '',
+        newVersion: '',
+        unifiedDiff: '',
+        hasChanges: false,
+        status: 'binary',
+        error: null,
+        fetchedAt: new Date().toISOString()
+      });
+      continue;
+    }
 
     processed++;
     if (typeof onFileProgress === 'function') {
@@ -1076,7 +1069,7 @@ export async function getVobHistory(vobName, allCrs) {
         if (cachedByPath.has(fp)) continue; // already has a success/error entry above
         const fn = fp.split('/').pop() || (cr.files && cr.files[i]) || '';
         if (isDirectoryElement(fn, fp) || dirPaths.has(fp)) continue; // never meant to be fetched
-        if (isBinaryFile(fn, fp)) continue; // never meant to be fetched
+        const isBin = isBinaryFile(fn, fp);
 
         entries.push({
           crid: cr.crid,
@@ -1090,9 +1083,9 @@ export async function getVobHistory(vobName, allCrs) {
           fileName: fn,
           filePath: fp,
           isDirectory: false,
-          status: 'not_collected',
+          status: isBin ? 'binary' : 'not_collected',
           hasChanges: false,
-          error: '아직 수집되지 않음 (수집이 중단되었을 수 있습니다)',
+          error: isBin ? null : '아직 수집되지 않음 (수집이 중단되었을 수 있습니다)',
           oldVersion: '',
           newVersion: '',
           unifiedDiff: '',
