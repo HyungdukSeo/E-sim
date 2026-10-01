@@ -857,19 +857,20 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
     setIsCollecting(true);
     setCollectMessage(null);
     try {
+      // The server now responds immediately ({ accepted: true }) and runs the
+      // actual audit (live Mantis scrape of up to 15 CRs, DB save, cache
+      // reconciliation) in the background — it used to await all of that
+      // before replying, which could leave this button spinning for a long
+      // time (or indefinitely) whenever the Mantis server/network was slow.
       const res = await collectVobUncachedCRs(selectedVob, targets);
       if (res.ok) {
-        if (res.newlyDiscoveredFiles && res.newlyDiscoveredFiles > 0) {
-          setCollectMessage(
-            `점검 완료: 누락/신규 체크인 파일 ${res.newlyDiscoveredFiles}건을 새로 발견하여 DB에 반영하고 최우선 수집 대기열(${res.queued}건)에 등록했습니다. 타임라인을 갱신합니다.`
-          );
-        } else {
-          setCollectMessage(
-            `${res.queued}건을 점검하고 백그라운드 수집 대기열 최우선순위로 등록했습니다. 이미 캐시된 파일은 다시 가져오지 않고, 빠진 파일만 추가로 수집합니다.`
-          );
-        }
-        // Immediately reload history so newly discovered files appear right away
-        loadHistory(selectedVob);
+        setCollectMessage(
+          `점검 및 우선 수집 요청을 등록했습니다. 누락된 체크인 파일을 확인하고 백그라운드에서 수집합니다 — 잠시 후 타임라인이 자동으로 갱신됩니다.`
+        );
+        // Give the background audit a moment to finish (checkinLog re-parse +
+        // live Mantis scrape + DB save) before reloading, then reload again
+        // shortly after in case collection is still catching up.
+        setTimeout(() => loadHistory(selectedVob), 4000);
       }
     } catch (err: any) {
       setCollectMessage(`요청 실패: ${err.message}`);

@@ -325,7 +325,12 @@ export async function fetchVobHistory(vob: string): Promise<{
 
 export async function collectVobUncachedCRs(vob: string, crids: string[]): Promise<{
   ok: boolean;
-  queued: number;
+  // The server responds as soon as the request is accepted — the actual
+  // audit (live Mantis scrape, DB save, cache reconciliation) runs in the
+  // background afterward, so these counts are no longer available synchronously.
+  accepted?: boolean;
+  requestedCount?: number;
+  queued?: number;
   auditedCount?: number;
   updatedCrsCount?: number;
   newlyDiscoveredFiles?: number;
