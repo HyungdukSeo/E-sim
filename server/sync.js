@@ -353,7 +353,11 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
     if (existing) {
       if (existing.lastUpdated !== lastUpdated || existing.status !== status || existing.summary !== summary || existing.checkinLog !== checkinLogRaw) {
         const titleParsed = parseTitleTags(summary);
-        const checkinParsed = parseCheckinLog(checkinLogRaw);
+        // Preserve richer checkinLog if already present in DB (e.g. from view.php live scrape)
+        const finalCheckinLog = (existing.checkinLog && existing.checkinLog.length > (checkinLogRaw || '').length)
+          ? existing.checkinLog
+          : (checkinLogRaw || existing.checkinLog || '');
+        const checkinParsed = parseCheckinLog(finalCheckinLog);
 
         const updatedCr = {
           ...existing,
@@ -367,7 +371,7 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
           summary,
           status,
           targetVersion: targetVersion || existing.targetVersion,
-          checkinLog: checkinLogRaw,
+          checkinLog: finalCheckinLog,
           customer: titleParsed.customer,
           vob: titleParsed.vob,
           module: titleParsed.module,
@@ -626,6 +630,18 @@ export async function fetchCRPageDetails(bugId, mantisUrl = 'http://192.168.16.2
       attachments
     };
 
+    // Live Check-in Log update from view.php page
+    const liveCheckinLog = fields['Check-in Log'] || fields['check_in_log'] || fields['체크인 로그'] || fields['Checkin Log'] || '';
+    if (liveCheckinLog) {
+      const cleanCheckinLog = liveCheckinLog.replace(/<[^>]+>/g, '').trim();
+      const parsed = parseCheckinLog(cleanCheckinLog);
+      if (parsed.filePaths.length > 0) {
+        details.checkinLog = cleanCheckinLog;
+        details.files = parsed.files;
+        details.filePaths = parsed.filePaths;
+      }
+    }
+
     // Update in-memory and persist to DB file asynchronously
     const idStr = String(numericId).padStart(7, '0');
     const { crs } = getLocalDatabase();
@@ -634,6 +650,11 @@ export async function fetchCRPageDetails(bugId, mantisUrl = 'http://192.168.16.2
     if (found) {
       found.details = details;
       found.detailsFetched = true;
+      if (details.checkinLog && (details.checkinLog.length > (found.checkinLog || '').length || details.checkinLog !== found.checkinLog)) {
+        found.checkinLog = details.checkinLog;
+        found.files = details.files || found.files;
+        found.filePaths = details.filePaths || found.filePaths;
+      }
 
       // Save asynchronously
       setTimeout(() => {

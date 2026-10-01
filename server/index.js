@@ -494,8 +494,8 @@ app.get('/api/cr/:id', async (req, res) => {
     return res.status(404).json({ ok: false, error: 'CR not found' });
   }
 
-  // If details not fetched yet or attachments not yet populated, fetch on-demand from Mantis
-  if (!found.detailsFetched || !Array.isArray(found.details?.attachments)) {
+  // If details not fetched yet, attachments not populated, or refresh requested, fetch on-demand from Mantis
+  if (!found.detailsFetched || !Array.isArray(found.details?.attachments) || req.query.refresh === 'true' || !found.filePaths?.length) {
     try {
       const { meta } = getLocalDatabase();
       const targetMantisUrl = req.query.mantisUrl || req.headers['x-mantis-url'] || meta?.mantisUrl || 'http://192.168.16.200';
