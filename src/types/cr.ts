@@ -8,6 +8,17 @@ export interface CheckinEntry {
   user?: string;
 }
 
+export interface AttachmentItem {
+  id: string;
+  filename: string;
+  size: string;
+  sizeBytes?: number;
+  date: string;
+  downloadUrl: string;
+  isImage: boolean;
+  extension: string;
+}
+
 export interface CRDetails {
   problem?: string;
   cause?: string;
@@ -18,6 +29,7 @@ export interface CRDetails {
   testProcedure?: string;
   priority?: string;
   issueReason?: string;
+  attachments?: AttachmentItem[];
 }
 
 export interface CRItem {

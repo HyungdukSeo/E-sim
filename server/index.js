@@ -494,10 +494,12 @@ app.get('/api/cr/:id', async (req, res) => {
     return res.status(404).json({ ok: false, error: 'CR not found' });
   }
 
-  // If details not fetched yet, fetch on-demand from Mantis
-  if (!found.detailsFetched) {
+  // If details not fetched yet or attachments not yet populated, fetch on-demand from Mantis
+  if (!found.detailsFetched || !Array.isArray(found.details?.attachments)) {
     try {
-      const details = await fetchCRPageDetails(found.id);
+      const { meta } = getLocalDatabase();
+      const targetMantisUrl = req.query.mantisUrl || req.headers['x-mantis-url'] || meta?.mantisUrl || 'http://192.168.16.200';
+      const details = await fetchCRPageDetails(found.id, targetMantisUrl);
       if (details) {
         found.details = details;
         found.detailsFetched = true;
@@ -526,6 +528,78 @@ app.get('/api/cr/:id', async (req, res) => {
     cr: found,
     similar
   });
+});
+
+// 6-1. View / Preview Attachment (Inline stream, no local saving)
+app.get('/api/attachment/view/:fileId', async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    let targetMantisUrl = req.query.mantisUrl || req.headers['x-mantis-url'];
+    if (!targetMantisUrl) {
+      const { meta } = getLocalDatabase();
+      targetMantisUrl = meta?.mantisUrl || 'http://192.168.16.200';
+    }
+
+    const downloadUrl = `${targetMantisUrl.replace(/\/$/, '')}/file_download.php?file_id=${fileId}&type=bug`;
+    const resp = await axios.get(downloadUrl, {
+      responseType: 'stream',
+      timeout: 20000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+      }
+    });
+
+    if (resp.headers['content-type']) {
+      res.setHeader('Content-Type', resp.headers['content-type']);
+    }
+    if (resp.headers['content-length']) {
+      res.setHeader('Content-Length', resp.headers['content-length']);
+    }
+    res.setHeader('Content-Disposition', 'inline');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+
+    resp.data.pipe(res);
+  } catch (err) {
+    console.error('[Attachment View Error]', err.message);
+    res.status(500).json({ ok: false, error: '첨부파일을 불러오지 못했습니다: ' + err.message });
+  }
+});
+
+// 6-2. Download Attachment (Stream as download, no local saving)
+app.get('/api/attachment/download/:fileId', async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    const filename = req.query.filename || `attachment_${fileId}`;
+    let targetMantisUrl = req.query.mantisUrl || req.headers['x-mantis-url'];
+    if (!targetMantisUrl) {
+      const { meta } = getLocalDatabase();
+      targetMantisUrl = meta?.mantisUrl || 'http://192.168.16.200';
+    }
+
+    const downloadUrl = `${targetMantisUrl.replace(/\/$/, '')}/file_download.php?file_id=${fileId}&type=bug`;
+    const resp = await axios.get(downloadUrl, {
+      responseType: 'stream',
+      timeout: 30000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+      }
+    });
+
+    if (resp.headers['content-type']) {
+      res.setHeader('Content-Type', resp.headers['content-type']);
+    }
+    if (resp.headers['content-length']) {
+      res.setHeader('Content-Length', resp.headers['content-length']);
+    }
+
+    const encodedFilename = encodeURIComponent(filename);
+    res.setHeader('Content-Disposition', `attachment; filename="${encodedFilename}"; filename*=UTF-8''${encodedFilename}`);
+
+    resp.data.pipe(res);
+  } catch (err) {
+    console.error('[Attachment Download Error]', err.message);
+    res.status(500).json({ ok: false, error: '첨부파일 다운로드에 실패했습니다: ' + err.message });
+  }
 });
 
 // Delete Single CR from local database and diff cache

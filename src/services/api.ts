@@ -173,9 +173,23 @@ export async function triggerSync(mantisUrl: string): Promise<{ meta: SyncMeta; 
   }
 }
 
-export async function fetchCRDetail(crid: string): Promise<{ cr: CRItem; similar: CRItem[] }> {
-  const resp = await axios.get(`${API_BASE}/cr/${crid}`);
+export async function fetchCRDetail(crid: string, mantisUrl?: string): Promise<{ cr: CRItem; similar: CRItem[] }> {
+  const url = mantisUrl ? `${API_BASE}/cr/${crid}?mantisUrl=${encodeURIComponent(mantisUrl)}` : `${API_BASE}/cr/${crid}`;
+  const resp = await axios.get(url);
   return resp.data;
+}
+
+export function getAttachmentViewUrl(fileId: string, mantisUrl?: string): string {
+  const query = mantisUrl ? `?mantisUrl=${encodeURIComponent(mantisUrl)}` : '';
+  return `${API_BASE}/attachment/view/${fileId}${query}`;
+}
+
+export function getAttachmentDownloadUrl(fileId: string, filename?: string, mantisUrl?: string): string {
+  const params = new URLSearchParams();
+  if (filename) params.set('filename', filename);
+  if (mantisUrl) params.set('mantisUrl', mantisUrl);
+  const qs = params.toString();
+  return `${API_BASE}/attachment/download/${fileId}${qs ? `?${qs}` : ''}`;
 }
 
 export async function fetchStats(): Promise<StatsData> {

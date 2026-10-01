@@ -21,7 +21,8 @@ import {
   AlertTriangle,
   Search,
   RotateCcw,
-  Trash2
+  Trash2,
+  Paperclip
 } from 'lucide-react';
 import { CRItem, SSHConfig, AppSettings } from '../types/cr';
 import { SimilarCRs } from './SimilarCRs';
@@ -81,9 +82,9 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
 
   useEffect(() => {
     setCurrentCR(cr);
-    if (cr && !cr.detailsFetched) {
+    if (cr && (!cr.detailsFetched || !Array.isArray(cr.details?.attachments))) {
       setLoadingDetails(true);
-      fetchCRDetail(cr.crid)
+      fetchCRDetail(cr.crid, mantisUrl)
         .then(res => {
           if (res && res.cr) {
             setCurrentCR(res.cr);
@@ -92,7 +93,7 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
         .catch(err => console.warn('Failed to fetch full CR details:', err))
         .finally(() => setLoadingDetails(false));
     }
-  }, [cr]);
+  }, [cr, mantisUrl]);
 
   // Check diff cache status for current CR
   useEffect(() => {
@@ -267,6 +268,12 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
           {crItem.details?.codeChanges && crItem.details.codeChanges !== '.' && (
             <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
               코드포함
+            </span>
+          )}
+          {crItem.details?.attachments && crItem.details.attachments.length > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] font-bold flex items-center gap-1">
+              <Paperclip className="w-2.5 h-2.5" />
+              첨부 {crItem.details.attachments.length}
             </span>
           )}
         </button>

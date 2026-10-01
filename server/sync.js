@@ -522,7 +522,61 @@ export function importDatabase(importedCrs) {
 }
 
 /**
- * Scrape full issue details (problem, cause, fix, codeChanges, dbChanges, testProcedure) from view.php?id=...
+/**
+ * Parse attachments list from Mantis HTML view page
+ */
+export function parseAttachmentsFromMantisHtml(html) {
+  const attachments = [];
+  if (!html) return attachments;
+
+  const rowMatch = html.match(/<td[^>]*class=["\x27]category["\x27][^>]*>[\s\S]*?(?:첨부\s*파일|Attached\s*Files)[\s\S]*?<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i);
+  if (!rowMatch) return attachments;
+
+  const cellHtml = rowMatch[1];
+  const itemRegex = /<a[^>]+href=["\x27]file_download\.php\?file_id=(\d+)[^"\x27]*["\x27][^>]*>([^<]+)<\/a>\s*(?:\[[^\]]*\])?(?:\s*\(([\d,]+)\s*bytes\))?(?:[\s\S]*?(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}))?/gi;
+
+  let m;
+  const seen = new Set();
+  while ((m = itemRegex.exec(cellHtml)) !== null) {
+    const fileId = m[1];
+    let filename = m[2].trim();
+    if (!filename || filename === '^' || filename === '&nbsp;' || seen.has(fileId)) continue;
+    seen.add(fileId);
+
+    filename = filename.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+    const rawBytes = m[3] ? parseInt(m[3].replace(/,/g, ''), 10) : undefined;
+    let formattedSize = m[3] ? m[3] + ' bytes' : '';
+    if (rawBytes !== undefined) {
+      if (rawBytes >= 1024 * 1024) {
+        formattedSize = (rawBytes / (1024 * 1024)).toFixed(1) + ' MB';
+      } else if (rawBytes >= 1024) {
+        formattedSize = (rawBytes / 1024).toFixed(1) + ' KB';
+      } else {
+        formattedSize = rawBytes + ' B';
+      }
+    }
+
+    const date = (m[4] || '').trim();
+    const ext = filename.includes('.') ? filename.split('.').pop().toLowerCase() : '';
+    const isImage = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg'].includes(ext);
+
+    attachments.push({
+      id: fileId,
+      filename,
+      size: formattedSize,
+      sizeBytes: rawBytes,
+      date,
+      downloadUrl: `file_download.php?file_id=${fileId}&type=bug`,
+      isImage,
+      extension: ext
+    });
+  }
+
+  return attachments;
+}
+
+/**
+ * Scrape full issue details (problem, cause, fix, codeChanges, dbChanges, testProcedure, attachments) from view.php?id=...
  */
 export async function fetchCRPageDetails(bugId, mantisUrl = 'http://192.168.16.200') {
   const numericId = parseInt(bugId, 10);
@@ -550,6 +604,8 @@ export async function fetchCRPageDetails(bugId, mantisUrl = 'http://192.168.16.2
       fields[cat] = val;
     }
 
+    const attachments = parseAttachmentsFromMantisHtml(html);
+
     const details = {
       problem: fields['#1.문제점/요구사항'] || '',
       cause: fields['원인분석'] || '',
@@ -559,7 +615,8 @@ export async function fetchCRPageDetails(bugId, mantisUrl = 'http://192.168.16.2
       blocks: fields['변경 Library 및 Block'] || fields['패치대상블록'] || '',
       testProcedure: fields['시험검증절차'] || '',
       priority: fields['우선순위'] || '',
-      issueReason: fields['#2.발행이유'] || ''
+      issueReason: fields['#2.발행이유'] || '',
+      attachments
     };
 
     // Update in-memory and persist to DB file asynchronously
