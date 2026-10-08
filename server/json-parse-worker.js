@@ -16,9 +16,6 @@ function processNext() {
   } catch (err) {
     parentPort.postMessage({ id, ok: false, error: err.message });
   } finally {
-    if (global.gc) {
-      try { global.gc(); } catch (_) {}
-    }
     isProcessing = false;
     setImmediate(processNext);
   }

@@ -8,8 +8,8 @@ if (!process.env.UV_THREADPOOL_SIZE) {
 }
 
 const { app, BrowserWindow, Tray, Menu, Notification, shell, nativeImage } = require('electron');
-// Limit V8 heap limit & trigger GC before memory runs into OS swap
-app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096 --expose-gc');
+// Expand V8 heap limit to 4GB so large diff caches can be parsed without OOM
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
