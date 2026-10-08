@@ -875,6 +875,26 @@ export function extractVobFromPath(filePath) {
 }
 
 /**
+ * Extract only the checkinLog lines relevant to a specific file path.
+ * Prevents duplicating the entire hundreds-of-KB CR checkinLog for every single
+ * file entry in getVobHistory, which causes RangeError: Invalid string length
+ * when JSON.stringify produces hundreds of MBs of redundant text.
+ */
+export function extractFileCheckinLog(fullLog, filePath) {
+  if (!fullLog || !filePath) return '';
+  const baseFileName = filePath.split('/').pop() || filePath;
+  const cleanReqPath = filePath.replace(/(_|@@)\/.*$/, '');
+  const lines = fullLog.split(/\r?\n/);
+  const matched = [];
+  for (const l of lines) {
+    if (l.includes(cleanReqPath) || (l.includes(baseFileName) && l.includes('/'))) {
+      matched.push(l.trim());
+    }
+  }
+  return matched.length > 0 ? matched.join('\n') : '';
+}
+
+/**
  * For one file path, scan every CR's checkinLog to find which CR produced which
  * ClearCase version number. Unlike server/ssh.js's single-diff version parser
  * (which only needs ONE version per CR and stops at the first matching line),
@@ -1040,7 +1060,7 @@ export async function getVobHistory(vobName, allCrs) {
         newVersion: f.newVersion,
         unifiedDiff: f.unifiedDiff,
         fetchedAt: f.fetchedAt,
-        checkinLog: cr.checkinLog || ''
+        checkinLog: extractFileCheckinLog(cr.checkinLog, f.filePath)
       });
     }
 
@@ -1087,7 +1107,7 @@ export async function getVobHistory(vobName, allCrs) {
         newVersion: '',
         unifiedDiff: '',
         fetchedAt: null,
-        checkinLog: cr.checkinLog || ''
+        checkinLog: extractFileCheckinLog(cr.checkinLog, fp)
       });
     }
 

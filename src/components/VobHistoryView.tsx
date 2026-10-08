@@ -841,13 +841,22 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
             partiallyCachedCrids: res.partiallyCachedCrids || [],
             entries: res.entries
           });
+        } else {
+          setHistory(null);
+          setCollectMessage(`이력 로딩 실패: ${(res as any).error || '서버 응답 오류'}`);
         }
+      })
+      .catch(err => {
+        console.error('Failed to load VOB history:', err);
+        setHistory(null);
+        setCollectMessage(`이력 로딩 실패: ${err.response?.data?.error || err.message || '서버 오류'}`);
       })
       .finally(() => setLoadingHistory(false));
   };
 
   const handleSelectVob = (vob: string) => {
     setSelectedVob(vob);
+    setHistory(null);
     loadHistory(vob);
   };
 

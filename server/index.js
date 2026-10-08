@@ -943,6 +943,7 @@ app.get('/api/diff-cache/vobs/:vob/history', async (req, res) => {
     const history = await getVobHistory(req.params.vob, crs);
     res.json({ ok: true, ...history });
   } catch (err) {
+    console.error(`[VobHistory Error: ${req.params.vob}]`, err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
