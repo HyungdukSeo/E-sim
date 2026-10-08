@@ -110,8 +110,10 @@ import {
   fetchFileVersionsSSH,
   VobListItem,
   VobHistoryEntry,
+  VobRelatedCR,
   FileVersionChainItem
 } from '../services/api';
+import { VobRelatedCrsModal } from './VobRelatedCrsModal';
 import { SSHConfig } from '../types/cr';
 
 function downloadTextFile(filename: string, content: string) {
@@ -804,8 +806,10 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
     cachedCrs: number;
     uncachedCrids: string[];
     partiallyCachedCrids: string[];
+    relatedCrs?: VobRelatedCR[];
     entries: VobHistoryEntry[];
   } | null>(null);
+  const [isRelatedCrsOpen, setIsRelatedCrsOpen] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [fileQuery, setFileQuery] = useState('');
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
@@ -840,6 +844,7 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
             cachedCrs: res.cachedCrs,
             uncachedCrids: res.uncachedCrids,
             partiallyCachedCrids: res.partiallyCachedCrids || [],
+            relatedCrs: res.relatedCrs || [],
             entries: res.entries
           });
         } else {
@@ -945,9 +950,17 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
 
               {history && (
                 <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                  <span className="px-2 py-0.5 rounded-md bg-mantis-500/15 border border-mantis-500/30 text-mantis-400 font-mono">
-                    관련 CR {history.totalCrs.toLocaleString()}건
-                  </span>
+                  <button
+                    onClick={() => setIsRelatedCrsOpen(true)}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-mantis-500/15 hover:bg-mantis-500/25 border border-mantis-500/30 hover:border-mantis-500/50 text-mantis-400 font-mono font-semibold transition-all cursor-pointer group shadow-sm hover:scale-[1.02]"
+                    title="이 VOB와 관련된 전체 CR 카드 목록 팝업 열기"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-mantis-400 group-hover:scale-110 transition-transform" />
+                    <span>관련 CR {history.totalCrs.toLocaleString()}건</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-mantis-500/25 text-mantis-300 font-sans font-medium flex items-center gap-0.5">
+                      목록 보기 ↗
+                    </span>
+                  </button>
                   <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-mono">
                     수집됨 {history.cachedCrs.toLocaleString()}건
                   </span>
@@ -1214,6 +1227,17 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
           </>
         )}
       </div>
+
+      {/* VOB Related CRs Modal Popup */}
+      {selectedVob && history && (
+        <VobRelatedCrsModal
+          isOpen={isRelatedCrsOpen}
+          onClose={() => setIsRelatedCrsOpen(false)}
+          vobName={selectedVob}
+          relatedCrs={history.relatedCrs || []}
+          onSelectCR={onSelectCR}
+        />
+      )}
     </div>
   );
 };

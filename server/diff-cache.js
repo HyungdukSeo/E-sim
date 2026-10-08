@@ -1251,12 +1251,41 @@ export async function getVobHistory(vobName, allCrs) {
     return tb - ta;
   });
 
+  const uncachedSet = new Set(uncachedCrids);
+  const partialSet = new Set(partiallyCachedCrids);
+
+  const relatedCrs = matchingCrs.map(cr => {
+    const vobFiles = (cr.filePaths || []).filter(fp => extractVobFromPath(fp) === vobName && !isDirectoryElement(fp));
+    return {
+      crid: cr.crid,
+      id: cr.id,
+      summary: cr.cleanSummary || cr.summary || '',
+      customer: cr.customer || '',
+      module: cr.module || '',
+      reporter: cr.reporter || '',
+      dateSubmitted: cr.dateSubmitted || '',
+      lastUpdated: cr.lastUpdated || '',
+      status: cr.status || '',
+      fileCount: vobFiles.length,
+      totalFiles: (cr.filePaths || []).length,
+      isCached: !uncachedSet.has(cr.crid),
+      isPartial: partialSet.has(cr.crid)
+    };
+  });
+
+  relatedCrs.sort((a, b) => {
+    const ta = new Date(a.dateSubmitted || a.lastUpdated || 0).getTime() || 0;
+    const tb = new Date(b.dateSubmitted || b.lastUpdated || 0).getTime() || 0;
+    return tb - ta;
+  });
+
   return {
     vob: vobName,
     totalCrs: matchingCrs.length,
     cachedCrs: matchingCrs.length - uncachedCrids.length,
     uncachedCrids,
     partiallyCachedCrids: Array.from(new Set(partiallyCachedCrids)),
+    relatedCrs,
     entries
   };
 }
@@ -1617,14 +1646,18 @@ class BackgroundDiffIndexer {
     // startup essentially every cached CR is in that "not yet read" state,
     // so treating undefined as "incomplete" made the progress bar show
     // 0/N right after a fresh install even though most CRs were already
-    // fully cached. Since the cache file EXISTING is still real signal
-    // (the CR was collected at some point), count it as done by default
-    // and only flag it incomplete once fileCount has actually been read
-    // and found to fall short — under-collected CRs still surface
-    // correctly as soon as anything reads them (VOB history, CR detail,
-    // etc.), just not instantly at cold boot.
+    // Exclude CRs that are actively being indexed or waiting in the priority queue
+    const activeAndQueued = new Set([
+      ...Array.from(this.activeCrids),
+      ...this.priorityQueue.map(item => (typeof item === 'object' ? item.crid : item))
+    ]);
+
     let cachedTargetCRs = 0;
     for (const cr of crsWithFiles) {
+      // If this CR is currently active or queued for (re)indexing, it is NOT complete yet!
+      if (activeAndQueued.has(cr.crid)) {
+        continue;
+      }
       if (this.completedCrids.has(cr.crid)) {
         cachedTargetCRs++;
         continue;
@@ -1640,6 +1673,7 @@ class BackgroundDiffIndexer {
       cachedTargetCRs++;
     }
 
+    const remainingCount = Math.max(0, totalTargetCount - cachedTargetCRs);
     const progressPercent = Math.min(100, (cachedTargetCRs / totalTargetCount) * 100);
     const activeList = Array.from(this.activeCrids);
 
@@ -1654,6 +1688,10 @@ class BackgroundDiffIndexer {
       totalCRs: allCrs.length,
       targetCRsWithFiles: crsWithFiles.length,
       cachedCRs: cachedTargetCRs,
+      remainingCRs: remainingCount,
+      priorityQueueCount: this.priorityQueue.length,
+      activeCount: this.activeCrids.size,
+      pendingCount: activeAndQueued.size,
       totalFiles: stats.totalFiles,
       totalSizeBytes: stats.totalSizeBytes,
       totalSizeFormatted: stats.totalSizeFormatted,

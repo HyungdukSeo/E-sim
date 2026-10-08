@@ -310,6 +310,22 @@ export async function fetchVobList(): Promise<{ ok: boolean; vobs: VobListItem[]
   return resp.data;
 }
 
+export interface VobRelatedCR {
+  crid: string;
+  id?: number;
+  summary: string;
+  customer: string;
+  module: string;
+  reporter: string;
+  dateSubmitted: string;
+  lastUpdated: string;
+  status: string;
+  fileCount: number;
+  totalFiles: number;
+  isCached: boolean;
+  isPartial: boolean;
+}
+
 export async function fetchVobHistory(vob: string): Promise<{
   ok: boolean;
   vob: string;
@@ -317,6 +333,7 @@ export async function fetchVobHistory(vob: string): Promise<{
   cachedCrs: number;
   uncachedCrids: string[];
   partiallyCachedCrids: string[];
+  relatedCrs?: VobRelatedCR[];
   entries: VobHistoryEntry[];
 }> {
   const resp = await axios.get(`${API_BASE}/diff-cache/vobs/${encodeURIComponent(vob)}/history`);
@@ -474,6 +491,10 @@ export interface DiffWorkerStatus {
   totalCRs: number;
   targetCRsWithFiles: number;
   cachedCRs: number;
+  remainingCRs?: number;
+  priorityQueueCount?: number;
+  activeCount?: number;
+  pendingCount?: number;
   totalFiles: number;
   totalSizeBytes: number;
   totalSizeFormatted: string;

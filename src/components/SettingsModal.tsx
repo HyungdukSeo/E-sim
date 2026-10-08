@@ -1416,7 +1416,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div className="p-2 rounded-xl bg-slate-900/60 dark:bg-slate-950/70 border border-slate-300 dark:border-slate-800/80 shadow-sm">
                 <div className="text-[10px] text-neutral-600 dark:text-slate-400 font-semibold">남은 대상</div>
                 <div className="text-xs font-bold text-amber-700 dark:text-amber-300 mt-0.5">
-                  {workerStatus ? `${Math.max(0, (workerStatus.targetCRsWithFiles || workerStatus.totalCRs) - workerStatus.cachedCRs)}개 남음` : '-'}
+                  {workerStatus ? (
+                    <div>
+                      <span>
+                        {Math.max(0, (workerStatus.targetCRsWithFiles || workerStatus.totalCRs) - workerStatus.cachedCRs)}개 남음
+                      </span>
+                      {((workerStatus.priorityQueueCount ?? 0) > 0 || (workerStatus.activeWorkers ?? 0) > 0) && (
+                        <div className="text-[9px] text-amber-400/90 font-normal mt-0.5 font-sans">
+                          {(workerStatus.priorityQueueCount ?? 0) > 0 ? `대기 ${workerStatus.priorityQueueCount}개 ` : ''}
+                          {(workerStatus.activeWorkers ?? 0) > 0 ? `(진행 ${workerStatus.activeWorkers}개)` : ''}
+                        </div>
+                      )}
+                    </div>
+                  ) : '-'}
                 </div>
               </div>
             </div>
