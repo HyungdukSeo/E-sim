@@ -1178,9 +1178,14 @@ export async function auditAndCollectVob(vobName, requestedCrids = [], mantisUrl
   let dbChanged = false;
   const queuedCrids = new Set((requestedCrids || []).filter(Boolean));
 
-  // 1. Identify all CRs that touch this VOB or mention this VOB in checkinLog
+  const hasSpecificRequests = Array.isArray(requestedCrids) && requestedCrids.length > 0;
+  const targetCridSet = new Set((requestedCrids || []).map(String));
+
+  // 1. Identify CRs to audit (restrict strictly to requestedCrids if specified)
   const candidateCrs = (crs || []).filter(cr => {
-    if (requestedCrids.includes(cr.crid) || requestedCrids.includes(String(cr.id))) return true;
+    if (hasSpecificRequests) {
+      return targetCridSet.has(String(cr.crid)) || targetCridSet.has(String(cr.id));
+    }
     if ((cr.filePaths || []).some(fp => extractVobFromPath(fp) === vobName)) return true;
     if (cr.checkinLog && (cr.checkinLog.includes(vobName) || cr.checkinLog.includes('/vobs/'))) return true;
     if (cr.vob && cr.vob.includes(vobName)) return true;
