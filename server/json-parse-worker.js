@@ -10,6 +10,9 @@ function processNext() {
   const { id, filePath } = queue.shift();
   try {
     const stat = fs.statSync(filePath);
+    if (stat.size > 50 * 1024 * 1024) {
+      throw new Error(`Cache file exceeds 50MB limit (${(stat.size / 1024 / 1024).toFixed(1)}MB)`);
+    }
     const content = fs.readFileSync(filePath, 'utf8');
     const parsed = JSON.parse(content);
     parentPort.postMessage({ id, ok: true, parsed, sizeBytes: stat.size });

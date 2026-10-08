@@ -6,6 +6,7 @@ import { Worker } from 'worker_threads';
 import { fetchFileDiffSSH, findCheckinLogEntry } from './ssh.js';
 import { sshPool } from './ssh-pool.js';
 import { DATA_DIR, ROOT_DIR } from './paths.js';
+import { toLiteCache, getLiteMetaPath } from './cache-lite.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -23,7 +24,7 @@ const pendingWorkerRequests = new Map();
 function getJsonParseWorker() {
   if (jsonParseWorker) return jsonParseWorker;
   jsonParseWorker = new Worker(path.join(__dirname, 'json-parse-worker.js'), {
-    execArgv: [],
+    execArgv: ['--max-old-space-size=4096'],
     resourceLimits: { maxOldSpaceSizeMb: 4096 }
   });
   jsonParseWorker.on('message', (msg) => {
@@ -105,7 +106,7 @@ const pendingStringifyRequests = new Map();
 function getJsonStringifyWorker() {
   if (jsonStringifyWorker) return jsonStringifyWorker;
   jsonStringifyWorker = new Worker(path.join(__dirname, 'json-stringify-worker.js'), {
-    execArgv: [],
+    execArgv: ['--max-old-space-size=4096'],
     resourceLimits: { maxOldSpaceSizeMb: 4096 }
   });
   jsonStringifyWorker.on('message', (msg) => {
@@ -414,6 +415,53 @@ export async function getCRDiffCacheAsync(crid) {
 }
 
 /**
+ * Ultra-fast, lightweight read of CR diff cache: returns file metadata and status
+ * with unifiedDiff stripped. Reads from the dedicated _meta/<crid>.json sidecar
+ * (<20KB, 0ms latency, zero worker overhead).
+ * Used by VOB History, audit sweeps, and cache reconciliation where diff text is not needed.
+ */
+export async function getCRDiffCacheLiteAsync(crid) {
+  if (!isIndexInitialized) initCacheIndex();
+  const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+
+  const metaDir = path.join(DIFF_CACHE_DIR, '_meta');
+  const metaFilePath = path.join(metaDir, `${safeId}.json`);
+
+  // 1. Try reading sidecar first (<20KB, 0ms, zero worker overhead)
+  try {
+    const content = await fs.promises.readFile(metaFilePath, 'utf8');
+    const parsed = JSON.parse(content);
+    if (parsed && Array.isArray(parsed.files)) {
+      parsed.files = filterOutDirectoryEntries(parsed.files);
+    }
+    return parsed;
+  } catch (_) {}
+
+  // Check fallback root dir for sidecar
+  if (ROOT_DIR) {
+    const fallbackMeta = path.join(ROOT_DIR, 'data', 'diff_cache', '_meta', `${safeId}.json`);
+    try {
+      const content = await fs.promises.readFile(fallbackMeta, 'utf8');
+      const parsed = JSON.parse(content);
+      if (parsed && Array.isArray(parsed.files)) {
+        parsed.files = filterOutDirectoryEntries(parsed.files);
+      }
+      return parsed;
+    } catch (_) {}
+  }
+
+  // 2. Fallback: read full cache, create sidecar for future queries, and return lite view
+  const fullCache = await getCRDiffCacheAsync(crid);
+  if (!fullCache) return null;
+  const lite = toLiteCache(fullCache);
+  try {
+    if (!fs.existsSync(metaDir)) fs.mkdirSync(metaDir, { recursive: true });
+    await fs.promises.writeFile(metaFilePath, JSON.stringify(lite), 'utf8');
+  } catch (_) {}
+  return lite;
+}
+
+/**
  * Save diffs for a CR to local disk (Asynchronous write + In-Memory Index update)
  */
 export function saveCRDiffCache(crid, diffData) {
@@ -430,6 +478,15 @@ export function saveCRDiffCache(crid, diffData) {
     fs.writeFile(filePath, jsonStr, 'utf8', (err) => {
       if (err) console.error(`[DiffCache] Async write error for CR #${crid}:`, err.message);
     });
+
+    // Also save lightweight metadata sidecar
+    try {
+      const metaDir = path.join(DIFF_CACHE_DIR, '_meta');
+      if (!fs.existsSync(metaDir)) fs.mkdirSync(metaDir, { recursive: true });
+      const metaFilePath = path.join(metaDir, `${safeId}.json`);
+      const liteData = toLiteCache(diffData);
+      fs.writeFile(metaFilePath, JSON.stringify(liteData), 'utf8', () => {});
+    } catch (_) {}
 
     // Immediate in-memory index update (0ms availability for all subsequent queries)
     const existing = cacheIndex.get(safeId);
@@ -481,6 +538,15 @@ export async function saveCRDiffCacheAsync(crid, diffData) {
       await fs.promises.writeFile(filePath, jsonStr, 'utf8');
     }
 
+    // Also save lightweight metadata sidecar
+    try {
+      const metaDir = path.join(DIFF_CACHE_DIR, '_meta');
+      if (!fs.existsSync(metaDir)) fs.mkdirSync(metaDir, { recursive: true });
+      const metaFilePath = path.join(metaDir, `${safeId}.json`);
+      const liteData = toLiteCache(diffData);
+      await fs.promises.writeFile(metaFilePath, JSON.stringify(liteData), 'utf8');
+    } catch (_) {}
+
     const existing = cacheIndex.get(safeId);
     if (existing) {
       totalCachedBytes -= (existing.sizeBytes || 0);
@@ -517,10 +583,12 @@ export function deleteCRDiffCache(crid) {
   let anyDeleted = false;
   for (const id of idVariants) {
     const candidatePaths = [
-      path.join(DIFF_CACHE_DIR, `${id}.json`)
+      path.join(DIFF_CACHE_DIR, `${id}.json`),
+      path.join(DIFF_CACHE_DIR, '_meta', `${id}.json`)
     ];
     if (ROOT_DIR) {
       candidatePaths.push(path.join(ROOT_DIR, 'data', 'diff_cache', `${id}.json`));
+      candidatePaths.push(path.join(ROOT_DIR, 'data', 'diff_cache', '_meta', `${id}.json`));
     }
 
     for (const filePath of candidatePaths) {
@@ -776,8 +844,8 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
         continue;
       }
       let uDiff = diffRes.unifiedDiff || '';
-      if (uDiff.length > 2 * 1024 * 1024) {
-        uDiff = uDiff.slice(0, 2 * 1024 * 1024) + '\n\n... [Diff truncated: file exceeds 2MB limit to preserve system memory] ...';
+      if (uDiff.length > 256 * 1024) {
+        uDiff = uDiff.slice(0, 256 * 1024) + '\n\n... [Diff truncated: file exceeds 256KB limit to preserve system memory] ...';
       }
       const existingIdx = results.findIndex(r => r.filePath === filePath || (r.fileName === fileName && r.filePath.endsWith('/' + fileName)));
       const newEntry = {
@@ -1029,7 +1097,7 @@ export async function getVobHistory(vobName, allCrs) {
   const readResults = [];
   for (let i = 0; i < toRead.length; i += READ_BATCH_SIZE) {
     const batch = toRead.slice(i, i + READ_BATCH_SIZE);
-    const batchResults = await Promise.all(batch.map(cr => getCRDiffCacheAsync(cr.crid)));
+    const batchResults = await Promise.all(batch.map(cr => getCRDiffCacheLiteAsync(cr.crid)));
     readResults.push(...batchResults);
   }
 
@@ -1267,7 +1335,7 @@ export async function auditAndCollectVob(vobName, requestedCrids = [], mantisUrl
     if (!hasCRDiffCache(cr.crid)) {
       queuedCrids.add(cr.crid);
     } else {
-      const cached = await getCRDiffCacheAsync(cr.crid);
+      const cached = await getCRDiffCacheLiteAsync(cr.crid);
       if (!cached || !Array.isArray(cached.files)) {
         queuedCrids.add(cr.crid);
       } else {
