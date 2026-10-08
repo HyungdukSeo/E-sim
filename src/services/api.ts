@@ -480,6 +480,13 @@ export interface DiffTaskProgress {
   updatedAt?: number;
 }
 
+export interface DiffQueuedTask {
+  crid: string;
+  summary?: string;
+  totalFiles?: number;
+  status: 'queued' | 'pending';
+}
+
 export interface DiffWorkerStatus {
   enabled: boolean;
   status: 'idle' | 'running' | 'paused' | 'waiting_ssh' | 'completed';
@@ -487,6 +494,8 @@ export interface DiffWorkerStatus {
   activeWorkers?: number;
   activeCrids?: string[];
   activeTasks?: DiffTaskProgress[];
+  queuedTasks?: DiffQueuedTask[];
+  queuedTotalCount?: number;
   currentCrid: string | null;
   totalCRs: number;
   targetCRsWithFiles: number;

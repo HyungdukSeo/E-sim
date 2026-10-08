@@ -35,6 +35,7 @@ function getCacheKey(host, filePath, prevVer, currVer) {
 const vobServerAffinity = new Map(); // vobKey -> host
 const serverMissingVobCache = new Map(); // `${host}:${vobKey}` -> timestamp (TTL: 10 mins)
 const MISSING_VOB_TTL_MS = 10 * 60 * 1000;
+const startedViewsOnHost = new Set(); // `${host}:${view}` -> active in current session
 
 export function extractVobKey(filePath) {
   if (!filePath) return '';
@@ -779,40 +780,42 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '', options 
     handle1 = await sshPool.acquire(config, { priority, timeout: 15000 });
     const conn = handle1.conn;
 
-    // Fast Pre-Flight Check (< 2s): Verify if file, directory or VOB is present on this server
-    // Note: Remote user login shell may be csh/tcsh, so commands must NOT contain raw unescaped newlines.
-    const vobTags = getVobTags(vobSubPath);
-    const primaryVobTag = vobTags[0] || '/vobs';
-    const parentDir = path.posix.dirname(vobSubPath);
-
-    const startViewParts = uniqueViews.map(v => `cleartool startview "${v}" 2>/dev/null || true`).join('; ');
-    const checkViewParts = uniqueViews.map(v => `if [ -e "/view/${v}${vobSubPath}" ] || [ -f "/view/${v}${vobSubPath}" ]; then echo "FOUND_VIEW:${v}"; exit 0; elif [ -d "/view/${v}${parentDir}" ] || [ -d "/view/${v}${primaryVobTag}" ]; then echo "FOUND_VIEW_DIR:${v}"; exit 0; fi`).join('; ');
-    const lsvobParts = vobTags.map(tag => `if cleartool lsvob "${tag}" 2>/dev/null | grep -q "${tag}"; then cleartool mount "${tag}" 2>/dev/null || true; echo "LSVOB_FOUND:${tag}"; exit 0; fi`).join('; ');
-
-    const probeCmd = `/bin/sh -c 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH; ${startViewParts}; ${checkViewParts}; if [ -e "${vobSubPath}" ] || [ -f "${vobSubPath}" ]; then echo "FOUND_DIRECT"; exit 0; fi; ${lsvobParts}; echo "NOT_FOUND_ON_SERVER"; exit 2'`;
-
-    let probeOutput = '';
-    try {
-      const { buffer } = await execSSHBuffer(conn, probeCmd, 2500);
-      probeOutput = buffer.toString('utf8').trim();
-    } catch (e) {}
-
-    if (probeOutput.includes('NOT_FOUND_ON_SERVER')) {
-      throw new Error(`VOB(${primaryVobTag}) 또는 파일이 서버(${config.host})에 존재하지 않습니다.`);
-    }
-
-    // Prioritize discovered view if found
+    // Fast Pre-Flight Check: Verify if file, directory or VOB is present on this server
+    // Once verified in this session, bypass the heavy 2.5s probeCmd and startview to maximize throughput.
+    const viewCacheKey = `${config.host}:${targetView}`;
     let effectiveViews = [...uniqueViews];
-    const matchFoundView = probeOutput.match(/FOUND_VIEW(?:_DIR)?:([a-zA-Z0-9_\-\.]+)/);
-    if (matchFoundView && matchFoundView[1]) {
-      const preferred = matchFoundView[1];
-      effectiveViews = [preferred, ...uniqueViews.filter(v => v !== preferred)];
+
+    if (!startedViewsOnHost.has(viewCacheKey)) {
+      const vobTags = getVobTags(vobSubPath);
+      const primaryVobTag = vobTags[0] || '/vobs';
+      const parentDir = path.posix.dirname(vobSubPath);
+
+      const startViewParts = uniqueViews.map(v => `cleartool startview "${v}" 2>/dev/null || true`).join('; ');
+      const checkViewParts = uniqueViews.map(v => `if [ -e "/view/${v}${vobSubPath}" ] || [ -f "/view/${v}${vobSubPath}" ]; then echo "FOUND_VIEW:${v}"; exit 0; elif [ -d "/view/${v}${parentDir}" ] || [ -d "/view/${v}${primaryVobTag}" ]; then echo "FOUND_VIEW_DIR:${v}"; exit 0; fi`).join('; ');
+      const lsvobParts = vobTags.map(tag => `if cleartool lsvob "${tag}" 2>/dev/null | grep -q "${tag}"; then cleartool mount "${tag}" 2>/dev/null || true; echo "LSVOB_FOUND:${tag}"; exit 0; fi`).join('; ');
+
+      const probeCmd = `/bin/sh -c 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH; ${startViewParts}; ${checkViewParts}; if [ -e "${vobSubPath}" ] || [ -f "${vobSubPath}" ]; then echo "FOUND_DIRECT"; exit 0; fi; ${lsvobParts}; echo "NOT_FOUND_ON_SERVER"; exit 2'`;
+
+      let probeOutput = '';
+      try {
+        const { buffer } = await execSSHBuffer(conn, probeCmd, 2500);
+        probeOutput = buffer.toString('utf8').trim();
+      } catch (e) {}
+
+      if (probeOutput.includes('NOT_FOUND_ON_SERVER')) {
+        throw new Error(`VOB(${primaryVobTag}) 또는 파일이 서버(${config.host})에 존재하지 않습니다.`);
+      }
+
+      const matchFoundView = probeOutput.match(/FOUND_VIEW(?:_DIR)?:([a-zA-Z0-9_\-\.]+)/);
+      if (matchFoundView && matchFoundView[1]) {
+        const preferred = matchFoundView[1];
+        effectiveViews = [preferred, ...uniqueViews.filter(v => v !== preferred)];
+      }
+
+      // Ensure primary view is started in /bin/sh
+      await execSSHBuffer(conn, `/bin/sh -c 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH; cleartool startview "${effectiveViews[0]}" 2>/dev/null || true'`, 2500);
+      startedViewsOnHost.add(viewCacheKey);
     }
-
-    console.log(`[SSH Diff] Fetching ${vobSubPath} (${prevSuffix} <-> ${currSuffix}) for views:`, effectiveViews);
-
-    // Ensure primary view is started in /bin/sh
-    await execSSHBuffer(conn, `/bin/sh -c 'export PATH=/usr/atria/bin:/opt/rational/clearcase/bin:$PATH; cleartool startview "${effectiveViews[0]}" 2>/dev/null || true'`, 2500);
 
     // 2. Fetch current and previous versions in parallel over single multiplexed SSH connection.
     // SSH2 connections natively support multiplexed parallel exec channels over a single socket,
@@ -844,6 +847,7 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '', options 
 
     // 4. Check if file was completely unfound
     if (!oldText && !newText) {
+      startedViewsOnHost.delete(`${config.host}:${targetView}`);
       throw new Error(
         `SSH 서버(${config.host}) 연결은 성공했으나, ClearCase 소스 파일(${vobSubPath}${currSuffix})을 읽지 못했습니다.\n` +
         `시도한 View: [${uniqueViews.join(', ')}]\n` +

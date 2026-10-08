@@ -1673,6 +1673,21 @@ class BackgroundDiffIndexer {
       cachedTargetCRs++;
     }
 
+    // Pending queued items that have not yet been assigned to a worker
+    const queuedCrids = this.priorityQueue
+      .map(item => (typeof item === 'object' ? item.crid : item))
+      .filter(crid => !this.activeCrids.has(crid));
+
+    const queuedTasks = queuedCrids.slice(0, 30).map(crid => {
+      const cr = (allCrs || []).find(c => String(c.crid) === String(crid) || String(c.id) === String(crid));
+      return {
+        crid,
+        summary: cr?.cleanSummary || cr?.summary || '',
+        totalFiles: cr?.files?.length || cr?.filePaths?.length || 0,
+        status: 'queued'
+      };
+    });
+
     const remainingCount = Math.max(0, totalTargetCount - cachedTargetCRs);
     const progressPercent = Math.min(100, (cachedTargetCRs / totalTargetCount) * 100);
     const activeList = Array.from(this.activeCrids);
@@ -1684,6 +1699,8 @@ class BackgroundDiffIndexer {
       activeWorkers: this.activeWorkers,
       activeCrids: activeList,
       activeTasks: Array.from(this.activeTasks.values()),
+      queuedTasks,
+      queuedTotalCount: queuedCrids.length,
       currentCrid: activeList.length > 0 ? activeList.join(', ') : null,
       totalCRs: allCrs.length,
       targetCRsWithFiles: crsWithFiles.length,

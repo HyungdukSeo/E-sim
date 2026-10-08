@@ -1441,9 +1441,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   실시간 수집 진행 현황
                   {workerStatus?.activeTasks && workerStatus.activeTasks.length > 0 && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-mono font-bold">
-                      {workerStatus.activeTasks.length}개 워커 가동 중
+                      {workerStatus.activeTasks.length}개 가동 중
                     </span>
                   )}
+                  {workerStatus?.queuedTotalCount && workerStatus.queuedTotalCount > 0 ? (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono font-medium">
+                      {workerStatus.queuedTotalCount}개 대기 중
+                    </span>
+                  ) : null}
                 </span>
                 {workerStatus?.status === 'running' && (
                   <span className="text-[11px] text-emerald-400 flex items-center gap-1 font-mono">
@@ -1453,9 +1458,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 )}
               </div>
 
-              {workerStatus?.activeTasks && workerStatus.activeTasks.length > 0 ? (
-                <div className="space-y-1.5 max-h-[180px] overflow-y-auto pr-1 scrollbar-thin">
-                  {workerStatus.activeTasks.map(task => {
+              {((workerStatus?.activeTasks && workerStatus.activeTasks.length > 0) || (workerStatus?.queuedTasks && workerStatus.queuedTasks.length > 0)) ? (
+                <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1 scrollbar-thin">
+                  {/* 1. Actively running tasks */}
+                  {workerStatus?.activeTasks?.map(task => {
                     const filePct = task.totalFiles > 0 
                       ? Math.min(100, Math.round((task.fileIndex / task.totalFiles) * 100))
                       : 0;
@@ -1485,6 +1491,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       </div>
                     );
                   })}
+
+                  {/* 2. Inactive Queued tasks (Waiting for worker assignment) */}
+                  {workerStatus?.queuedTasks?.map(task => (
+                    <div
+                      key={`queued-${task.crid}`}
+                      className="p-2.5 rounded-xl bg-slate-950/40 border border-dashed border-slate-800/80 opacity-60 flex flex-col gap-1.5 text-xs select-none"
+                    >
+                      <div className="flex items-center justify-between gap-2 font-mono">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-slate-400 font-bold shrink-0">CR #{task.crid}</span>
+                          <span className="text-slate-600 shrink-0">•</span>
+                          <span className="text-slate-400 truncate font-sans text-[11px]" title={task.summary}>
+                            {task.summary || '워커 배정 대기 중...'}
+                          </span>
+                        </div>
+                        <div className="shrink-0 text-amber-400/80 font-medium text-[11px] flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-amber-500/80" />
+                          대기 중 ({(task.totalFiles ?? 0) > 0 ? `총 ${task.totalFiles}개 파일` : '대기열'})
+                        </div>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-900/60 rounded-full overflow-hidden border border-slate-800/60">
+                        <div className="h-full bg-slate-700/40 rounded-full w-0" />
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* 3. Overflow indicator if more queued than displayed */}
+                  {(workerStatus?.queuedTotalCount ?? 0) > (workerStatus?.queuedTasks?.length ?? 0) && (
+                    <div className="text-[10px] text-slate-500 text-center py-1 font-mono">
+                      + 외 {(workerStatus?.queuedTotalCount ?? 0) - (workerStatus?.queuedTasks?.length ?? 0)}건 대기 중...
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="p-3 rounded-xl bg-slate-950/50 border border-slate-800/60 text-[11px] text-slate-400 text-center">
