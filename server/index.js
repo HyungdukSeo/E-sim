@@ -1001,14 +1001,29 @@ app.get('/api/diff-cache/file-version-chain', async (req, res) => {
 
 // Audit candidate CRs in this VOB, recover any missing files in checkinLogs / Mantis,
 // reconcile diff caches, and queue uncached files into the priority queue.
-app.post('/api/diff-cache/vobs/:vob/collect', async (req, res) => {
+app.post('/api/diff-cache/vobs/:vob/collect', (req, res) => {
   try {
     const { vob } = req.params;
     const { crids } = req.body || {};
     const { meta } = getLocalDatabase();
     const mantisUrl = req.query.mantisUrl || req.headers['x-mantis-url'] || meta?.mantisUrl;
-    const result = await auditAndCollectVob(vob, crids || [], mantisUrl);
-    res.json(result);
+
+    // Respond immediately with "accepted" — auditAndCollectVob can scrape up
+    // to 15 live Mantis pages one request at a time with no timeout, which
+    // previously left this route hanging (sometimes indefinitely) whenever
+    // the Mantis server/corporate network was slow, making the "우선 수집
+    // 요청" button look like it had frozen the whole app. The actual audit
+    // (checkinLog re-parse, live Mantis scrape, DB save, cache reconciliation,
+    // priority queueing) still happens — just after the response is sent,
+    // not before it. The frontend already reloads the VOB history after
+    // this call returns, so a quick "queued" response plus a brief further
+    // refresh of the view (once the background audit finishes) covers the
+    // same UX without blocking on Mantis's response time.
+    res.json({ ok: true, accepted: true, vob, requestedCount: (crids || []).length });
+
+    auditAndCollectVob(vob, crids || [], mantisUrl).catch(err => {
+      console.warn(`[VOB Audit] Background audit failed for ${vob}:`, err.message);
+    });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
