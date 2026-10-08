@@ -858,9 +858,10 @@ async function _fetchFileDiffSSHImpl(config, filePath, checkinLog = '', options 
     let unifiedDiffText = '';
 
     if (hasChanges) {
-      const MAX_DIFF_BYTES = 1.5 * 1024 * 1024; // Protect event loop from quadratic Myers diff on huge files
+      const MAX_DIFF_BYTES = 512 * 1024; // Protect event loop from quadratic Myers diff on huge files
       if (oldText.length > MAX_DIFF_BYTES || newText.length > MAX_DIFF_BYTES) {
-        unifiedDiffText = `--- ${fileName}${prevSuffix}\n+++ ${fileName}${currSuffix}\n@@ -1,1 +1,1 @@\n... [File exceeds 1.5MB: unified diff truncated to protect event loop responsiveness] ...`;
+        const maxSizeKb = Math.round(Math.max(oldText.length, newText.length) / 1024);
+        unifiedDiffText = `--- ${fileName}${prevSuffix}\n+++ ${fileName}${currSuffix}\n@@ -1,1 +1,1 @@\n... [대용량 파일 (${maxSizeKb}KB): 메모리 및 성능 보호를 위해 diff 계산이 생략되었습니다] ...`;
         if (!isBackground) {
           patch = {
             oldHeader: fileName + prevSuffix,

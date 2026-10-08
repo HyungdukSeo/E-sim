@@ -14,6 +14,16 @@ export const BINARY_EXTS = new Set([
   'bin'
 ]);
 
+export const BINARY_FILE_RE = /\.(so|a|o|exe|dll|dylib|bin|class|jar|war|ear|tar|gz|tgz|zip|7z|rar|iso|img|rpm|deb|png|jpg|jpeg|gif|bmp|ico|pdf)(\.\d+)*$/i;
+
+export function isBinaryFile(fileName?: string, filePath?: string): boolean {
+  const target = (fileName || filePath || '').toLowerCase().trim();
+  if (!target) return false;
+  const base = target.split('/').pop() || target;
+  if (base === 'xxxx' || target === 'xxxx') return true;
+  return BINARY_FILE_RE.test(base);
+}
+
 export function isPlatformDirectory(nameOrPath: string): boolean {
   if (!nameOrPath) return false;
   const name = nameOrPath.split('/').pop() || nameOrPath;
@@ -24,9 +34,17 @@ export function isPlatformDirectory(nameOrPath: string): boolean {
  * Determine if an entry is a ClearCase directory element or branch activity rather than a source file
  */
 export function isDirectoryElement(fileName?: string, filePath?: string, unifiedDiff?: string): boolean {
-  const fn = fileName || '';
-  const fp = filePath || '';
+  const fn = (fileName || '').toLowerCase().trim();
+  const fp = (filePath || '').toLowerCase().trim();
   if (!fn && !fp) return false;
+
+  const cleanName = fn.split('/').pop() || fn;
+  const cleanPathName = fp.split('/').pop() || '';
+
+  // Dummy elements (e.g. xxxx) or ClearCase branch activity names
+  if (cleanName === 'xxxx' || cleanPathName === 'xxxx') {
+    return true;
+  }
 
   // ClearCase branch activity names
   if (fn.startsWith('crdb') || fn.startsWith('cr_') || fp.includes('/crdb') || fp.includes('/cr_')) {
@@ -37,9 +55,6 @@ export function isDirectoryElement(fileName?: string, filePath?: string, unified
   if (unifiedDiff && unifiedDiff.includes('[DIRECTORY:')) {
     return true;
   }
-
-  const cleanName = fn.split('/').pop() || fn;
-  const cleanPathName = fp.split('/').pop() || '';
 
   // Platform/arch build output directories (e.g. Linux_2.6.32_ICC, SunOS_5.10, etc.)
   if (isPlatformDirectory(cleanName) || isPlatformDirectory(cleanPathName)) {

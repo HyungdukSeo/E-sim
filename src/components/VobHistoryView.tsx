@@ -45,6 +45,7 @@ export function isBinaryFile(fileName: string, filePath: string = ''): boolean {
   const target = (fileName || filePath || '').toLowerCase().trim();
   if (!target) return false;
   const base = target.split('/').pop() || target;
+  if (base === 'xxxx' || target === 'xxxx') return true;
   return BINARY_FILE_RE.test(base);
 }
 

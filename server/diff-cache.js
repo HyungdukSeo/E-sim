@@ -226,6 +226,7 @@ export function isBinaryFile(fileName, filePath = '') {
   const target = (fileName || filePath || '').toLowerCase().trim();
   if (!target) return false;
   const base = target.split('/').pop() || target;
+  if (base === 'xxxx' || target === 'xxxx') return true;
   return BINARY_FILE_RE.test(base);
 }
 
@@ -249,17 +250,18 @@ const KNOWN_CODE_EXTS = new Set([
  * Determine if an entry is a ClearCase directory element or branch activity rather than a source file
  */
 export function isDirectoryElement(fileName, filePath = '', unifiedDiff = '') {
-  const fn = fileName || '';
-  const fp = filePath || '';
+  const fn = (fileName || '').toLowerCase().trim();
+  const fp = (filePath || '').toLowerCase().trim();
   if (!fn && !fp) return false;
-
-  // ClearCase branch activity names
-  if (fn.startsWith('crdb') || fn.startsWith('cr_') || fp.includes('/crdb') || fp.includes('/cr_')) return true;
-  // Explicit directory marker in unified diff
-  if (unifiedDiff && unifiedDiff.includes('[DIRECTORY:')) return true;
 
   const cleanName = fn.split('/').pop() || fn;
   const cleanPathName = fp.split('/').pop() || '';
+
+  // Dummy elements (e.g. xxxx) or ClearCase branch activity names
+  if (cleanName === 'xxxx' || cleanPathName === 'xxxx') return true;
+  if (fn.startsWith('crdb') || fn.startsWith('cr_') || fp.includes('/crdb') || fp.includes('/cr_')) return true;
+  // Explicit directory marker in unified diff
+  if (unifiedDiff && unifiedDiff.includes('[DIRECTORY:')) return true;
 
   // Platform/arch directories (e.g. Linux_2.6.32_ICC, SunOS_5.10, etc.)
   if (/^(linux|sunos|aix|hp-ux|solaris)_/i.test(cleanName) || /^(linux|sunos|aix|hp-ux|solaris)_/i.test(cleanPathName)) return true;
@@ -345,6 +347,37 @@ function filterOutDirectoryEntries(files) {
     if (fp && dirPaths.has(fp)) return false;
     return true;
   });
+}
+
+/**
+ * Sanitize diffData before writing to disk:
+ * 1. Filter out directory/dummy elements (including 'xxxx')
+ * 2. Empty diff text for binary files and set status: 'binary'
+ * 3. Truncate oversized diffs (>256KB) to prevent cache bloat and OOM
+ */
+export function sanitizeDiffData(diffData) {
+  if (!diffData || !Array.isArray(diffData.files)) return diffData;
+  const filtered = filterOutDirectoryEntries(diffData.files);
+  const sanitized = filtered.map(f => {
+    if (!f) return f;
+    if (isBinaryFile(f.fileName, f.filePath)) {
+      return {
+        ...f,
+        status: 'binary',
+        unifiedDiff: '',
+        oldVersion: '',
+        newVersion: ''
+      };
+    }
+    if (typeof f.unifiedDiff === 'string' && f.unifiedDiff.length > 256 * 1024) {
+      return {
+        ...f,
+        unifiedDiff: f.unifiedDiff.slice(0, 256 * 1024) + '\n\n... [Diff truncated: file exceeds 256KB limit to preserve system memory] ...'
+      };
+    }
+    return f;
+  });
+  return { ...diffData, files: sanitized };
 }
 
 /**
@@ -468,11 +501,12 @@ export function saveCRDiffCache(crid, diffData) {
   if (!isIndexInitialized) initCacheIndex();
   const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
   const filePath = path.join(DIFF_CACHE_DIR, `${safeId}.json`);
+  const cleanData = sanitizeDiffData(diffData);
 
   try {
-    const jsonStr = JSON.stringify(diffData);
+    const jsonStr = JSON.stringify(cleanData);
     const sizeBytes = Buffer.byteLength(jsonStr, 'utf8');
-    const fileCount = Array.isArray(diffData.files) ? diffData.files.length : 0;
+    const fileCount = Array.isArray(cleanData.files) ? cleanData.files.length : 0;
 
     // Asynchronous non-blocking write to avoid freezing the Node event loop
     fs.writeFile(filePath, jsonStr, 'utf8', (err) => {
@@ -484,7 +518,7 @@ export function saveCRDiffCache(crid, diffData) {
       const metaDir = path.join(DIFF_CACHE_DIR, '_meta');
       if (!fs.existsSync(metaDir)) fs.mkdirSync(metaDir, { recursive: true });
       const metaFilePath = path.join(metaDir, `${safeId}.json`);
-      const liteData = toLiteCache(diffData);
+      const liteData = toLiteCache(cleanData);
       fs.writeFile(metaFilePath, JSON.stringify(liteData), 'utf8', () => {});
     } catch (_) {}
 
@@ -497,8 +531,8 @@ export function saveCRDiffCache(crid, diffData) {
     cacheIndex.set(safeId, {
       sizeBytes,
       fileCount,
-      isComplete: diffData.isComplete === true,
-      cachedAt: diffData.cachedAt || new Date().toISOString(),
+      isComplete: cleanData.isComplete === true,
+      cachedAt: cleanData.cachedAt || new Date().toISOString(),
       mtimeMs: Date.now()
     });
     totalCachedBytes += sizeBytes;
@@ -521,7 +555,8 @@ export async function saveCRDiffCacheAsync(crid, diffData) {
   if (!isIndexInitialized) initCacheIndex();
   const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
   const filePath = path.join(DIFF_CACHE_DIR, `${safeId}.json`);
-  const fileCount = Array.isArray(diffData.files) ? diffData.files.length : 0;
+  const cleanData = sanitizeDiffData(diffData);
+  const fileCount = Array.isArray(cleanData.files) ? cleanData.files.length : 0;
 
   try {
     // Rough size estimate to decide worker vs. inline without stringifying
@@ -529,11 +564,11 @@ export async function saveCRDiffCacheAsync(crid, diffData) {
     const estimatedSize = fileCount * 50000; // ~50KB/file average is a safe over-estimate for routing purposes
     let sizeBytes;
     if (estimatedSize >= WORKER_PARSE_THRESHOLD_BYTES) {
-      const result = await stringifyAndWriteOffThread(filePath, diffData);
+      const result = await stringifyAndWriteOffThread(filePath, cleanData);
       if (!result.ok) throw new Error(result.error);
       sizeBytes = result.sizeBytes;
     } else {
-      const jsonStr = JSON.stringify(diffData);
+      const jsonStr = JSON.stringify(cleanData);
       sizeBytes = Buffer.byteLength(jsonStr, 'utf8');
       await fs.promises.writeFile(filePath, jsonStr, 'utf8');
     }
@@ -543,7 +578,7 @@ export async function saveCRDiffCacheAsync(crid, diffData) {
       const metaDir = path.join(DIFF_CACHE_DIR, '_meta');
       if (!fs.existsSync(metaDir)) fs.mkdirSync(metaDir, { recursive: true });
       const metaFilePath = path.join(metaDir, `${safeId}.json`);
-      const liteData = toLiteCache(diffData);
+      const liteData = toLiteCache(cleanData);
       await fs.promises.writeFile(metaFilePath, JSON.stringify(liteData), 'utf8');
     } catch (_) {}
 
@@ -555,15 +590,15 @@ export async function saveCRDiffCacheAsync(crid, diffData) {
     cacheIndex.set(safeId, {
       sizeBytes,
       fileCount,
-      isComplete: diffData.isComplete === true,
-      cachedAt: diffData.cachedAt || new Date().toISOString(),
+      isComplete: cleanData.isComplete === true,
+      cachedAt: cleanData.cachedAt || new Date().toISOString(),
       mtimeMs: Date.now()
     });
     totalCachedBytes += sizeBytes;
     totalCachedFiles += fileCount;
     return true;
   } catch (e) {
-    console.error(`[DiffCache] Failed to write cache for CR #${crid}:`, e.message);
+    console.error(`[DiffCache] Failed to write cache async for CR #${crid}:`, e.message);
     return false;
   }
 }
