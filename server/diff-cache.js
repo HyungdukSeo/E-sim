@@ -22,7 +22,10 @@ const pendingWorkerRequests = new Map();
 
 function getJsonParseWorker() {
   if (jsonParseWorker) return jsonParseWorker;
-  jsonParseWorker = new Worker(path.join(__dirname, 'json-parse-worker.js'));
+  jsonParseWorker = new Worker(path.join(__dirname, 'json-parse-worker.js'), {
+    execArgv: [],
+    resourceLimits: { maxOldSpaceSizeMb: 4096 }
+  });
   jsonParseWorker.on('message', (msg) => {
     const pending = pendingWorkerRequests.get(msg.id);
     if (!pending) return;
@@ -31,13 +34,21 @@ function getJsonParseWorker() {
     else pending.reject(new Error(msg.error));
   });
   jsonParseWorker.on('error', (err) => {
-    // Fail every in-flight request rather than hanging forever, then let the
-    // next call spin up a fresh worker.
+    console.error('[jsonParseWorker error]', err);
     for (const pending of pendingWorkerRequests.values()) pending.reject(err);
     pendingWorkerRequests.clear();
     jsonParseWorker = null;
   });
-  jsonParseWorker.unref(); // Don't keep the process alive just for this worker
+  jsonParseWorker.on('exit', (code) => {
+    if (code !== 0) {
+      console.warn(`[jsonParseWorker exit] Exited with code ${code}`);
+      for (const pending of pendingWorkerRequests.values()) {
+        pending.reject(new Error(`Worker exited with code ${code}`));
+      }
+      pendingWorkerRequests.clear();
+    }
+    jsonParseWorker = null;
+  });
   return jsonParseWorker;
 }
 
@@ -93,7 +104,10 @@ const pendingStringifyRequests = new Map();
 
 function getJsonStringifyWorker() {
   if (jsonStringifyWorker) return jsonStringifyWorker;
-  jsonStringifyWorker = new Worker(path.join(__dirname, 'json-stringify-worker.js'));
+  jsonStringifyWorker = new Worker(path.join(__dirname, 'json-stringify-worker.js'), {
+    execArgv: [],
+    resourceLimits: { maxOldSpaceSizeMb: 4096 }
+  });
   jsonStringifyWorker.on('message', (msg) => {
     const pending = pendingStringifyRequests.get(msg.id);
     if (!pending) return;
@@ -102,11 +116,21 @@ function getJsonStringifyWorker() {
     else pending.reject(new Error(msg.error));
   });
   jsonStringifyWorker.on('error', (err) => {
+    console.error('[jsonStringifyWorker error]', err);
     for (const pending of pendingStringifyRequests.values()) pending.reject(err);
     pendingStringifyRequests.clear();
     jsonStringifyWorker = null;
   });
-  jsonStringifyWorker.unref();
+  jsonStringifyWorker.on('exit', (code) => {
+    if (code !== 0) {
+      console.warn(`[jsonStringifyWorker exit] Exited with code ${code}`);
+      for (const pending of pendingStringifyRequests.values()) {
+        pending.reject(new Error(`Worker exited with code ${code}`));
+      }
+      pendingStringifyRequests.clear();
+    }
+    jsonStringifyWorker = null;
+  });
   return jsonStringifyWorker;
 }
 
@@ -1001,7 +1025,7 @@ export async function getVobHistory(vobName, allCrs) {
   // sequentially means every small, fast CR still waits behind whatever
   // large one happens to sit earlier in the list. Batched so a VOB with an
   // extreme number of matches doesn't open hundreds of file handles at once.
-  const READ_BATCH_SIZE = 25;
+  const READ_BATCH_SIZE = 8;
   const readResults = [];
   for (let i = 0; i < toRead.length; i += READ_BATCH_SIZE) {
     const batch = toRead.slice(i, i + READ_BATCH_SIZE);
@@ -1058,7 +1082,7 @@ export async function getVobHistory(vobName, allCrs) {
         error: f.error || null,
         oldVersion: f.oldVersion,
         newVersion: f.newVersion,
-        unifiedDiff: f.unifiedDiff,
+        unifiedDiff: '',
         fetchedAt: f.fetchedAt,
         checkinLog: extractFileCheckinLog(cr.checkinLog, f.filePath)
       });
