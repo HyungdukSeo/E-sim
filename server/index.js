@@ -1004,7 +1004,7 @@ app.get('/api/diff-cache/file-version-chain', async (req, res) => {
 app.post('/api/diff-cache/vobs/:vob/collect', (req, res) => {
   try {
     const { vob } = req.params;
-    const { crids } = req.body || {};
+    const { crids, targetFilePath } = req.body || {};
     const { meta } = getLocalDatabase();
     const mantisUrl = req.query.mantisUrl || req.headers['x-mantis-url'] || meta?.mantisUrl;
 
@@ -1021,7 +1021,7 @@ app.post('/api/diff-cache/vobs/:vob/collect', (req, res) => {
     // same UX without blocking on Mantis's response time.
     res.json({ ok: true, accepted: true, vob, requestedCount: (crids || []).length });
 
-    auditAndCollectVob(vob, crids || [], mantisUrl).catch(err => {
+    auditAndCollectVob(vob, crids || [], mantisUrl, targetFilePath).catch(err => {
       console.warn(`[VOB Audit] Background audit failed for ${vob}:`, err.message);
     });
   } catch (err) {

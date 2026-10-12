@@ -1173,8 +1173,9 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                                     // CR up immediately (priority queue) and only fetches what's
                                     // actually missing, not a full re-fetch.
                                     if (selectedVob) {
-                                      await collectVobUncachedCRs(selectedVob, [entry.crid]);
-                                      setCollectMessage(`CR #${entry.crid} 재수집을 백그라운드 대기열에 등록했습니다. 잠시 후 새로고침하면 반영됩니다.`);
+                                      await collectVobUncachedCRs(selectedVob, [entry.crid], entry.filePath);
+                                      const baseName = entry.filePath.split('/').pop() || entry.fileName;
+                                      setCollectMessage(`CR #${entry.crid} (${baseName}) 수집을 최우선 순위로 대기열에 등록했습니다. 잠시 후 새로고침하면 반영됩니다.`);
                                     }
                                   } catch (err: any) {
                                     alert('재수집 요청 실패: ' + (err.message || '서버 응답 없음'));

@@ -663,7 +663,7 @@ export function deleteCRDiffCache(crid) {
  * one at a time with a yield between each, so an unlimited count doesn't
  * flood the SSH pool — it just takes longer for very large CRs.
  */
-export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, forceRefresh = false, targetVob = null, onFileProgress = null) {
+export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, forceRefresh = false, targetVob = null, onFileProgress = null, targetFilePath = null) {
   if (!cr || !cr.crid) return null;
   const crid = cr.crid;
 
@@ -680,6 +680,11 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
     for (const f of cached.files) {
       if (f.status === 'success' && f.filePath) alreadyCachedByPath.set(f.filePath, f);
     }
+  }
+
+  // If a specific target file was requested, remove it from alreadyCachedByPath so it is always re-fetched
+  if (targetFilePath && alreadyCachedByPath.has(targetFilePath)) {
+    alreadyCachedByPath.delete(targetFilePath);
   }
 
   if (cached && cached.files && cached.files.length > 0 && !forceRefresh) {
@@ -732,9 +737,9 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
 
     const crFileCount = (cr.files || []).length;
     const hasErrors = cached.files.some(f => f.status === 'error');
-    const allFilesCached = crFileCount === 0 || cr.files.every(fn => {
-      return Array.from(alreadyCachedByPath.keys()).some(fp => fp.endsWith('/' + fn) || fp === fn);
-    });
+    const allFilesCached = crFileCount === 0 || (cr.filePaths && cr.filePaths.length === crFileCount
+      ? cr.filePaths.every(fp => alreadyCachedByPath.has(fp))
+      : cr.files.every(fn => Array.from(alreadyCachedByPath.keys()).some(fp => fp.endsWith('/' + fn) || fp === fn)));
 
     if (!hasErrors && allFilesCached && alreadyCachedByPath.size >= crFileCount) {
       if (modifiedInMantis) {
@@ -805,15 +810,25 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
   let newlyFetchedCount = 0;
   let lastIncrementalSaveAt = Date.now();
 
-  // If a targetVob was specified (e.g. from VOB History collect), prioritize
-  // files belonging to that VOB so the user sees results immediately instead
-  // of waiting for hundreds of unrelated files in other VOBs first.
+  // If a targetFilePath or targetVob was specified, prioritize:
+  // 1) targetFilePath: exact file requested by the user -> index 0
+  // 2) targetVob: files belonging to that VOB -> ahead of files in other VOBs
   const fileIndices = files.map((_, idx) => idx);
-  if (targetVob) {
+  if (targetFilePath || targetVob) {
     fileIndices.sort((a, b) => {
-      const vobA = extractVobFromPath(filePaths[a] || files[a]) === targetVob ? 0 : 1;
-      const vobB = extractVobFromPath(filePaths[b] || files[b]) === targetVob ? 0 : 1;
-      return vobA - vobB;
+      const fpA = filePaths[a] || files[a];
+      const fpB = filePaths[b] || files[b];
+      if (targetFilePath) {
+        const isMatchA = fpA === targetFilePath ? 0 : (fpA.endsWith('/' + targetFilePath.split('/').pop()) ? 1 : 2);
+        const isMatchB = fpB === targetFilePath ? 0 : (fpB.endsWith('/' + targetFilePath.split('/').pop()) ? 1 : 2);
+        if (isMatchA !== isMatchB) return isMatchA - isMatchB;
+      }
+      if (targetVob) {
+        const vobA = extractVobFromPath(fpA) === targetVob ? 0 : 1;
+        const vobB = extractVobFromPath(fpB) === targetVob ? 0 : 1;
+        if (vobA !== vobB) return vobA - vobB;
+      }
+      return 0;
     });
   }
 
@@ -826,120 +841,126 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
   });
   const totalEligibleCount = eligibleIndices.length || files.length;
 
-  for (const i of fileIndices) {
-    if (processed >= maxFiles) break;
+  try {
+    for (const i of fileIndices) {
+      if (processed >= maxFiles) break;
 
-    const fileName = files[i];
-    const filePath = filePaths[i] || fileName;
+      const fileName = files[i];
+      const filePath = filePaths[i] || fileName;
 
-    // Already have a successful diff for this exact file — skip the SSH round-trip.
-    if (alreadyCachedByPath.has(filePath)) continue;
+      // Already have a successful diff for this exact file — skip the SSH round-trip.
+      if (alreadyCachedByPath.has(filePath)) continue;
 
-    // Skip directory elements & branch pseudo-elements
-    if (isDirectoryElement(fileName, filePath) || dirPaths.has(filePath)) continue;
+      // Skip directory elements & branch pseudo-elements
+      if (isDirectoryElement(fileName, filePath) || dirPaths.has(filePath)) continue;
 
-    // Binary files (e.g. .so, .so.1.1, .a, .exe, .dll, etc.) - keep in cache with status: 'binary'
-    if (isBinaryFile(fileName, filePath)) {
-      results.push({
-        fileName,
-        filePath,
-        oldVersion: '',
-        newVersion: '',
-        unifiedDiff: '',
-        hasChanges: false,
-        status: 'binary',
-        error: null,
-        fetchedAt: new Date().toISOString()
-      });
-      continue;
-    }
-
-    processed++;
-    if (typeof onFileProgress === 'function') {
-      try {
-        onFileProgress({
-          crid,
+      // Binary files (e.g. .so, .so.1.1, .a, .exe, .dll, etc.) - keep in cache with status: 'binary'
+      if (isBinaryFile(fileName, filePath)) {
+        results.push({
           fileName,
           filePath,
-          fileIndex: processed,
-          totalFiles: totalEligibleCount
+          oldVersion: '',
+          newVersion: '',
+          unifiedDiff: '',
+          hasChanges: false,
+          status: 'binary',
+          error: null,
+          fetchedAt: new Date().toISOString()
         });
-      } catch (_) {}
-    }
-    if (sshPool.isUserActive()) {
-      await new Promise(res => setTimeout(res, 1200)); // Momentarily yield to interactive user requests
-    }
-    // Yield to Node.js event loop before starting next diff
-    await new Promise(res => setImmediate(res));
-
-    try {
-      const diffRes = await fetchFileDiffSSH(validServers, filePath, checkinLog, { priority: 'background' });
-      // Skip if diff result indicates a directory element
-      if (diffRes.isDirectory || (diffRes.unifiedDiff && diffRes.unifiedDiff.includes('[DIRECTORY:'))) {
         continue;
       }
-      let uDiff = diffRes.unifiedDiff || '';
-      if (uDiff.length > 256 * 1024) {
-        uDiff = uDiff.slice(0, 256 * 1024) + '\n\n... [Diff truncated: file exceeds 256KB limit to preserve system memory] ...';
-      }
-      const existingIdx = results.findIndex(r => r.filePath === filePath || (r.fileName === fileName && r.filePath.endsWith('/' + fileName)));
-      const newEntry = {
-        fileName,
-        filePath,
-        status: diffRes.ok ? 'success' : 'error',
-        hasChanges: diffRes.hasChanges || false,
-        error: diffRes.error || null,
-        serverHost: diffRes.serverHost || null,
-        serverName: diffRes.serverName || null,
-        oldVersion: diffRes.oldVersion || diffRes.prevVersion || '',
-        newVersion: diffRes.newVersion || diffRes.currVersion || '',
-        prevVersion: diffRes.prevVersion || '',
-        currVersion: diffRes.currVersion || '',
-        unifiedDiff: uDiff,
-        fetchedAt: new Date().toISOString()
-      };
-      if (existingIdx >= 0) {
-        results[existingIdx] = newEntry;
-      } else {
-        results.push(newEntry);
-      }
-      newlyFetchedCount++;
-    } catch (err) {
-      const existingIdx = results.findIndex(r => r.filePath === filePath || (r.fileName === fileName && r.filePath.endsWith('/' + fileName)));
-      const errEntry = {
-        fileName,
-        filePath,
-        status: 'error',
-        hasChanges: false,
-        error: err.message,
-        unifiedDiff: '',
-        fetchedAt: new Date().toISOString()
-      };
-      if (existingIdx >= 0) {
-        results[existingIdx] = errEntry;
-      } else {
-        results.push(errEntry);
-      }
-      newlyFetchedCount++;
-    }
 
-    // Incremental disk save so VOB history reflects progress before the whole
-    // CR finishes — throttled by elapsed time rather than a fixed file count.
-    // A fixed "every N files" checkpoint re-serializes the ENTIRE results
-    // array each time, and that array only grows — for a 1000+ file CR every
-    // N=5 files becomes 200+ saves, with the later ones each re-writing
-    // several hundred MB (measured: ~3.4s per save once the array reaches
-    // ~830 entries on real data), pushing total collection time for one
-    // large CR into the range of minutes even though nothing here blocks
-    // the server itself (saveCRDiffCacheAsync already offloads big payloads
-    // to a worker thread). A time-based interval keeps the "show progress
-    // soon" benefit while keeping the number of saves proportional to how
-    // long collection takes, not how many files exist.
-    // Incremental disk save only for large CRs (>= 30 files) to eliminate disk thrashing.
-    // Small/medium CRs save exactly once when finished, saving hundreds of gigabytes of disk I/O.
-    const INCREMENTAL_SAVE_INTERVAL_MS = 60000;
-    if (totalEligibleCount >= 30 && newlyFetchedCount > 0 && Date.now() - lastIncrementalSaveAt >= INCREMENTAL_SAVE_INTERVAL_MS) {
-      lastIncrementalSaveAt = Date.now();
+      processed++;
+      if (typeof onFileProgress === 'function') {
+        try {
+          onFileProgress({
+            crid,
+            fileName,
+            filePath,
+            fileIndex: processed,
+            totalFiles: totalEligibleCount
+          });
+        } catch (_) {}
+      }
+      if (sshPool.isUserActive()) {
+        await new Promise(res => setTimeout(res, 1200)); // Momentarily yield to interactive user requests
+      }
+      // Yield to Node.js event loop before starting next diff
+      await new Promise(res => setImmediate(res));
+
+      try {
+        const diffRes = await fetchFileDiffSSH(validServers, filePath, checkinLog, { priority: 'background' });
+        // Skip if diff result indicates a directory element
+        if (diffRes.isDirectory || (diffRes.unifiedDiff && diffRes.unifiedDiff.includes('[DIRECTORY:'))) {
+          continue;
+        }
+        let uDiff = diffRes.unifiedDiff || '';
+        if (uDiff.length > 256 * 1024) {
+          uDiff = uDiff.slice(0, 256 * 1024) + '\n\n... [Diff truncated: file exceeds 256KB limit to preserve system memory] ...';
+        }
+        const existingIdx = results.findIndex(r => r.filePath === filePath);
+        const newEntry = {
+          fileName,
+          filePath,
+          status: diffRes.ok ? 'success' : 'error',
+          hasChanges: diffRes.hasChanges || false,
+          error: diffRes.error || null,
+          serverHost: diffRes.serverHost || null,
+          serverName: diffRes.serverName || null,
+          oldVersion: diffRes.oldVersion || diffRes.prevVersion || '',
+          newVersion: diffRes.newVersion || diffRes.currVersion || '',
+          prevVersion: diffRes.prevVersion || '',
+          currVersion: diffRes.currVersion || '',
+          unifiedDiff: uDiff,
+          fetchedAt: new Date().toISOString()
+        };
+        if (existingIdx >= 0) {
+          results[existingIdx] = newEntry;
+        } else {
+          results.push(newEntry);
+        }
+        newlyFetchedCount++;
+      } catch (err) {
+        const existingIdx = results.findIndex(r => r.filePath === filePath);
+        const errEntry = {
+          fileName,
+          filePath,
+          status: 'error',
+          hasChanges: false,
+          error: err.message,
+          unifiedDiff: '',
+          fetchedAt: new Date().toISOString()
+        };
+        if (existingIdx >= 0) {
+          results[existingIdx] = errEntry;
+        } else {
+          results.push(errEntry);
+        }
+        newlyFetchedCount++;
+      }
+
+      // Incremental disk save every 10 seconds or every 5 newly fetched files so VOB history reflects progress
+      const INCREMENTAL_SAVE_INTERVAL_MS = 10000;
+      if (newlyFetchedCount > 0 && (Date.now() - lastIncrementalSaveAt >= INCREMENTAL_SAVE_INTERVAL_MS || newlyFetchedCount % 5 === 0)) {
+        lastIncrementalSaveAt = Date.now();
+        try {
+          await saveCRDiffCacheAsync(crid, {
+            crid,
+            summary: cr.summary || '',
+            cleanSummary: cr.cleanSummary || cr.summary || '',
+            module: cr.module || '',
+            customer: cr.customer || '',
+            checkinLog: cr.checkinLog || '',
+            cachedAt: new Date().toISOString(),
+            fileCount: results.length,
+            files: results
+          });
+        } catch (e) {}
+      }
+    }
+  } finally {
+    // If the loop aborted early, persist any newly fetched files so partial work is never lost!
+    if (newlyFetchedCount > 0) {
       try {
         await saveCRDiffCacheAsync(crid, {
           crid,
@@ -952,7 +973,7 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
           fileCount: results.length,
           files: results
         });
-      } catch (e) {}
+      } catch (_) {}
     }
   }
 
@@ -1299,7 +1320,7 @@ export async function getVobHistory(vobName, allCrs) {
  * 5. Reconciles diff caches: checks if cached files match cr.filePaths. If files are missing, queues priority collection.
  * 6. Wakes background indexer and returns comprehensive audit report.
  */
-export async function auditAndCollectVob(vobName, requestedCrids = [], mantisUrl) {
+export async function auditAndCollectVob(vobName, requestedCrids = [], mantisUrl, targetFilePath = null) {
   if (!isIndexInitialized) initCacheIndex();
   const { fetchCRPageDetails, parseCheckinLog, getLocalDatabase, DB_FILE } = await import('./sync.js');
   const { crs, meta } = getLocalDatabase();
@@ -1414,7 +1435,7 @@ export async function auditAndCollectVob(vobName, requestedCrids = [], mantisUrl
 
   // 6. Queue priority indexing
   for (const crid of queuedCrids) {
-    backgroundDiffIndexer.queuePriority(crid, vobName);
+    backgroundDiffIndexer.queuePriority(crid, vobName, targetFilePath);
   }
   backgroundDiffIndexer.wake();
 
@@ -1502,8 +1523,10 @@ class BackgroundDiffIndexer {
     this.activeCrids = new Set(); // Currently processing CR IDs
     this.activeLargeCrids = new Set(); // Subset of activeCrids whose file count exceeds LARGE_CR_FILE_THRESHOLD
     this.activeTasks = new Map(); // crid -> { crid, currentFile, filePath, fileIndex, totalFiles, updatedAt }
+    this.priorityTasks = [];
     this.priorityQueue = []; // CR IDs to process immediately (e.g. newly synced CRs)
     this.priorityVobs = new Map(); // crid -> targetVob
+    this.priorityTargetFiles = new Map(); // crid -> targetFilePath
     this.sshConfig = null;
     this.lastError = null;
     this.lastProcessedAt = null;
@@ -1563,11 +1586,14 @@ class BackgroundDiffIndexer {
     this.wake();
   }
 
-  queuePriority(crid, targetVob = null) {
+  queuePriority(crid, targetVob = null, targetFilePath = null) {
     this.completedCrids.delete(crid);
     this.failedAttempts.delete(crid);
     if (targetVob) {
       this.priorityVobs.set(crid, targetVob);
+    }
+    if (targetFilePath) {
+      this.priorityTargetFiles.set(crid, targetFilePath);
     }
     if (!this.priorityQueue.includes(crid)) {
       this.priorityQueue.unshift(crid);
@@ -1600,6 +1626,8 @@ class BackgroundDiffIndexer {
     const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
     this.completedCrids.delete(safeId);
     this.failedAttempts.delete(safeId);
+    this.priorityVobs.delete(safeId);
+    this.priorityTargetFiles.delete(safeId);
     this.activeTasks.delete(safeId);
     this.activeCrids.delete(safeId);
     this.priorityQueue = this.priorityQueue.filter(id => id !== safeId);
@@ -1787,7 +1815,9 @@ class BackgroundDiffIndexer {
   async _processCRWorker(targetCR) {
     const crid = targetCR.crid;
     const targetVob = this.priorityVobs.get(crid) || null;
+    const targetFilePath = this.priorityTargetFiles.get(crid) || null;
     this.priorityVobs.delete(crid);
+    this.priorityTargetFiles.delete(crid);
     const isLarge = (targetCR.files || []).length >= LARGE_CR_FILE_THRESHOLD;
     this.activeWorkers++;
     this.activeCrids.add(crid);
@@ -1797,8 +1827,8 @@ class BackgroundDiffIndexer {
     const initialTotal = (targetCR.files || []).length || 1;
     this.activeTasks.set(crid, {
       crid,
-      currentFile: targetCR.files?.[0] || '준비 중...',
-      filePath: targetCR.filePaths?.[0] || targetCR.files?.[0] || '',
+      currentFile: targetFilePath ? targetFilePath.split('/').pop() : (targetCR.files?.[0] || '준비 중...'),
+      filePath: targetFilePath || targetCR.filePaths?.[0] || targetCR.files?.[0] || '',
       fileIndex: 0,
       totalFiles: initialTotal,
       updatedAt: Date.now()
@@ -1820,7 +1850,7 @@ class BackgroundDiffIndexer {
             updatedAt: Date.now()
           });
         }
-      });
+      }, targetFilePath);
       this.processedCount++;
       this.lastProcessedAt = new Date().toISOString();
       this.lastError = null;

@@ -340,7 +340,7 @@ export async function fetchVobHistory(vob: string): Promise<{
   return resp.data;
 }
 
-export async function collectVobUncachedCRs(vob: string, crids: string[]): Promise<{
+export async function collectVobUncachedCRs(vob: string, crids: string[], targetFilePath?: string): Promise<{
   ok: boolean;
   // The server responds as soon as the request is accepted — the actual
   // audit (live Mantis scrape, DB save, cache reconciliation) runs in the
@@ -353,7 +353,10 @@ export async function collectVobUncachedCRs(vob: string, crids: string[]): Promi
   newlyDiscoveredFiles?: number;
   queuedCrids?: string[];
 }> {
-  const resp = await axios.post(`${API_BASE}/diff-cache/vobs/${encodeURIComponent(vob)}/collect`, { crids });
+  const resp = await axios.post(`${API_BASE}/diff-cache/vobs/${encodeURIComponent(vob)}/collect`, {
+    crids,
+    targetFilePath
+  });
   return resp.data;
 }
 
