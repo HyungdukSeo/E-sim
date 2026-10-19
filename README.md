@@ -1,7 +1,7 @@
 # ⚡ Mantis CR Ultra Search & AI Hub
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.2-blue.svg?style=for-the-badge" alt="Version 1.0.2" />
+  <img src="https://img.shields.io/badge/version-1.0.6-blue.svg?style=for-the-badge" alt="Version 1.0.6" />
   <img src="https://img.shields.io/badge/ClearCase-Web%20Diff-brightgreen.svg?style=for-the-badge" alt="ClearCase Web Diff" />
   <img src="https://img.shields.io/badge/Dataset-Background%20Auto%20Indexer-emerald.svg?style=for-the-badge" alt="Background Diff Indexer" />
   <img src="https://img.shields.io/badge/Cross%20CR-Code%20Comparison-purple.svg?style=for-the-badge" alt="Cross CR Comparison" />
@@ -230,6 +230,14 @@ start.bat
 ---
 
 ## 📝 변경 이력 (Changelog)
+
+### v1.0.6
+* 🧠 **고차원 AI 지식 파이프라인 및 소스코드 AST 함수 심볼 추출 구축**:
+  * **수정 함수 심볼 자동 추출**: Unified Diff로부터 변경된 함수/메서드 시그니처(`modifiedFunctions`)를 정밀 추출하여 파일 메타데이터에 등록
+  * **Mantis 상세 본문 수집 확장**: 단순 제목 외에 버그 증상, 원인, 재현 절차(`description`, `stepsToReproduce`) 수집 파이프라인 보강
+  * **고차원 트러블슈팅 지식(AI Knowledge) 영구 캐시**: 상용 Agent를 통한 증상(symptoms), 근본 원인(rootCause), 점검 포인트(checkPoints) 사전 추출 및 무손실 캐시 저장
+  * **자연어 질문 로컬 NLP 매칭 대폭 강화**: 한국어 조사/어미 분리 정규화 및 증상/원인 가중치 매칭으로 "SSW에서 GUI 팝업이 안 뜰 때 확인 위치" 등 고차원 트러블슈팅 질의에 정확도 800+점 매칭 달성
+* 🔌 **신규 AI 지식 생성/배치 API 엔드포인트 신설**: `/api/ai/knowledge/generate`, `/api/ai/knowledge/batch`
 
 ### v1.0.5
 * 🔧 **다중 버전 SSH 조회 시 커넥션 풀 고갈로 인한 타임아웃 수정**: 파일 하나의 버전을 여러 개(예: 5개) 한번에 조회할 때 필요한 커넥션 수를 한꺼번에 요청해 풀 최대치(호스트당 3개)를 초과 → 자신이 점유한 커넥션 반환을 기다리며 15초 타임아웃으로 실패하던 문제 해결. 이제 풀 용량만큼 배치로 나눠 순차 조회하고, 각 커넥션을 배치 전체가 아닌 자기 작업 완료 즉시 반환
