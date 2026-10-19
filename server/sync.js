@@ -339,6 +339,9 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
 
     const summary = getFieldValue(row, '제목', 'Summary', 'summary');
     const checkinLogRaw = getFieldValue(row, 'Check-in Log', 'check_in_log', '체크인 로그', 'Checkin Log');
+    const description = getFieldValue(row, '설명', '본문', 'Description', 'description', '상세 설명', '내용');
+    const stepsToReproduce = getFieldValue(row, '재현 절차', 'Steps To Reproduce', 'steps_to_reproduce', '재현 과정');
+    const additionalInfo = getFieldValue(row, '추가 정보', 'Additional Information', 'additional_information', '추가 내용');
     const lastUpdated = getFieldValue(row, '최종 갱신', 'Last Update', 'updated', '수정일시');
     const status = (getFieldValue(row, '상태', 'Status', 'status') || 'opened').toLowerCase().trim();
     const project = getFieldValue(row, '프로젝트', 'Project', 'project') || '기타';
@@ -352,7 +355,7 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
     const existing = crMap.get(crid) || crMap.get(cleanNumStr) || crMap.get(String(numericId));
 
     if (existing) {
-      if (existing.lastUpdated !== lastUpdated || existing.status !== status || existing.summary !== summary || existing.checkinLog !== checkinLogRaw) {
+      if (existing.lastUpdated !== lastUpdated || existing.status !== status || existing.summary !== summary || existing.checkinLog !== checkinLogRaw || (description && existing.description !== description)) {
         const titleParsed = parseTitleTags(summary);
         // Preserve richer checkinLog if already present in DB (e.g. from view.php live scrape)
         const finalCheckinLog = (existing.checkinLog && existing.checkinLog.length > (checkinLogRaw || '').length)
@@ -372,6 +375,9 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
           summary,
           status,
           targetVersion: targetVersion || existing.targetVersion,
+          description: description || existing.description || '',
+          stepsToReproduce: stepsToReproduce || existing.stepsToReproduce || '',
+          additionalInfo: additionalInfo || existing.additionalInfo || '',
           checkinLog: finalCheckinLog,
           customer: titleParsed.customer,
           vob: titleParsed.vob,
@@ -404,6 +410,9 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
         summary,
         status,
         targetVersion,
+        description: description || '',
+        stepsToReproduce: stepsToReproduce || '',
+        additionalInfo: additionalInfo || '',
         checkinLog: checkinLogRaw,
         customer: titleParsed.customer,
         vob: titleParsed.vob,

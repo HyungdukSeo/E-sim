@@ -8,7 +8,7 @@ import axios from 'axios';
 import { exec } from 'child_process';
 import { fileURLToPath } from 'url';
 import { syncMantisData, getLocalDatabase, reloadDatabase, importDatabase, fetchCRPageDetails, DB_FILE, META_FILE, DATA_DIR } from './sync.js';
-import { processAiQuery, analyzeSingleCRDiff, compareMultipleCRDiffs } from './ai.js';
+import { processAiQuery, analyzeSingleCRDiff, compareMultipleCRDiffs, generateCRKnowledge, saveCRKnowledge, batchGenerateKnowledge } from './ai.js';
 import { testSSHConnection, fetchFileDiffSSH, fetchFileVersionHistorySSH, fetchFileVersionsSSH } from './ssh.js';
 import { getClaudeModels, getAntigravityModels, getCodexModels, getOmniRouteModels, getAIProvidersStatus, checkOmniRouteStatus, findCommandPath } from './cli-models.js';
 import { getCRDiffCache, getCRDiffCacheAsync, saveCRDiffCache, deleteCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, initCacheIndex, batchIndexDiffs, backgroundDiffIndexer, getVobList, getVobHistory, mapFileVersionsToCRs, isBinaryFile, prewarmDiffCacheWorkers, auditAndCollectVob } from './diff-cache.js';
@@ -1139,6 +1139,48 @@ app.post('/api/ai/analyze-cr-diff', async (req, res) => {
     res.json({ ok: true, ...result, cached: !!(await getCRDiffCacheAsync(targetCrid)) });
   } catch (err) {
     console.error('[AI Analyze CR Diff Error]', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Single CR AI Knowledge Extraction & Persistence
+app.post('/api/ai/knowledge/generate', async (req, res) => {
+  try {
+    const { crid, config = {} } = req.body;
+    if (!crid) {
+      return res.status(400).json({ ok: false, error: 'CRID가 필요합니다.' });
+    }
+    const { crs } = getLocalDatabase();
+    const targetCR = crs.find(c => c.crid === crid || String(c.id) === String(crid));
+    if (!targetCR) {
+      return res.status(404).json({ ok: false, error: `CR #${crid}를 찾을 수 없습니다.` });
+    }
+    const diffPayload = await getCRDiffCacheAsync(crid);
+    const knowledge = await generateCRKnowledge({ cr: targetCR, diffPayload, config });
+    await saveCRKnowledge(crid, knowledge);
+    res.json({ ok: true, knowledge });
+  } catch (err) {
+    console.error('[AI Generate Knowledge Error]', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Batch AI Knowledge Extraction for Multiple CRs
+app.post('/api/ai/knowledge/batch', async (req, res) => {
+  try {
+    const { crids = [], limit = 50, config = {} } = req.body;
+    const { crs } = getLocalDatabase();
+    let targetList = [];
+    if (Array.isArray(crids) && crids.length > 0) {
+      targetList = crs.filter(c => crids.includes(c.crid));
+    } else {
+      // Pick most recently updated CRs that have diffs
+      targetList = crs.slice(0, limit);
+    }
+    const results = await batchGenerateKnowledge({ crList: targetList, config });
+    res.json({ ok: true, count: results.length, results });
+  } catch (err) {
+    console.error('[AI Batch Knowledge Error]', err.message);
     res.status(500).json({ ok: false, error: err.message });
   }
 });

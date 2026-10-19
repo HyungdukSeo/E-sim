@@ -60,11 +60,17 @@ export function extractDomainKeywords(query) {
   for (const t of raw) {
     if (STOP_WORDS.has(t)) continue;
     let clean = t;
-    ['에서', '으로', '부터', '까지', '에게', '관련된', '관련', '기동시', '구동시', '때문에', '하느라', '느라', '는', '은', '이', '가'].forEach(s => {
+    const suffixes = [
+      '관련된', '관련해서', '관련하여', '관련', '기동시', '구동시', '때문에', '하느라', '느라',
+      '에서', '으로', '부터', '까지', '에게', '인데', '는지', '는데', '봐야할까',
+      '는', '은', '이', '가', '을', '를', '에', '의', '와', '과', '도', '로'
+    ];
+    for (const s of suffixes) {
       if (clean.length > s.length + 1 && clean.endsWith(s)) {
         clean = clean.substring(0, clean.length - s.length);
+        break;
       }
-    });
+    }
     if (clean && !STOP_WORDS.has(clean) && clean.length >= 2) {
       keywords.push(clean);
     }
@@ -121,11 +127,19 @@ export function analyzeQueryLocally(query, allCrs) {
 
     const sum = expandCompoundText(cr.summary || '').toLowerCase();
     const cleanSum = expandCompoundText(cr.cleanSummary || '').toLowerCase();
+    const desc = expandCompoundText(cr.description || '').toLowerCase();
+    const steps = expandCompoundText(cr.stepsToReproduce || '').toLowerCase();
     const mod = (cr.module || '').toLowerCase();
     const rep = (cr.reporter || '').toLowerCase();
     const ass = (cr.assignee || '').toLowerCase();
     const checkin = (cr.checkinLog || '').toLowerCase();
     const files = (cr.files || []).join(' ').toLowerCase();
+
+    // AI Knowledge keywords (symptoms, rootCause, checkPoints)
+    const aiSymptoms = (cr.aiKnowledge?.symptoms || []).join(' ').toLowerCase();
+    const aiCause = (cr.aiKnowledge?.rootCause || '').toLowerCase();
+    const aiCheckPoints = (cr.aiKnowledge?.checkPoints || []).join(' ').toLowerCase();
+    const modFns = Array.isArray(cr.modifiedFunctions) ? cr.modifiedFunctions.join(' ').toLowerCase() : '';
 
     let score = 0;
     const matchReasons = [];
@@ -136,6 +150,12 @@ export function analyzeQueryLocally(query, allCrs) {
       const isRare = (kw === 'plsm' || kw === 'ipcdrm' || kw === 'ipcrdm' || kw === '암호화' || kw === '복호화' || kw.length >= 4);
       const baseWeight = isRare ? 45 : 14;
 
+      // 0. AI Pre-analyzed Knowledge match (Highest priority for symptom/root-cause search)
+      if (aiSymptoms.includes(kw) || aiCause.includes(kw) || aiCheckPoints.includes(kw)) {
+        kwScore += baseWeight * 3.5;
+        matchReasons.push(`AI 지식(증상/원인/점검포인트) 내 '${kw}' 매칭`);
+        highlightKeywords.push(kw);
+      }
       // 1. Module match
       if (mod.includes(kw)) {
         kwScore += baseWeight * 3;
@@ -148,17 +168,27 @@ export function analyzeQueryLocally(query, allCrs) {
         matchReasons.push(`제목 내 '${kw}' 키워드 일치`);
         highlightKeywords.push(kw);
       }
+      // 2.1 Description / Steps match (Rich issue body)
+      if (desc.includes(kw) || steps.includes(kw)) {
+        kwScore += baseWeight * 2.2;
+        matchReasons.push(`상세 설명/재현과정 내 '${kw}' 일치`);
+        highlightKeywords.push(kw);
+      }
       // 3. Reporter / Assignee match
       if (rep.includes(kw) || ass.includes(kw)) {
         kwScore += baseWeight * 2;
         matchReasons.push(`작성자/담당자 [${cr.reporter || cr.assignee}] 일치`);
         highlightKeywords.push(kw);
       }
-      // 4. Source file name match
-      if (files.includes(kw)) {
+      // 4. Source file name & modified function match
+      if (files.includes(kw) || modFns.includes(kw)) {
         const matchedF = (cr.files || []).filter(f => f.toLowerCase().includes(kw));
-        kwScore += baseWeight * 1.8;
-        matchReasons.push(`수정 소스파일 [${matchedF.slice(0, 2).join(', ')}] 일치`);
+        kwScore += baseWeight * 2.0;
+        if (matchedF.length > 0) {
+          matchReasons.push(`수정 소스파일 [${matchedF.slice(0, 2).join(', ')}] 일치`);
+        } else {
+          matchReasons.push(`수정 함수/심볼 [${kw}] 일치`);
+        }
         highlightKeywords.push(kw);
       }
       // 5. Check-in log match
@@ -290,7 +320,7 @@ export function analyzeQueryLocally(query, allCrs) {
 }
 
 import { fetchFileDiffSSH } from './ssh.js';
-import { getCRDiffCacheAsync } from './diff-cache.js';
+import { getCRDiffCacheAsync, saveCRDiffCacheAsync } from './diff-cache.js';
 
 const BINARY_EXTS = new Set(['.exe', '.o', '.a', '.so', '.dll', '.tar', '.gz', '.zip', '.class', '.jar', '.png', '.jpg', '.pdf']);
 
@@ -1127,4 +1157,143 @@ export async function processAiQuery({ query, contextCrs = [], config = {} }) {
   // 2. Default: Intelligent Local NLP Analyzer
   return analyzeQueryLocally(query, contextCrs);
 }
+
+/**
+ * Extract high-dimensional structured knowledge (symptoms, rootCause, checkPoints)
+ * from a CR using commercial LLM (OmniRoute, Claude, Gemini, etc.)
+ */
+export async function generateCRKnowledge({ cr, diffPayload = null, config = {} }) {
+  if (!cr) throw new Error('CR 정보가 누락되었습니다.');
+  const crid = cr.crid;
+
+  // Gather diff summary and modified functions
+  let fileList = [];
+  let diffSnippets = [];
+  if (diffPayload && Array.isArray(diffPayload.files)) {
+    for (const f of diffPayload.files) {
+      if (f.status === 'success' && f.filePath) {
+        const funcs = (f.modifiedFunctions || []).join(', ');
+        fileList.push(`${f.filePath}${funcs ? ` (수정 함수: ${funcs})` : ''}`);
+        if (f.unifiedDiff && diffSnippets.length < 5) {
+          const sample = f.unifiedDiff.slice(0, 1500);
+          diffSnippets.push(`--- ${f.filePath} ---\n${sample}`);
+        }
+      }
+    }
+  }
+
+  const systemPrompt = `You are a Principal Telecom & SSW Software Systems Architect and Troubleshooter.
+Your job is to analyze this bug/CR and extract a structured troubleshooting knowledge object in valid JSON.
+DO NOT wrap the response in markdown quotes if possible, output pure JSON only.
+
+JSON Format:
+{
+  "symptoms": ["증상 키워드 1 (예: GUI 팝업 미노출)", "증상 2 (예: 알람 수신 누락)"],
+  "rootCause": "버그의 근본 원인 1~2줄 요약 (예: 워커 스레드에서 UI를 직접 호출하여 윈도우 메시지 루프 누락)",
+  "solutionSummary": "해결 방법 요약 (예: Main Thread DispatchQueue 디스패치 적용)",
+  "checkPoints": [
+    "확인해야 할 핵심 파일 및 함수 1 (예: ssw/gui/AlertManager.cpp 의 onAlarmReceived 함수)",
+    "확인해야 할 로그 키워드 (예: grep 'ALERT_DISPATCH_FAIL' app.log)",
+    "관련 설정값 또는 환경 플래그"
+  ],
+  "tags": ["SSW", "GUI", "Popup", "Threading"]
+}`;
+
+  let userPrompt = `[CR Information]
+CR ID: #${crid}
+Title: ${cr.summary || cr.cleanSummary || ''}
+Module: ${cr.module || '미지정'}
+Customer: ${cr.customer || '미지정'}
+Description: ${cr.description || '없음'}
+Steps to Reproduce: ${cr.stepsToReproduce || '없음'}
+Checkin Log: ${cr.checkinLog || '없음'}
+Modified Files & Functions:
+${fileList.join('\n') || '파일 정보 없음'}
+
+[Code Diff Sample]
+${diffSnippets.join('\n\n') || 'Diff 샘플 없음'}
+
+Please extract the structured knowledge JSON.`;
+
+  const res = await callLLM({ systemPrompt, userPrompt, config });
+  let text = res.content || '';
+  // Strip code block fences if present
+  text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+
+  try {
+    const parsed = JSON.parse(text);
+    return {
+      crid,
+      symptoms: Array.isArray(parsed.symptoms) ? parsed.symptoms : [],
+      rootCause: parsed.rootCause || '',
+      solutionSummary: parsed.solutionSummary || '',
+      checkPoints: Array.isArray(parsed.checkPoints) ? parsed.checkPoints : [],
+      tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+      analyzedAt: new Date().toISOString(),
+      provider: res.provider
+    };
+  } catch (parseErr) {
+    console.warn(`[generateCRKnowledge] JSON parse fallback for CR #${crid}:`, parseErr.message);
+    return {
+      crid,
+      symptoms: [cr.summary || ''],
+      rootCause: text.slice(0, 300),
+      solutionSummary: '',
+      checkPoints: fileList.slice(0, 3),
+      tags: [cr.module || 'SSW'],
+      analyzedAt: new Date().toISOString(),
+      provider: res.provider
+    };
+  }
+}
+
+/**
+ * Save extracted AI knowledge into the diff cache file for CR
+ */
+export async function saveCRKnowledge(crid, knowledge) {
+  if (!crid || !knowledge) return false;
+  try {
+    const cached = await getCRDiffCacheAsync(crid);
+    if (!cached) return false;
+    cached.aiKnowledge = knowledge;
+    await saveCRDiffCacheAsync(crid, cached);
+    return true;
+  } catch (err) {
+    console.error(`[saveCRKnowledge] Failed to persist knowledge for CR #${crid}:`, err.message);
+    return false;
+  }
+}
+
+/**
+ * Batch generate AI knowledge for multiple CRs
+ */
+export async function batchGenerateKnowledge({ crList, config = {}, onProgress = null }) {
+  const results = [];
+  let processed = 0;
+  for (const cr of crList) {
+    if (!cr || !cr.crid) continue;
+    try {
+      const diffPayload = await getCRDiffCacheAsync(cr.crid);
+      // Skip if already has knowledge and not force refresh
+      if (diffPayload?.aiKnowledge && !config.forceRefresh) {
+        results.push(diffPayload.aiKnowledge);
+        processed++;
+        continue;
+      }
+      const knowledge = await generateCRKnowledge({ cr, diffPayload, config });
+      await saveCRKnowledge(cr.crid, knowledge);
+      results.push(knowledge);
+      processed++;
+      if (typeof onProgress === 'function') {
+        onProgress({ crid: cr.crid, current: processed, total: crList.length });
+      }
+      // Modest pause between API calls to avoid rate limits
+      await new Promise(r => setTimeout(r, 600));
+    } catch (e) {
+      console.warn(`[batchGenerateKnowledge] Error processing CR #${cr.crid}:`, e.message);
+    }
+  }
+  return results;
+}
+
 

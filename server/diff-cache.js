@@ -269,6 +269,42 @@ export function isDirectoryElement(fileName, filePath = '', unifiedDiff = '') {
   return false;
 }
 
+/**
+ * Extract modified function and method names from unified diff hunks
+ */
+export function extractModifiedSymbolsFromDiff(unifiedDiff) {
+  if (!unifiedDiff || typeof unifiedDiff !== 'string') return [];
+  const symbols = new Set();
+
+  // Pattern 1: Unified diff hunk headers: @@ -10,5 +10,7 @@ int function_name(...)
+  const hunkHeaderRegex = /@@\s*-\d+(?:,\d+)?\s+\+\d+(?:,\d+)?\s*@@\s*(.*)/g;
+  let match;
+  while ((match = hunkHeaderRegex.exec(unifiedDiff)) !== null) {
+    const rawContext = (match[1] || '').trim();
+    if (rawContext) {
+      const fnMatch = rawContext.match(/(?:(?:void|int|bool|char|double|float|auto|func|def|function|public|private|protected|static|inline|virtual)\s+)+([a-zA-Z0-9_:]+)\s*\(/);
+      if (fnMatch && fnMatch[1]) {
+        symbols.add(fnMatch[1]);
+      } else {
+        const cleanContext = rawContext.replace(/[\{\}\;].*$/, '').trim();
+        if (cleanContext.length > 2 && cleanContext.length < 80 && /[a-zA-Z_]/.test(cleanContext)) {
+          symbols.add(cleanContext);
+        }
+      }
+    }
+  }
+
+  // Pattern 2: Changed lines with function declarations (+ void foo())
+  const funcDeclRegex = /^\+\s*(?:(?:void|int|bool|char|double|float|auto|func|def|function|static)\s+)+([a-zA-Z0-9_:]+)\s*\([^;]*\)\s*\{?/gm;
+  while ((match = funcDeclRegex.exec(unifiedDiff)) !== null) {
+    if (match[1] && !['if', 'for', 'while', 'switch', 'catch'].includes(match[1])) {
+      symbols.add(match[1]);
+    }
+  }
+
+  return Array.from(symbols).slice(0, 50);
+}
+
 function getCacheFilePath(crid) {
   const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
   return path.join(DIFF_CACHE_DIR, `${safeId}.json`);
@@ -748,6 +784,9 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
         cached.module = cr.module || cached.module;
         cached.customer = cr.customer || cached.customer;
         cached.checkinLog = cr.checkinLog || cached.checkinLog;
+        cached.description = cr.description || cached.description || '';
+        cached.stepsToReproduce = cr.stepsToReproduce || cached.stepsToReproduce || '';
+        cached.additionalInfo = cr.additionalInfo || cached.additionalInfo || '';
         cached.cachedAt = new Date().toISOString();
         await saveCRDiffCacheAsync(crid, cached);
       }
@@ -912,6 +951,7 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
           prevVersion: diffRes.prevVersion || '',
           currVersion: diffRes.currVersion || '',
           unifiedDiff: uDiff,
+          modifiedFunctions: extractModifiedSymbolsFromDiff(uDiff),
           fetchedAt: new Date().toISOString()
         };
         if (existingIdx >= 0) {
@@ -929,6 +969,7 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
           hasChanges: false,
           error: err.message,
           unifiedDiff: '',
+          modifiedFunctions: [],
           fetchedAt: new Date().toISOString()
         };
         if (existingIdx >= 0) {
@@ -951,6 +992,10 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
             module: cr.module || '',
             customer: cr.customer || '',
             checkinLog: cr.checkinLog || '',
+            description: cr.description || cached?.description || '',
+            stepsToReproduce: cr.stepsToReproduce || cached?.stepsToReproduce || '',
+            additionalInfo: cr.additionalInfo || cached?.additionalInfo || '',
+            aiKnowledge: cached?.aiKnowledge || null,
             cachedAt: new Date().toISOString(),
             fileCount: results.length,
             files: results
@@ -969,6 +1014,10 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
           module: cr.module || '',
           customer: cr.customer || '',
           checkinLog: cr.checkinLog || '',
+          description: cr.description || cached?.description || '',
+          stepsToReproduce: cr.stepsToReproduce || cached?.stepsToReproduce || '',
+          additionalInfo: cr.additionalInfo || cached?.additionalInfo || '',
+          aiKnowledge: cached?.aiKnowledge || null,
           cachedAt: new Date().toISOString(),
           fileCount: results.length,
           files: results
@@ -984,6 +1033,10 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
     module: cr.module || '',
     customer: cr.customer || '',
     checkinLog: cr.checkinLog || '',
+    description: cr.description || cached?.description || '',
+    stepsToReproduce: cr.stepsToReproduce || cached?.stepsToReproduce || '',
+    additionalInfo: cr.additionalInfo || cached?.additionalInfo || '',
+    aiKnowledge: cached?.aiKnowledge || null,
     cachedAt: new Date().toISOString(),
     fileCount: results.length,
     isComplete: true,
