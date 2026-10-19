@@ -1078,13 +1078,20 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                             <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono">
                               미수집
                             </span>
-                          ) : effectiveHasChanges ? (
-                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-mono">
-                              변경됨
+                          ) : effectiveStatus !== 'success' ? (
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono">
+                              미수집
+                            </span>
+                          ) : !effectiveHasChanges && !entry.oldVersion && !entry.newVersion ? (
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-orange-500/15 border border-orange-500/30 text-orange-300 font-mono" title="수집은 완료로 기록됐지만 이전/이후 버전을 확인하지 못해 실제 비교가 이루어지지 않았습니다. 펼쳐서 버전 이력을 확인하세요">
+                              버전 미확인
                             </span>
                           ) : (
-                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800/80 border border-slate-700/60 text-slate-400 font-mono" title="파일이 체크인되었으나 이전 버전과 내용 차이(Diff)가 없습니다">
-                              변경사항 없음
+                            <span
+                              className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-mono"
+                              title={effectiveHasChanges ? '수집 완료 (이전 버전과 내용 차이 있음)' : '수집 완료 (이전 버전과 내용 차이 없음)'}
+                            >
+                              수집됨
                             </span>
                           )}
 
