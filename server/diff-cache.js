@@ -688,6 +688,16 @@ export function deleteCRDiffCache(crid) {
   return anyDeleted;
 }
 
+export function normalizeCrid(crid) {
+  if (!crid) return '';
+  const clean = String(crid).replace(/^[#\s]+/, '').trim();
+  const num = parseInt(clean, 10);
+  return isNaN(num) ? clean : String(num).padStart(7, '0');
+}
+
+// In-flight promise map to deduplicate concurrent requests for the exact same CR
+const inFlightCRDiffPromises = new Map();
+
 /**
  * Fetch and cache diffs for a CR using SSH. maxFiles defaults to unlimited —
  * a CR's filePaths can legitimately run into the hundreds or low thousands
@@ -702,6 +712,15 @@ export function deleteCRDiffCache(crid) {
 export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, forceRefresh = false, targetVob = null, onFileProgress = null, targetFilePath = null) {
   if (!cr || !cr.crid) return null;
   const crid = cr.crid;
+  const normId = normalizeCrid(crid);
+
+  // If a full-fetch for this exact CR is already in-flight, reuse its existing promise to prevent duplicate SSH round-trips
+  if (inFlightCRDiffPromises.has(normId) && !targetFilePath && !forceRefresh) {
+    console.log(`[DiffCache] CR #${normId} is already actively being fetched in another worker/request. Awaiting existing promise...`);
+    return inFlightCRDiffPromises.get(normId);
+  }
+
+  const executionPromise = (async () => {
 
   // 1. Check existing cache
   const cached = await getCRDiffCacheAsync(crid);
@@ -1058,6 +1077,19 @@ export async function fetchAndCacheCRDiff(cr, sshConfig, maxFiles = Infinity, fo
 
   await saveCRDiffCacheAsync(crid, cachePayload);
   return cachePayload;
+  })();
+
+  if (!targetFilePath && !forceRefresh) {
+    inFlightCRDiffPromises.set(normId, executionPromise);
+  }
+
+  try {
+    return await executionPromise;
+  } finally {
+    if (!targetFilePath && !forceRefresh) {
+      inFlightCRDiffPromises.delete(normId);
+    }
+  }
 }
 
 // Matches the VOB directory name segment right after /vobs/<category>/, e.g.
@@ -1640,16 +1672,22 @@ class BackgroundDiffIndexer {
   }
 
   queuePriority(crid, targetVob = null, targetFilePath = null) {
+    const normId = normalizeCrid(crid);
+    this.completedCrids.delete(normId);
     this.completedCrids.delete(crid);
+    this.failedAttempts.delete(normId);
     this.failedAttempts.delete(crid);
     if (targetVob) {
+      this.priorityVobs.set(normId, targetVob);
       this.priorityVobs.set(crid, targetVob);
     }
     if (targetFilePath) {
+      this.priorityTargetFiles.set(normId, targetFilePath);
       this.priorityTargetFiles.set(crid, targetFilePath);
     }
-    if (!this.priorityQueue.includes(crid)) {
-      this.priorityQueue.unshift(crid);
+    // Prevent duplicate entries: skip if already actively running or already in queue
+    if (!this.priorityQueue.includes(normId) && !this.activeCrids.has(normId) && !this.activeCrids.has(crid)) {
+      this.priorityQueue.unshift(normId);
     }
     // Explicit priority items should run immediately even if auto-sweep is disabled
     if (!this.isRunning) {
@@ -1665,10 +1703,13 @@ class BackgroundDiffIndexer {
     for (const cr of crList) {
       const crid = cr?.crid || cr;
       if (crid) {
+        const normId = normalizeCrid(crid);
+        this.completedCrids.delete(normId);
         this.completedCrids.delete(crid);
+        this.failedAttempts.delete(normId);
         this.failedAttempts.delete(crid);
-        if (!this.priorityQueue.includes(crid)) {
-          this.priorityQueue.push(crid);
+        if (!this.priorityQueue.includes(normId) && !this.activeCrids.has(normId) && !this.activeCrids.has(crid)) {
+          this.priorityQueue.push(normId);
         }
       }
     }
@@ -1677,13 +1718,20 @@ class BackgroundDiffIndexer {
 
   removeCR(crid) {
     const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+    const normId = normalizeCrid(crid);
     this.completedCrids.delete(safeId);
+    this.completedCrids.delete(normId);
     this.failedAttempts.delete(safeId);
+    this.failedAttempts.delete(normId);
     this.priorityVobs.delete(safeId);
+    this.priorityVobs.delete(normId);
     this.priorityTargetFiles.delete(safeId);
+    this.priorityTargetFiles.delete(normId);
     this.activeTasks.delete(safeId);
+    this.activeTasks.delete(normId);
     this.activeCrids.delete(safeId);
-    this.priorityQueue = this.priorityQueue.filter(id => id !== safeId);
+    this.activeCrids.delete(normId);
+    this.priorityQueue = this.priorityQueue.filter(id => id !== safeId && id !== normId);
     deleteCRDiffCache(safeId);
   }
 
@@ -1805,9 +1853,19 @@ class BackgroundDiffIndexer {
     // 1. Check priority queue first
     while (this.priorityQueue.length > 0) {
       const priorityId = this.priorityQueue.shift();
-      if (!this.activeCrids.has(priorityId)) {
-        const cr = allCrs.find(c => c.crid === priorityId);
-        if (cr) return cr;
+      const normPriorityId = normalizeCrid(priorityId);
+      if (!this.activeCrids.has(normPriorityId) && !this.activeCrids.has(priorityId)) {
+        const cr = allCrs.find(c => {
+          const cNorm = normalizeCrid(c.crid);
+          return cNorm === normPriorityId || String(c.id) === String(parseInt(normPriorityId, 10)) || c.crid === priorityId;
+        });
+        if (cr) {
+          const normCrid = normalizeCrid(cr.crid);
+          // Lock immediately upon picking so subsequent concurrent ticks never pick the same CR
+          this.activeCrids.add(normCrid);
+          this.activeCrids.add(cr.crid);
+          return cr;
+        }
       }
     }
 
@@ -1816,11 +1874,12 @@ class BackgroundDiffIndexer {
     const now = Date.now();
     for (const cr of allCrs) {
       if (!cr.files || cr.files.length === 0) continue;
-      if (this.activeCrids.has(cr.crid)) continue;
-      if (this.completedCrids.has(cr.crid)) continue;
+      const normCrid = normalizeCrid(cr.crid);
+      if (this.activeCrids.has(normCrid) || this.activeCrids.has(cr.crid)) continue;
+      if (this.completedCrids.has(normCrid) || this.completedCrids.has(cr.crid)) continue;
 
       // Exponential backoff check for failed CRs (prevents CPU-burning infinite retry loops)
-      const failure = this.failedAttempts.get(cr.crid);
+      const failure = this.failedAttempts.get(normCrid) || this.failedAttempts.get(cr.crid);
       if (failure) {
         const backoffMs = Math.min(1800000, 30000 * Math.pow(4, failure.count - 1));
         if (now - failure.lastFailedAt < backoffMs) {
@@ -1832,10 +1891,12 @@ class BackgroundDiffIndexer {
       // see LARGE_CR_FILE_THRESHOLD above.
       if (largeSlotTaken && cr.files.length >= LARGE_CR_FILE_THRESHOLD) continue;
       const safeId = String(cr.crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
-      const meta = cacheIndex.get(safeId);
+      const meta = cacheIndex.get(safeId) || cacheIndex.get(normCrid);
 
       // If not cached at all in memory, pick immediately! (0ms, 0 disk I/O)
       if (!meta) {
+        this.activeCrids.add(normCrid);
+        this.activeCrids.add(cr.crid);
         return cr;
       }
 
@@ -1851,6 +1912,8 @@ class BackgroundDiffIndexer {
           cr._lastUpdatedMs = isNaN(t) ? 0 : t;
         }
         if (cr._lastUpdatedMs > meta.mtimeMs) {
+          this.activeCrids.add(normCrid);
+          this.activeCrids.add(cr.crid);
           return cr;
         }
       }
@@ -1859,6 +1922,8 @@ class BackgroundDiffIndexer {
       // (<= 10 files while the CR actually has > 15 files). Normal CRs whose file count difference
       // is merely skipped directory elements or binary files are never endlessly re-picked.
       if (!meta.isComplete && typeof meta.fileCount === 'number' && meta.fileCount <= 10 && cr.files.length > 15) {
+        this.activeCrids.add(normCrid);
+        this.activeCrids.add(cr.crid);
         return cr;
       }
     }
@@ -1867,19 +1932,26 @@ class BackgroundDiffIndexer {
 
   async _processCRWorker(targetCR) {
     const crid = targetCR.crid;
-    const targetVob = this.priorityVobs.get(crid) || null;
-    const targetFilePath = this.priorityTargetFiles.get(crid) || null;
+    const normCrid = normalizeCrid(crid);
+    const targetVob = this.priorityVobs.get(normCrid) || this.priorityVobs.get(crid) || null;
+    const targetFilePath = this.priorityTargetFiles.get(normCrid) || this.priorityTargetFiles.get(crid) || null;
+    this.priorityVobs.delete(normCrid);
     this.priorityVobs.delete(crid);
+    this.priorityTargetFiles.delete(normCrid);
     this.priorityTargetFiles.delete(crid);
     const isLarge = (targetCR.files || []).length >= LARGE_CR_FILE_THRESHOLD;
     this.activeWorkers++;
+    this.activeCrids.add(normCrid);
     this.activeCrids.add(crid);
-    if (isLarge) this.activeLargeCrids.add(crid);
+    if (isLarge) {
+      this.activeLargeCrids.add(normCrid);
+      this.activeLargeCrids.add(crid);
+    }
     this.status = 'running';
 
     const initialTotal = (targetCR.files || []).length || 1;
-    this.activeTasks.set(crid, {
-      crid,
+    this.activeTasks.set(normCrid, {
+      crid: normCrid,
       currentFile: targetFilePath ? targetFilePath.split('/').pop() : (targetCR.files?.[0] || '준비 중...'),
       filePath: targetFilePath || targetCR.filePaths?.[0] || targetCR.files?.[0] || '',
       fileIndex: 0,
@@ -1892,10 +1964,11 @@ class BackgroundDiffIndexer {
       await new Promise(res => setTimeout(res, 100));
       await fetchAndCacheCRDiff(targetCR, this.sshConfig, Infinity, false, targetVob, (prog) => {
         if (prog.completed) {
+          this.activeTasks.delete(normCrid);
           this.activeTasks.delete(crid);
         } else {
-          this.activeTasks.set(crid, {
-            crid,
+          this.activeTasks.set(normCrid, {
+            crid: normCrid,
             currentFile: prog.fileName,
             filePath: prog.filePath,
             fileIndex: prog.fileIndex,
@@ -1907,17 +1980,24 @@ class BackgroundDiffIndexer {
       this.processedCount++;
       this.lastProcessedAt = new Date().toISOString();
       this.lastError = null;
+      this.completedCrids.add(normCrid);
       this.completedCrids.add(crid);
+      this.failedAttempts.delete(normCrid);
       this.failedAttempts.delete(crid);
     } catch (err) {
-      this.lastError = `CR #${crid}: ${err.message}`;
-      console.warn(`[BackgroundDiffIndexer] Error caching #${crid}:`, err.message);
-      const prevCount = this.failedAttempts.get(crid)?.count || 0;
-      this.failedAttempts.set(crid, { count: prevCount + 1, lastFailedAt: Date.now() });
+      this.lastError = `CR #${normCrid}: ${err.message}`;
+      console.warn(`[BackgroundDiffIndexer] Error caching #${normCrid}:`, err.message);
+      const prevCount = this.failedAttempts.get(normCrid)?.count || this.failedAttempts.get(crid)?.count || 0;
+      this.failedAttempts.set(normCrid, { count: prevCount + 1, lastFailedAt: Date.now() });
     } finally {
+      this.activeTasks.delete(normCrid);
       this.activeTasks.delete(crid);
+      this.activeCrids.delete(normCrid);
       this.activeCrids.delete(crid);
-      if (isLarge) this.activeLargeCrids.delete(crid);
+      if (isLarge) {
+        this.activeLargeCrids.delete(normCrid);
+        this.activeLargeCrids.delete(crid);
+      }
       this.activeWorkers = Math.max(0, this.activeWorkers - 1);
       // Essential breathing cooldown (800ms) between CRs so Electron UI and OS stay fluid
       await new Promise(res => setTimeout(res, 800));
