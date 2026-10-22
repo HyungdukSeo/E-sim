@@ -445,48 +445,55 @@ export const VobLineageTreeView: React.FC<VobLineageTreeViewProps> = ({
           ))}
         </div>
 
-        {/* Autocomplete / Search Results Dropdown */}
+        {/* Autocomplete / Search Results Dropdown (100% 불투명 솔리드 배경으로 뒤 트리와의 겹침 차단) */}
         {isSearchFocused && searchResults.length > 0 && (
-          <div className="absolute left-0 right-0 top-full mt-2 bg-slate-900/98 backdrop-blur-2xl border border-emerald-500/40 rounded-xl shadow-2xl max-h-96 overflow-y-auto z-50 divide-y divide-slate-800">
-            <div className="p-2 text-[11px] font-semibold text-slate-400 flex items-center justify-between bg-slate-950/50">
+          <div 
+            style={{ backgroundColor: '#020617' }}
+            className="absolute left-0 right-0 top-full mt-2 bg-slate-950 border-2 border-emerald-500/60 rounded-xl shadow-2xl shadow-black max-h-96 overflow-y-auto z-50 divide-y divide-slate-800/80"
+          >
+            <div 
+              style={{ backgroundColor: '#0f172a' }}
+              className="p-2.5 px-3.5 text-[11px] font-semibold text-slate-300 flex items-center justify-between bg-slate-900 border-b border-slate-800 sticky top-0 z-10 shadow-sm"
+            >
               <span>검색 결과 {searchResults.length}건 (선택 시 해당 위치로 자동 스크롤 및 강조)</span>
-              <span className="text-emerald-400">Esc 키를 누르면 닫힙니다</span>
+              <span className="text-emerald-400 font-medium">Esc 키를 누르면 닫힙니다</span>
             </div>
             {searchResults.map((item) => (
               <button
                 key={item.vob}
                 onClick={() => handleSelectSearchResult(item.vob)}
-                className="w-full text-left p-3 hover:bg-emerald-500/10 transition-colors flex items-center justify-between group cursor-pointer"
+                style={{ backgroundColor: '#020617' }}
+                className="w-full text-left p-3 hover:bg-slate-900 transition-all flex items-center justify-between group cursor-pointer border-l-4 border-l-transparent hover:border-l-emerald-400"
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-8 h-8 rounded-lg bg-slate-800 group-hover:bg-emerald-500/20 flex items-center justify-center text-emerald-400 font-mono text-xs flex-shrink-0">
+                  <div className="w-8 h-8 rounded-lg bg-slate-800/90 group-hover:bg-emerald-500/20 flex items-center justify-center text-emerald-400 font-mono text-xs flex-shrink-0 border border-slate-700/60">
                     <FolderOpen className="w-4 h-4" />
                   </div>
                   <div className="flex flex-col min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="font-mono font-bold text-sm text-slate-200 group-hover:text-emerald-400">
+                      <span className="font-mono font-bold text-sm text-slate-100 group-hover:text-emerald-300">
                         {item.vob}
                       </span>
                       {item.baseVob && (
-                        <span className="text-xs text-cyan-400 flex items-center gap-1 font-mono">
+                        <span className="text-xs text-cyan-300 flex items-center gap-1 font-mono">
                           <ArrowRight className="w-3 h-3 text-slate-500" />
                           Base: {item.baseVob}
                         </span>
                       )}
                     </div>
                     <div className="text-xs text-slate-400 truncate flex items-center gap-2 mt-0.5">
-                      <span className="text-emerald-500/90 font-medium">[{item.familyName}]</span>
+                      <span className="text-emerald-400 font-semibold">[{item.familyName}]</span>
                       {item.createdDate && <span>생성일: {item.createdDate}</span>}
-                      {item.summary && <span className="text-slate-500">• {item.summary}</span>}
+                      {item.summary && <span className="text-slate-400">• {item.summary}</span>}
                     </div>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2 text-xs text-slate-400 flex-shrink-0">
-                  <span className="px-2 py-0.5 rounded bg-slate-800 text-emerald-400 font-semibold">
+                  <span className="px-2 py-0.5 rounded bg-slate-800 text-emerald-300 font-mono font-semibold border border-slate-700/60">
                     {item.crCount} CRs
                   </span>
-                  <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-emerald-400 transition-colors" />
+                  <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-emerald-400 transition-colors" />
                 </div>
               </button>
             ))}
@@ -494,10 +501,13 @@ export const VobLineageTreeView: React.FC<VobLineageTreeViewProps> = ({
         )}
 
         {isSearchFocused && searchQuery.trim() && searchResults.length === 0 && (
-          <div className="absolute left-0 right-0 top-full mt-2 bg-slate-900/98 backdrop-blur-2xl border border-slate-800 rounded-xl p-6 text-center text-slate-400 shadow-2xl z-50">
-            <Search className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-            <p className="text-sm font-semibold">'{searchQuery}'에 매칭되는 VOB가 없습니다.</p>
-            <p className="text-xs text-slate-500 mt-1">철자를 확인하시거나 앞 글자(예: POTS, SSW, KTC)만 입력해 보세요.</p>
+          <div 
+            style={{ backgroundColor: '#020617' }}
+            className="absolute left-0 right-0 top-full mt-2 bg-slate-950 border border-slate-700 rounded-xl p-6 text-center text-slate-300 shadow-2xl shadow-black z-50"
+          >
+            <Search className="w-8 h-8 text-slate-500 mx-auto mb-2" />
+            <p className="text-sm font-semibold text-slate-200">'{searchQuery}'에 매칭되는 VOB가 없습니다.</p>
+            <p className="text-xs text-slate-400 mt-1">철자를 확인하시거나 앞 글자(예: POTS, SSW, KTC)만 입력해 보세요.</p>
           </div>
         )}
       </div>
