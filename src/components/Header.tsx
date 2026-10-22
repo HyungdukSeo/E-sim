@@ -10,7 +10,8 @@ import {
   ExternalLink,
   CheckCircle2,
   AlertCircle,
-  GitBranch
+  GitBranch,
+  Network
 } from 'lucide-react';
 import { SyncMeta, ActiveTab } from '../types/cr';
 import { ThemeSwitcher } from './ThemeSwitcher';
@@ -133,6 +134,19 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <GitBranch className="w-3.5 h-3.5" />
             VOB 변경 이력
+          </button>
+
+          <button
+            onClick={() => setActiveTab('vobTree')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              activeTab === 'vobTree'
+                ? 'bg-mantis-500 text-slate-950 shadow-md shadow-mantis-500/30'
+                : 'text-slate-300 hover:text-main hover:bg-slate-800/60'
+            }`}
+            title="Base VOB를 기준으로 생성·파생된 전체 VOB의 계통도(Tree)를 한눈에 탐색하고 검색합니다"
+          >
+            <Network className="w-3.5 h-3.5" />
+            VOB 계통도
           </button>
 
           <button

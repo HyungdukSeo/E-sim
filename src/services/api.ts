@@ -310,6 +310,60 @@ export async function fetchVobList(): Promise<{ ok: boolean; vobs: VobListItem[]
   return resp.data;
 }
 
+export interface VobTreeNode {
+  vob: string;
+  baseVob: string | null;
+  family: string;
+  familyName: string;
+  familyColor: string;
+  crCount: number;
+  fileCount: number;
+  createdDate: string | null;
+  crid: string | null;
+  summary: string | null;
+  historyLines?: string[];
+  reporter?: string | null;
+  assignee?: string | null;
+  isHeuristicLink?: boolean;
+  children: VobTreeNode[];
+}
+
+export interface VobTreeFamily {
+  id: string;
+  name: string;
+  color: string;
+  roots: VobTreeNode[];
+}
+
+export interface VobTreeFlatNode {
+  vob: string;
+  baseVob: string | null;
+  family: string;
+  familyName: string;
+  familyColor: string;
+  crCount: number;
+  fileCount: number;
+  createdDate: string | null;
+  crid: string | null;
+  summary: string | null;
+  childCount: number;
+}
+
+export interface VobTreeResponse {
+  ok: boolean;
+  updatedAt: string;
+  totalVobs: number;
+  rootCount: number;
+  families: VobTreeFamily[];
+  roots: VobTreeNode[];
+  nodes: VobTreeFlatNode[];
+}
+
+export async function fetchVobTree(refresh = false): Promise<VobTreeResponse> {
+  const resp = await axios.get(`${API_BASE}/diff-cache/vobs-tree${refresh ? '?refresh=true' : ''}`);
+  return resp.data;
+}
+
 export interface VobRelatedCR {
   crid: string;
   id?: number;
@@ -523,4 +577,19 @@ export async function fetchDiffWorkerStatus(): Promise<{ ok: boolean; status: Di
 export async function controlDiffWorker(enabled?: boolean, concurrency?: number): Promise<{ ok: boolean; status: DiffWorkerStatus }> {
   const resp = await axios.post(`${API_BASE}/diff-cache/worker-control`, { enabled, concurrency });
   return resp.data;
+}
+
+export async function fetchForcedTextFiles(): Promise<string[]> {
+  const resp = await axios.get(`${API_BASE}/diff-cache/forced-text-files`);
+  return resp.data?.files || [];
+}
+
+export async function addForcedTextFile(filePath: string, fileName?: string, crid?: string): Promise<string[]> {
+  const resp = await axios.post(`${API_BASE}/diff-cache/forced-text-files`, { filePath, fileName, crid });
+  return resp.data?.files || [];
+}
+
+export async function removeForcedTextFile(filePath: string, fileName?: string): Promise<string[]> {
+  const resp = await axios.delete(`${API_BASE}/diff-cache/forced-text-files`, { data: { filePath, fileName } });
+  return resp.data?.files || [];
 }

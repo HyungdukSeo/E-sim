@@ -16,7 +16,18 @@ export const BINARY_EXTS = new Set([
 
 export const BINARY_FILE_RE = /\.(so|a|o|exe|dll|dylib|bin|class|jar|war|ear|tar|gz|tgz|zip|7z|rar|iso|img|rpm|deb|png|jpg|jpeg|gif|bmp|ico|pdf)(\.\d+)*$/i;
 
-export function isBinaryFile(fileName?: string, filePath?: string): boolean {
+export function isForcedTextFile(fileName?: string, filePath?: string, forcedTextSet?: Set<string>): boolean {
+  if (!forcedTextSet || forcedTextSet.size === 0) return false;
+  const fn = (fileName || '').toLowerCase().trim();
+  const fp = (filePath || '').toLowerCase().trim();
+  const base = (fp.split('/').pop() || fn).toLowerCase();
+  return forcedTextSet.has(fn) || forcedTextSet.has(fp) || forcedTextSet.has(base);
+}
+
+export function isBinaryFile(fileName?: string, filePath?: string, forcedTextSet?: Set<string>): boolean {
+  if (forcedTextSet && isForcedTextFile(fileName, filePath, forcedTextSet)) {
+    return false;
+  }
   const target = (fileName || filePath || '').toLowerCase().trim();
   if (!target) return false;
   const base = target.split('/').pop() || target;

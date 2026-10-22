@@ -31,6 +31,7 @@ import { CRDetailModal } from './components/CRDetailModal';
 import { CRComparisonModal } from './components/CRComparisonModal';
 import { Dashboard } from './components/Dashboard';
 import { VobHistoryView } from './components/VobHistoryView';
+import { VobLineageTreeView } from './components/VobLineageTreeView';
 import { AIAgentModal } from './components/AIAgentModal';
 import { SettingsModal } from './components/SettingsModal';
 import { Loader2, RefreshCw, AlertCircle, Bookmark } from 'lucide-react';
@@ -53,6 +54,7 @@ export function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [selectedCR, setSelectedCR] = useState<CRItem | null>(null);
   const [compareTargetCRs, setCompareTargetCRs] = useState<CRItem[] | null>(null);
+  const [selectedVobHistory, setSelectedVobHistory] = useState<string | null>(null);
 
   // Modals
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -407,11 +409,24 @@ export function App() {
             {/* VOB HISTORY TAB: CR-number-agnostic change history browsed by VOB */}
             {activeTab === 'vobHistory' && (
               <VobHistoryView
+                initialVob={selectedVobHistory}
                 onSelectCR={crid => {
                   const cr = allCrs.find(c => c.crid === crid);
                   if (cr) setSelectedCR(cr);
                 }}
                 sshConfig={settings.ssh}
+              />
+            )}
+
+            {/* VOB LINEAGE TREE TAB: Base -> Derived hierarchy visualization */}
+            {activeTab === 'vobTree' && (
+              <VobLineageTreeView
+                allCrs={allCrs}
+                mantisUrl={settings.mantisUrl}
+                onSelectVob={(vob) => {
+                  setSelectedVobHistory(vob);
+                  setActiveTab('vobHistory');
+                }}
               />
             )}
           </>

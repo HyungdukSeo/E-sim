@@ -11,9 +11,10 @@ import { syncMantisData, getLocalDatabase, reloadDatabase, importDatabase, fetch
 import { processAiQuery, analyzeSingleCRDiff, compareMultipleCRDiffs, generateCRKnowledge, saveCRKnowledge, batchGenerateKnowledge } from './ai.js';
 import { testSSHConnection, fetchFileDiffSSH, fetchFileVersionHistorySSH, fetchFileVersionsSSH } from './ssh.js';
 import { getClaudeModels, getAntigravityModels, getCodexModels, getOmniRouteModels, getAIProvidersStatus, checkOmniRouteStatus, findCommandPath } from './cli-models.js';
-import { getCRDiffCache, getCRDiffCacheAsync, saveCRDiffCache, deleteCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, initCacheIndex, batchIndexDiffs, backgroundDiffIndexer, getVobList, getVobHistory, mapFileVersionsToCRs, isBinaryFile, prewarmDiffCacheWorkers, auditAndCollectVob } from './diff-cache.js';
+import { getCRDiffCache, getCRDiffCacheAsync, saveCRDiffCache, deleteCRDiffCache, fetchAndCacheCRDiff, getDiffCacheStats, initCacheIndex, batchIndexDiffs, backgroundDiffIndexer, getVobList, getVobHistory, mapFileVersionsToCRs, isBinaryFile, prewarmDiffCacheWorkers, auditAndCollectVob, loadForcedTextFiles, addForcedTextFile, removeForcedTextFile, isForcedTextFile } from './diff-cache.js';
 import { sshPool } from './ssh-pool.js';
 import { searchCRs } from './search.js';
+import { buildVobTree } from './vob-tree.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -923,6 +924,19 @@ app.post('/api/diff-cache/worker-control', (req, res) => {
   }
 });
 
+// VOB Lineage Tree: Full hierarchy and lineage relationship (Base VOB -> Child VOBs)
+app.get('/api/diff-cache/vobs-tree', async (req, res) => {
+  try {
+    const { refresh } = req.query;
+    const { crs } = getLocalDatabase();
+    const tree = await buildVobTree(crs, refresh === 'true');
+    res.json({ ok: true, ...tree });
+  } catch (err) {
+    console.error('[VobTree API Error]', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // VOB-centric change history (independent of any one CR): browse how a VOB's
 // source has evolved across every CR that has touched it, based on cached diffs.
 // Registered BEFORE the /:crid catch-all route below so "vobs" is never captured
@@ -994,6 +1008,39 @@ app.get('/api/diff-cache/file-version-chain', async (req, res) => {
     }
 
     res.json({ ok: true, filePath, latestVersion, chain });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Forced text files (allowlist for scripts named .exe/.so/etc.)
+app.get('/api/diff-cache/forced-text-files', (req, res) => {
+  try {
+    const files = loadForcedTextFiles();
+    res.json({ ok: true, files });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/api/diff-cache/forced-text-files', (req, res) => {
+  try {
+    const { filePath, fileName, crid } = req.body || {};
+    if (!filePath && !fileName) {
+      return res.status(400).json({ ok: false, error: 'filePath 또는 fileName이 필요합니다.' });
+    }
+    const files = addForcedTextFile(filePath, fileName, crid);
+    res.json({ ok: true, files });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.delete('/api/diff-cache/forced-text-files', (req, res) => {
+  try {
+    const { filePath, fileName } = req.body || {};
+    const files = removeForcedTextFile(filePath, fileName);
+    res.json({ ok: true, files });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }

@@ -37,17 +37,7 @@ import {
 import { SideBySideDiffViewer } from './SideBySideDiffViewer';
 import { MultiVersionDiffViewer } from './MultiVersionDiffViewer';
 import { copyToClipboard } from '../utils/clipboard';
-import { isDirectoryElement } from '../utils/fileUtils';
-
-export const BINARY_FILE_RE = /\.(so|a|o|exe|dll|dylib|bin|class|jar|war|ear|tar|gz|tgz|zip|7z|rar|iso|img|rpm|deb|png|jpg|jpeg|gif|bmp|ico|pdf)(\.\d+)*$/i;
-
-export function isBinaryFile(fileName: string, filePath: string = ''): boolean {
-  const target = (fileName || filePath || '').toLowerCase().trim();
-  if (!target) return false;
-  const base = target.split('/').pop() || target;
-  if (base === 'xxxx' || target === 'xxxx') return true;
-  return BINARY_FILE_RE.test(base);
-}
+import { isDirectoryElement, isBinaryFile, isForcedTextFile } from '../utils/fileUtils';
 
 function decodeBase64WithEncoding(base64Str?: string, fallbackStr?: string, encoding: string = 'euc-kr'): string {
   if (!base64Str) return fallbackStr || '';
@@ -108,6 +98,9 @@ import {
   collectVobUncachedCRs,
   fetchFileVersionChain,
   fetchFileVersionsSSH,
+  fetchForcedTextFiles,
+  addForcedTextFile,
+  removeForcedTextFile,
   VobListItem,
   VobHistoryEntry,
   VobRelatedCR,
@@ -794,12 +787,13 @@ const VobListPanel: React.FC<{
 interface VobHistoryViewProps {
   onSelectCR?: (crid: string) => void;
   sshConfig?: SSHConfig;
+  initialVob?: string | null;
 }
 
-export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshConfig }) => {
+export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshConfig, initialVob }) => {
   const [vobs, setVobs] = useState<VobListItem[]>([]);
   const [loadingVobs, setLoadingVobs] = useState(true);
-  const [selectedVob, setSelectedVob] = useState<string | null>(null);
+  const [selectedVob, setSelectedVob] = useState<string | null>(initialVob || null);
 
   const [history, setHistory] = useState<{
     totalCrs: number;
@@ -818,6 +812,55 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
   const [retryingCrid, setRetryingCrid] = useState<string | null>(null);
   const [copiedFilePath, setCopiedFilePath] = useState<string | null>(null);
   const [resolvedFiles, setResolvedFiles] = useState<Set<string>>(new Set());
+  const [forcedTextFiles, setForcedTextFiles] = useState<Set<string>>(new Set());
+  const [forcingFilePath, setForcingFilePath] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchForcedTextFiles()
+      .then(files => {
+        if (!cancelled && Array.isArray(files)) {
+          setForcedTextFiles(new Set(files.map(s => s.toLowerCase())));
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleToggleForceText = async (entry: VobHistoryEntry, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const isCurrentlyForced = isForcedTextFile(entry.fileName, entry.filePath, forcedTextFiles);
+    setForcingFilePath(entry.filePath);
+    try {
+      if (isCurrentlyForced) {
+        const updated = await removeForcedTextFile(entry.filePath, entry.fileName);
+        setForcedTextFiles(new Set(updated.map(s => s.toLowerCase())));
+        setCollectMessage(`'${entry.fileName}' 파일의 강제 수집 설정을 해제했습니다.`);
+      } else {
+        const updated = await addForcedTextFile(entry.filePath, entry.fileName, entry.crid);
+        setForcedTextFiles(new Set(updated.map(s => s.toLowerCase())));
+
+        // Priority queue collection for this CR/file
+        if (selectedVob && entry.crid) {
+          collectVobUncachedCRs(selectedVob, [entry.crid], entry.filePath).catch(() => {});
+          setCollectMessage(`'${entry.fileName}'을(를) 강제 수집 대상에 포함했습니다. 앞으로 모든 수집 시 해당 파일이 정상 수집됩니다.`);
+        } else {
+          setCollectMessage(`'${entry.fileName}'을(를) 강제 수집 대상에 포함했습니다.`);
+        }
+      }
+    } catch (err: any) {
+      alert(`강제 수집 설정 변경 실패: ${err.message || '오류 발생'}`);
+    } finally {
+      setForcingFilePath(null);
+    }
+  };
+
+  useEffect(() => {
+    if (initialVob) {
+      setSelectedVob(initialVob);
+      loadHistory(initialVob);
+    }
+  }, [initialVob]);
 
   useEffect(() => {
     let cancelled = false;
@@ -977,6 +1020,15 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                       일부만 수집됨 {history.partiallyCachedCrids.length.toLocaleString()}건
                     </span>
                   )}
+                  {forcedTextFiles.size > 0 && (
+                    <span
+                      className="px-2 py-0.5 rounded-md bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-mono flex items-center gap-1"
+                      title="바이너리 확장자이지만 스크립트로 강제 수집 등록된 파일 수"
+                    >
+                      <FileCode2 className="w-3 h-3 text-cyan-400" />
+                      강제 수집 파일 {forcedTextFiles.size}개
+                    </span>
+                  )}
                   <button
                     onClick={handleCollectUncached}
                     disabled={isCollecting}
@@ -1032,7 +1084,8 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                 filteredEntries.map((entry, idx) => {
                   const isExpanded = expandedIdx === idx;
                   const { dir, file } = formatVobSubPath(entry.filePath, selectedVob || '');
-                  const isBinary = isBinaryFile(entry.fileName, entry.filePath);
+                  const isForced = isForcedTextFile(entry.fileName, entry.filePath, forcedTextFiles);
+                  const isBinary = !isForced && isBinaryFile(entry.fileName, entry.filePath, forcedTextFiles);
                   const isResolved = resolvedFiles.has(entry.filePath);
                   const effectiveStatus = isBinary ? 'binary' : (isResolved ? 'success' : entry.status);
                   const effectiveHasChanges = isBinary ? false : (isResolved ? true : entry.hasChanges);
@@ -1066,7 +1119,15 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
-                          {effectiveStatus === 'binary' ? (
+                          {isForced ? (
+                            <span
+                              className="text-[10px] px-2 py-0.5 rounded-md bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 font-mono font-semibold flex items-center gap-1 shadow-sm"
+                              title="바이너리 확장자이지만 스크립트/텍스트로 강제 수집 대상에 포함된 파일입니다"
+                            >
+                              <FileCode2 className="w-3 h-3 text-cyan-400" />
+                              강제 수집
+                            </span>
+                          ) : effectiveStatus === 'binary' ? (
                             <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 border border-slate-700 text-slate-400 font-mono">
                               바이너리
                             </span>
@@ -1203,27 +1264,70 @@ export const VobHistoryView: React.FC<VobHistoryViewProps> = ({ onSelectCR, sshC
                             </div>
                           )}
 
-                          {entry.status === 'not_collected' ? null : isBinary ? (
-                            <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 text-slate-400 text-xs flex items-center gap-3">
-                              <div className="p-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 shrink-0">
-                                <Binary className="w-4 h-4" />
-                              </div>
-                              <div>
-                                <div className="font-semibold text-slate-200">바이너리 파일 (.so / .a / .exe 등)</div>
-                                <div className="text-[11px] text-slate-500 mt-0.5">
-                                  바이너리 형식의 파일은 텍스트 코드 비교(Diff)를 지원하지 않습니다. 성능 저하 및 화면 멈춤을 방지하기 위해 변경 이력 로딩을 생략합니다.
+                          {isBinary ? (
+                            <div className="p-4 rounded-xl bg-slate-950/90 border border-slate-800 text-slate-400 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-inner">
+                              <div className="flex items-start sm:items-center gap-3">
+                                <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 shrink-0 mt-0.5 sm:mt-0">
+                                  <Binary className="w-4 h-4 text-slate-400" />
+                                </div>
+                                <div>
+                                  <div className="font-semibold text-slate-200 flex items-center gap-2">
+                                    <span>바이너리 파일 (.so / .a / .exe 등)</span>
+                                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700">기본 제외</span>
+                                  </div>
+                                  <div className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                                    기본적으로 바이너리 형식 파일은 Diff 수집 및 조회를 건너뜁니다.
+                                    <br />
+                                    <span className="text-emerald-400/90 font-medium">※ 확장자는 exe/so이지만 실제 쉘/파이썬 등 단순 텍스트 스크립트인 경우</span> 아래 버튼을 눌러 강제 수집 대상에 포함할 수 있습니다.
+                                  </div>
                                 </div>
                               </div>
+
+                              <button
+                                onClick={(e) => handleToggleForceText(entry, e)}
+                                disabled={forcingFilePath === entry.filePath}
+                                className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 hover:border-emerald-500/60 transition-all flex items-center justify-center gap-2 shrink-0 shadow-lg shadow-emerald-500/10 cursor-pointer disabled:opacity-50"
+                                title="이 파일을 텍스트 스크립트로 취급하여 앞으로 모든 수집 시 Diff를 정상 수집하도록 설정합니다"
+                              >
+                                {forcingFilePath === entry.filePath ? (
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                                ) : (
+                                  <FileCode2 className="w-3.5 h-3.5 text-emerald-400" />
+                                )}
+                                <span>강제로 수집리스트에 포함</span>
+                              </button>
                             </div>
                           ) : (
-                            <FileVersionChainPanel
-                              filePath={entry.filePath}
-                              checkinLog={entry.checkinLog}
-                              sshConfig={sshConfig}
-                              onVersionLoaded={() => {
-                                setResolvedFiles(prev => new Set(prev).add(entry.filePath));
-                              }}
-                            />
+                            <>
+                              {isForced && (
+                                <div className="p-3 mb-2.5 rounded-xl bg-cyan-950/40 border border-cyan-800/40 text-xs flex items-center justify-between gap-3 text-cyan-200">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <FileCode2 className="w-4 h-4 text-cyan-400 shrink-0" />
+                                    <div className="truncate">
+                                      <span className="font-semibold text-cyan-300">[강제 수집 대상]</span>
+                                      <span className="text-[11px] text-slate-300 ml-1.5">바이너리 확장자이지만 스크립트로 지정되어 코드 변경 사항이 정상 수집됩니다.</span>
+                                    </div>
+                                  </div>
+                                  <button
+                                    onClick={(e) => handleToggleForceText(entry, e)}
+                                    disabled={forcingFilePath === entry.filePath}
+                                    className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors shrink-0 flex items-center gap-1 cursor-pointer"
+                                    title="강제 수집 목록에서 제외하고 원래 바이너리 기본값으로 되돌립니다"
+                                  >
+                                    <X className="w-3 h-3 text-slate-400" />
+                                    <span>강제 수집 해제</span>
+                                  </button>
+                                </div>
+                              )}
+                              <FileVersionChainPanel
+                                filePath={entry.filePath}
+                                checkinLog={entry.checkinLog}
+                                sshConfig={sshConfig}
+                                onVersionLoaded={() => {
+                                  setResolvedFiles(prev => new Set(prev).add(entry.filePath));
+                                }}
+                              />
+                            </>
                           )}
                         </div>
                       )}

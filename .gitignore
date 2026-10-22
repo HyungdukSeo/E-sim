@@ -20,6 +20,7 @@ Thumbs.db
 data/cr_database.json
 data/settings.json
 data/diff_cache/
+data/forced_text_files.json
 server/data/cr_cache.json
 *.json.gz
 

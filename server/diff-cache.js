@@ -220,9 +220,105 @@ export function initCacheIndex(forceReset = false) {
   }
 }
 
+let forcedTextFilesSet = new Set();
+const FORCED_TEXT_PATH = path.join(DATA_DIR, 'forced_text_files.json');
+
+export function loadForcedTextFiles() {
+  try {
+    if (fs.existsSync(FORCED_TEXT_PATH)) {
+      const raw = JSON.parse(fs.readFileSync(FORCED_TEXT_PATH, 'utf8'));
+      if (Array.isArray(raw)) {
+        forcedTextFilesSet = new Set(raw.map(s => String(s).trim().toLowerCase()).filter(Boolean));
+      }
+    }
+  } catch (e) {
+    console.warn('[DiffCache] Error loading forced_text_files.json:', e.message);
+  }
+  return Array.from(forcedTextFilesSet);
+}
+
+export function saveForcedTextFiles(files) {
+  try {
+    const list = Array.from(new Set((files || []).map(s => String(s).trim().toLowerCase()).filter(Boolean)));
+    fs.writeFileSync(FORCED_TEXT_PATH, JSON.stringify(list, null, 2), 'utf8');
+    forcedTextFilesSet = new Set(list);
+    return list;
+  } catch (e) {
+    console.error('[DiffCache] Error saving forced_text_files.json:', e.message);
+    throw e;
+  }
+}
+
+export function isForcedTextFile(fileName, filePath = '') {
+  if (forcedTextFilesSet.size === 0) {
+    loadForcedTextFiles();
+  }
+  const fn = (fileName || '').toLowerCase().trim();
+  const fp = (filePath || '').toLowerCase().trim();
+  const base = (fp.split('/').pop() || fn).toLowerCase();
+  return forcedTextFilesSet.has(fn) || forcedTextFilesSet.has(fp) || forcedTextFilesSet.has(base);
+}
+
+export function addForcedTextFile(filePath, fileName, crid) {
+  loadForcedTextFiles();
+  const candidates = [filePath, fileName].filter(Boolean).map(s => String(s).trim().toLowerCase());
+  for (const c of candidates) {
+    forcedTextFilesSet.add(c);
+    const base = c.split('/').pop();
+    if (base) forcedTextFilesSet.add(base);
+  }
+  const saved = saveForcedTextFiles(Array.from(forcedTextFilesSet));
+
+  // If crid provided, clean up any status: 'binary' in diff_cache/{crid}.json
+  if (crid) {
+    try {
+      const safeId = String(crid).trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+      const cachePath = path.join(DIFF_CACHE_DIR, `${safeId}.json`);
+      if (fs.existsSync(cachePath)) {
+        const cache = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+        if (cache && Array.isArray(cache.files)) {
+          let modified = false;
+          cache.files = cache.files.filter(f => {
+            const matches = candidates.includes((f.filePath || '').toLowerCase()) ||
+                            candidates.includes((f.fileName || '').toLowerCase()) ||
+                            candidates.includes(((f.filePath || '').split('/').pop() || '').toLowerCase());
+            if (matches && f.status === 'binary') {
+              modified = true;
+              return false; // remove so it can be re-collected as text diff
+            }
+            return true;
+          });
+          if (modified) {
+            fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), 'utf8');
+            console.log(`[DiffCache] Removed binary entry for ${filePath} from CR #${crid} cache.`);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[DiffCache] Failed to clean binary entry in CR #${crid}:`, e.message);
+    }
+  }
+
+  return saved;
+}
+
+export function removeForcedTextFile(filePath, fileName) {
+  loadForcedTextFiles();
+  const candidates = [filePath, fileName].filter(Boolean).map(s => String(s).trim().toLowerCase());
+  for (const c of candidates) {
+    forcedTextFilesSet.delete(c);
+    const base = c.split('/').pop();
+    if (base) forcedTextFilesSet.delete(base);
+  }
+  return saveForcedTextFiles(Array.from(forcedTextFilesSet));
+}
+
 export const BINARY_FILE_RE = /\.(so|a|o|exe|dll|dylib|bin|class|jar|war|ear|tar|gz|tgz|zip|7z|rar|iso|img|rpm|deb|png|jpg|jpeg|gif|bmp|ico|pdf)(\.\d+)*$/i;
 
 export function isBinaryFile(fileName, filePath = '') {
+  if (isForcedTextFile(fileName, filePath)) {
+    return false;
+  }
   const target = (fileName || filePath || '').toLowerCase().trim();
   if (!target) return false;
   const base = target.split('/').pop() || target;
