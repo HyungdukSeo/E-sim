@@ -132,6 +132,7 @@
 1. **설치 파일 다운로드**: [GitHub Releases v1.0.2](https://github.com/HyungdukSeo/E-sim/releases/tag/v1.0.2)에서 **`Mantis.CR.Ultra.Hub-1.0.2-arm64.dmg`** (147MB)를 다운로드합니다.
 2. **설치 실행**: 다운로드한 `.dmg` 파일을 더블 클릭하여 연 후, **`Mantis CR Ultra Hub`** 아이콘을 **`Applications`** 폴더로 드래그 앤 드롭합니다.
 3. **실행**: Launchpad 또는 응용 프로그램 폴더에서 앱을 실행합니다.
+   * 앱은 Apple 공증(notarization) 없이 ad-hoc 서명으로 배포됩니다. 첫 실행 시 "확인되지 않은 개발자" 경고가 뜨면 **앱 아이콘 우클릭 → 열기** 또는 **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기**로 한 번만 허용하면 됩니다 (`xattr` 명령 불필요).
    * macOS 상단 **메뉴바(시스템 트레이)에 번개 아이콘이 상주**하며 백그라운드로 작동합니다.
    * **트레이 메뉴**: 🌐 데스크톱 창 열기, 🔄 Mantis 데이터 즉시 동기화, 🟢 서버 상태 모니터링, ⚙️ ClearCase SSH 설정, 🚪 완전 종료
 
