@@ -385,7 +385,11 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
           authorInTitle: titleParsed.authorInTitle,
           cleanSummary: titleParsed.cleanSummary,
           files: checkinParsed.files,
-          filePaths: checkinParsed.filePaths
+          filePaths: checkinParsed.filePaths,
+          // The CR changed on Mantis, so the scraped view.php details (written
+          // fields, attachments) are stale too — force a live re-scrape the next
+          // time the CR is opened instead of only refreshing the check-in files.
+          detailsFetched: false
         };
         crMap.set(crid, updatedCr);
         changedCrs.push(updatedCr);
@@ -653,6 +657,20 @@ export async function fetchCRPageDetails(bugId, mantisUrl = 'http://192.168.16.2
       }
     }
 
+    // Header row values (CRID / 프로젝트 / 상태 보기 / 보고 날짜 / 최종 갱신) sit in the row
+    // below the category cells, so the label/value regex above cannot pair them.
+    const headerMatch = html.match(/최종 갱신<\/td>\s*<\/tr>\s*<tr[^>]*>((?:\s*<td[^>]*>[\s\S]*?<\/td>){5})/i);
+    const headerValues = headerMatch
+      ? [...headerMatch[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => m[1].replace(/<[^>]+>/g, '').trim())
+      : [];
+    // CSV sync stores dates as YYYY-MM-DD; keep the same shape so the next sync
+    // does not see a spurious change just because of the time suffix.
+    const liveLastUpdated = (headerValues[4] || '').slice(0, 10);
+    const liveSummary = (fields['제목'] || '').replace(/^\d+:\s*/, '').trim();
+    const liveStatus = (fields['상태'] || '').toLowerCase().trim();
+    const liveAssignee = fields['담당자'] || '';
+    const liveReporter = fields['보고자'] || '';
+
     // Update in-memory and persist to DB file asynchronously
     const idStr = String(numericId).padStart(7, '0');
     const { crs } = getLocalDatabase();
@@ -661,6 +679,21 @@ export async function fetchCRPageDetails(bugId, mantisUrl = 'http://192.168.16.2
     if (found) {
       found.details = details;
       found.detailsFetched = true;
+      // Keep the written top-level fields in sync with the live page as well,
+      // not just the check-in log / attachments.
+      if (liveSummary && liveSummary !== found.summary) {
+        const titleParsed = parseTitleTags(liveSummary);
+        found.summary = liveSummary;
+        found.customer = titleParsed.customer;
+        found.vob = titleParsed.vob;
+        found.module = titleParsed.module;
+        found.authorInTitle = titleParsed.authorInTitle;
+        found.cleanSummary = titleParsed.cleanSummary;
+      }
+      if (liveStatus) found.status = liveStatus;
+      if (liveAssignee) found.assignee = liveAssignee;
+      if (liveReporter) found.reporter = liveReporter;
+      if (liveLastUpdated) found.lastUpdated = liveLastUpdated;
       if (details.checkinLog) {
         found.checkinLog = details.checkinLog;
       }
