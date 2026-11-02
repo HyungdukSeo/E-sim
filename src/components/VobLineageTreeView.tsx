@@ -25,11 +25,14 @@ interface VobLineageTreeViewProps {
   allCrs?: CRItem[];
   onSelectVob: (vobName: string) => void;
   mantisUrl?: string;
+  /** VOB to expand, highlight and scroll to once the tree is loaded (e.g. from a VOB 생성 record). */
+  focusVob?: string | null;
 }
 
 export const VobLineageTreeView: React.FC<VobLineageTreeViewProps> = ({
   onSelectVob,
-  mantisUrl = 'http://192.168.16.200'
+  mantisUrl = 'http://192.168.16.200',
+  focusVob = null
 }) => {
   const [treeData, setTreeData] = useState<VobTreeResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -191,6 +194,14 @@ export const VobLineageTreeView: React.FC<VobLineageTreeViewProps> = ({
       setHighlightedVob(prev => (prev === vobName ? null : prev));
     }, 4500);
   };
+
+  // Jump to an externally requested VOB once tree data is available
+  useEffect(() => {
+    if (focusVob && treeData?.nodes?.length) {
+      handleSelectSearchResult(focusVob);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusVob, treeData]);
 
   // Render a recursive tree node
   const renderTreeNode = (node: VobTreeNode, depth = 0, isLast = false) => {

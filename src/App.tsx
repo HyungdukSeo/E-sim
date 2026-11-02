@@ -55,6 +55,19 @@ export function App() {
   const [selectedCR, setSelectedCR] = useState<CRItem | null>(null);
   const [compareTargetCRs, setCompareTargetCRs] = useState<CRItem[] | null>(null);
   const [selectedVobHistory, setSelectedVobHistory] = useState<string | null>(null);
+  const [focusTreeVob, setFocusTreeVob] = useState<string | null>(null);
+
+  // Navigation from a VOB 생성 / Package 제작 record into the VOB-centric tabs.
+  const handleOpenVobHistory = (vob: string) => {
+    setSelectedCR(null);
+    setSelectedVobHistory(vob);
+    setActiveTab('vobHistory');
+  };
+  const handleOpenVobTree = (vob: string) => {
+    setSelectedCR(null);
+    setFocusTreeVob(vob);
+    setActiveTab('vobTree');
+  };
 
   // Modals
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -362,6 +375,8 @@ export function App() {
                               }}
                               isSplitView={true}
                               onUpdateCR={handleUpdateCR}
+                              onOpenVobHistory={handleOpenVobHistory}
+                              onOpenVobTree={handleOpenVobTree}
                             />
                           ) : (
                             <div className="h-full glass-panel rounded-2xl border border-slate-800 flex flex-col items-center justify-center text-slate-500 p-8 text-center space-y-2">
@@ -425,6 +440,7 @@ export function App() {
               <VobLineageTreeView
                 allCrs={allCrs}
                 mantisUrl={settings.mantisUrl}
+                focusVob={focusTreeVob}
                 onSelectVob={(vob) => {
                   setSelectedVobHistory(vob);
                   setActiveTab('vobHistory');
@@ -456,6 +472,8 @@ export function App() {
           }}
           isSplitView={false}
           onUpdateCR={handleUpdateCR}
+          onOpenVobHistory={handleOpenVobHistory}
+          onOpenVobTree={handleOpenVobTree}
         />
       )}
 

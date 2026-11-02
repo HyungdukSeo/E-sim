@@ -19,6 +19,40 @@ export interface AttachmentItem {
   extension: string;
 }
 
+export interface VobLineageStep {
+  date: string;
+  from: string;
+  to: string;
+  raw: string;
+}
+
+/** [VOB] custom fields scraped from a "VOB 생성" project issue (not a real CR). */
+export interface VobCreationInfo {
+  targetVob: string;
+  baseVob: string;
+  location: string;
+  trigger: string;
+  history: VobLineageStep[];
+}
+
+/** [PKG] custom fields scraped from a "Package 제작" project issue (not a real CR). */
+export interface PackageInfo {
+  purpose: string;
+  product: string;
+  type: string;
+  targetVob: string;
+  site: string;
+  dueDate: string;
+  osType: string;
+  changedBlocks: string;
+  testRequestNo: string;
+  testCompleteNo: string;
+  relatedCrids: string[];
+  request: string;
+  result: string;
+  files: string;
+}
+
 export interface CRDetails {
   problem?: string;
   cause?: string;
@@ -30,6 +64,8 @@ export interface CRDetails {
   priority?: string;
   issueReason?: string;
   attachments?: AttachmentItem[];
+  vobCreation?: VobCreationInfo;
+  packageInfo?: PackageInfo;
 }
 
 export interface CRItem {
@@ -46,6 +82,9 @@ export interface CRItem {
   status: string;
   targetVersion: string;
   checkinLog: string;
+  description?: string;
+  stepsToReproduce?: string;
+  additionalInfo?: string;
   customer?: string;
   vob?: string;
   module?: string;

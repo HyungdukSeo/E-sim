@@ -7,7 +7,7 @@ import os from 'os';
 import axios from 'axios';
 import { exec } from 'child_process';
 import { fileURLToPath } from 'url';
-import { syncMantisData, getLocalDatabase, reloadDatabase, importDatabase, fetchCRPageDetails, DB_FILE, META_FILE, DATA_DIR } from './sync.js';
+import { syncMantisData, getLocalDatabase, reloadDatabase, importDatabase, fetchCRPageDetails, isNonCrRecord, DB_FILE, META_FILE, DATA_DIR } from './sync.js';
 import { processAiQuery, analyzeSingleCRDiff, compareMultipleCRDiffs, generateCRKnowledge, saveCRKnowledge, batchGenerateKnowledge } from './ai.js';
 import { testSSHConnection, fetchFileDiffSSH, fetchFileVersionHistorySSH, fetchFileVersionsSSH } from './ssh.js';
 import { getClaudeModels, getAntigravityModels, getCodexModels, getOmniRouteModels, getAIProvidersStatus, checkOmniRouteStatus, findCommandPath } from './cli-models.js';
@@ -497,9 +497,9 @@ app.get('/api/cr/:id', async (req, res) => {
 
   // If details not fetched yet, attachments not populated, refresh requested, or
   // no check-in files yet (a later check-in may have been added), fetch on-demand from Mantis.
-  // "VOB 생성" project CRs never carry a Check-in Log, so an empty filePaths list
-  // is their normal state — re-scraping them on every view is pointless.
-  const expectsCheckinFiles = found.project !== 'VOB 생성';
+  // Non-CR records (VOB 생성 / Package 제작 / 장애내역) never carry a Check-in Log,
+  // so an empty filePaths list is their normal state — re-scraping them on every view is pointless.
+  const expectsCheckinFiles = !isNonCrRecord(found);
   if (!found.detailsFetched || !Array.isArray(found.details?.attachments) || req.query.refresh === 'true' || (expectsCheckinFiles && !found.filePaths?.length)) {
     try {
       const { meta } = getLocalDatabase();

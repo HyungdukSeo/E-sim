@@ -29,6 +29,8 @@ import { CRItem, SSHConfig, AppSettings } from '../types/cr';
 import { SimilarCRs } from './SimilarCRs';
 import { FileTreeView, filterOutDirectories } from './FileTreeView';
 import { CRCodeChangesView } from './CRCodeChangesView';
+import { RecordDetailView } from './RecordDetailView';
+import { isNonCrRecord } from '../utils/vobUtils';
 import { DiffViewerModal } from './DiffViewerModal';
 import { copyToClipboard } from '../utils/clipboard';
 import { fetchCRDetail, fetchCRDiffCache, analyzeCRDiffAPI, loadSettings } from '../services/api';
@@ -52,6 +54,8 @@ interface CRDetailModalProps {
   aiSettings?: AppSettings['ai'];
   onOpenSettings?: () => void;
   onUpdateCR?: (updated: CRItem) => void;
+  onOpenVobHistory?: (vob: string) => void;
+  onOpenVobTree?: (vob: string) => void;
 }
 
 export const CRDetailModal: React.FC<CRDetailModalProps> = ({
@@ -69,7 +73,9 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
   sshServers,
   aiSettings,
   onOpenSettings,
-  onUpdateCR
+  onUpdateCR,
+  onOpenVobHistory,
+  onOpenVobTree
 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'details' | 'checkin' | 'raw' | 'aiDiff'>('details');
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -92,7 +98,7 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
 
   useEffect(() => {
     setCurrentCR(cr);
-    if (!cr) {
+    if (!cr || isNonCrRecord(cr)) {
       autoFetchedCridRef.current = null;
       return;
     }
@@ -176,6 +182,25 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
   };
 
   if (!isOpen || !currentCR) return null;
+
+  // VOB 생성 / Package 제작 / 장애내역 records are not CRs: no Check-in Log, no
+  // diff, no AI analysis — render their own layout instead of the CR tabs.
+  if (isNonCrRecord(currentCR)) {
+    return (
+      <RecordDetailView
+        cr={currentCR}
+        allCrs={allCrs}
+        mantisUrl={mantisUrl}
+        isSplitView={isSplitView}
+        onClose={onClose}
+        onSelectCR={onSelectCR}
+        onUpdateCR={onUpdateCR}
+        onOpenVobHistory={onOpenVobHistory}
+        onOpenVobTree={onOpenVobTree}
+      />
+    );
+  }
+
   const crItem = currentCR;
   const actualFilePaths = filterOutDirectories(crItem.filePaths || []);
   const isBookmarked = bookmarks.has(crItem.crid);

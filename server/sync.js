@@ -117,6 +117,122 @@ export function isDirectoryElement(fileName, filePath = '') {
   return false;
 }
 
+export const VOB_CREATION_PROJECT = 'VOB 생성';
+export const PACKAGE_PROJECT = 'Package 제작';
+export const INCIDENT_REPORT_PROJECT = '장애내역';
+
+// Mantis projects whose issues share the CR number space but are not change
+// requests: they never carry a Check-in Log, so an empty filePaths list is
+// their normal state and no source diff exists for them.
+export const NON_CR_PROJECTS = new Set([VOB_CREATION_PROJECT, PACKAGE_PROJECT, INCIDENT_REPORT_PROJECT]);
+
+export function isVobCreationCR(cr) {
+  return !!cr && cr.project === VOB_CREATION_PROJECT;
+}
+
+export function isNonCrRecord(cr) {
+  return !!cr && NON_CR_PROJECTS.has(cr.project);
+}
+
+function extractVobName(text) {
+  if (!text) return '';
+  const clean = String(text).replace(/<[^>]+>/g, ' ').replace(/[\[\]\(\)]/g, ' ');
+  const m = clean.match(/\b([A-Z0-9]{2,}(?:_[A-Za-z0-9]+)+)\b/);
+  return m ? m[1] : '';
+}
+
+/**
+ * "VOB 생성" project issues are not CRs: their title reads
+ *   [완료][KT-C4] SSW_KTC4_41A 생성 - 설명
+ * so the generic CR title parser would put "완료" into customer and leave vob
+ * empty. Map stage → (none), customer → 2nd bracket, vob → VOB name.
+ */
+export function parseVobCreationTitle(title) {
+  const base = parseTitleTags(title);
+  if (!title) return base;
+  const brackets = [...title.matchAll(/\[([^\]]*)\]/g)].map(m => m[1].trim());
+  const stripped = title.replace(/^\s*(?:\[[^\]]*\]\s*)+/, '').trim();
+  const vob = extractVobName(stripped) || extractVobName(title);
+  return {
+    ...base,
+    customer: brackets.length >= 2 ? brackets[1] : (brackets[0] || ''),
+    vob,
+    module: '',
+    authorInTitle: '',
+    cleanSummary: stripped || base.cleanSummary
+  };
+}
+
+export function parseTitleForProject(title, project) {
+  // "Package 제작" titles use the same "[완료][SITE] VOB_NAME ..." shape as VOB creation.
+  return project === VOB_CREATION_PROJECT || project === PACKAGE_PROJECT
+    ? parseVobCreationTitle(title)
+    : parseTitleTags(title);
+}
+
+/**
+ * Pull the [PKG] custom fields of a "Package 제작" Mantis page.
+ */
+export function parsePackageFields(fields) {
+  const pick = (...keys) => {
+    for (const k of keys) {
+      if (fields[k] !== undefined && String(fields[k]).trim() !== '') return String(fields[k]).trim();
+    }
+    return '';
+  };
+  const dot = v => (v === '.' ? '' : v);
+  const relatedRaw = dot(pick('[PKG] 관련 CR번호', '[PKG] 관련 CR'));
+  const relatedCrids = [...relatedRaw.matchAll(/\d{4,7}/g)].map(m => m[0].padStart(7, '0'));
+  const info = {
+    purpose: dot(pick('[PKG] 용도')),
+    product: dot(pick('[PKG] 제품')),
+    type: dot(pick('[PKG] Type')),
+    targetVob: extractVobName(pick('[PKG] 대상 VOB', '[PKG] 대상VOB')),
+    site: dot(pick('[PKG] 적용예정SITE', '[PKG] 적용예정 SITE')),
+    dueDate: dot(pick('[PKG] 제작기한')),
+    osType: dot(pick('[PKG] OS Type')),
+    changedBlocks: dot(pick('[PKG] 변경 lib/blk', '[PKG] 변경 lib/blk ')),
+    testRequestNo: dot(pick('[PKG]시험의뢰번호', '[PKG] 시험의뢰번호')),
+    testCompleteNo: dot(pick('[PKG]시험완료번호', '[PKG] 시험완료번호')),
+    relatedCrids,
+    request: dot(pick('[PKG] 제작요청사항')),
+    result: dot(pick('[PKG] 제작내역')),
+    files: dot(pick('[PKG] File'))
+  };
+  if (!Object.values(info).some(v => (Array.isArray(v) ? v.length : v))) return null;
+  return info;
+}
+
+/**
+ * Pull the [VOB] custom fields of a "VOB 생성" Mantis page.
+ * History lines look like "(2026.07.24) SSW_KTC4_40A ==> SSW_KTC4_41A".
+ */
+export function parseVobCreationFields(fields, summary) {
+  const pick = (...keys) => {
+    for (const k of keys) if (fields[k] !== undefined && String(fields[k]).trim() !== '') return String(fields[k]).trim();
+    return '';
+  };
+  const baseVobRaw = pick('[VOB] 기준 VOB이름', '[VOB] 기준 VOB', '기준 VOB이름', '기준 VOB');
+  const location = pick('[VOB] 생성위치(개발서버)', '[VOB] 생성위치', '생성위치(개발서버)');
+  const trigger = pick('[VOB] Trigger 설정 유무', 'Trigger 설정 유무');
+  const historyRaw = pick('[VOB] History', 'VOB History');
+  const targetVobRaw = pick('[VOB] 생성 VOB이름', '생성 VOB이름');
+
+  const history = [];
+  for (const line of historyRaw.split(/\r?\n/)) {
+    const m = line.match(/^\s*\(?([\d.\-\/]+)\)?\s*(.+?)\s*(?:==>|=>|->)\s*(.+?)\s*$/);
+    if (m) {
+      history.push({ date: m[1].trim(), from: extractVobName(m[2]) || m[2].trim(), to: extractVobName(m[3]) || m[3].trim(), raw: line.trim() });
+    }
+  }
+
+  const targetVob = extractVobName(targetVobRaw) || parseVobCreationTitle(summary).vob || (history[0] ? history[0].to : '');
+  const baseVob = extractVobName(baseVobRaw) || (history[0] ? history[0].from : '');
+  if (!targetVob && !baseVob && !historyRaw && !location && !trigger) return null;
+
+  return { targetVob, baseVob, location, trigger, history };
+}
+
 export function parseCheckinLog(log) {
   if (!log) return { files: [], filePaths: [] };
 
@@ -356,7 +472,7 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
 
     if (existing) {
       if (existing.lastUpdated !== lastUpdated || existing.status !== status || existing.summary !== summary || existing.checkinLog !== checkinLogRaw || (description && existing.description !== description)) {
-        const titleParsed = parseTitleTags(summary);
+        const titleParsed = parseTitleForProject(summary, project || existing.project);
         // Preserve richer checkinLog if already present in DB (e.g. from view.php live scrape)
         const finalCheckinLog = (existing.checkinLog && existing.checkinLog.length > (checkinLogRaw || '').length)
           ? existing.checkinLog
@@ -398,7 +514,7 @@ export async function syncMantisData(mantisUrl = 'http://192.168.16.200') {
         unchangedCount++;
       }
     } else {
-      const titleParsed = parseTitleTags(summary);
+      const titleParsed = parseTitleForProject(summary, project);
       const checkinParsed = parseCheckinLog(checkinLogRaw);
 
       const newCr = {
@@ -645,6 +761,11 @@ export async function fetchCRPageDetails(bugId, mantisUrl = 'http://192.168.16.2
       attachments
     };
 
+    const vobCreation = parseVobCreationFields(fields, fields['제목'] || '');
+    if (vobCreation) details.vobCreation = vobCreation;
+    const packageInfo = parsePackageFields(fields);
+    if (packageInfo) details.packageInfo = packageInfo;
+
     // Live Check-in Log update from view.php page
     const liveCheckinLog = fields['Check-in Log'] || fields['check_in_log'] || fields['체크인 로그'] || fields['Checkin Log'] || '';
     if (liveCheckinLog) {
@@ -682,7 +803,7 @@ export async function fetchCRPageDetails(bugId, mantisUrl = 'http://192.168.16.2
       // Keep the written top-level fields in sync with the live page as well,
       // not just the check-in log / attachments.
       if (liveSummary && liveSummary !== found.summary) {
-        const titleParsed = parseTitleTags(liveSummary);
+        const titleParsed = parseTitleForProject(liveSummary, found.project);
         found.summary = liveSummary;
         found.customer = titleParsed.customer;
         found.vob = titleParsed.vob;
@@ -690,6 +811,8 @@ export async function fetchCRPageDetails(bugId, mantisUrl = 'http://192.168.16.2
         found.authorInTitle = titleParsed.authorInTitle;
         found.cleanSummary = titleParsed.cleanSummary;
       }
+      if (details.vobCreation?.targetVob && isVobCreationCR(found)) found.vob = details.vobCreation.targetVob;
+      if (details.packageInfo?.targetVob && found.project === PACKAGE_PROJECT) found.vob = details.packageInfo.targetVob;
       if (liveStatus) found.status = liveStatus;
       if (liveAssignee) found.assignee = liveAssignee;
       if (liveReporter) found.reporter = liveReporter;
