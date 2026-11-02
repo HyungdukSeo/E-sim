@@ -206,7 +206,9 @@ export function App() {
   };
 
   const handleUpdateCR = (updated: CRItem) => {
-    setSelectedCR(updated);
+    // Only swap the selection if that CR is still open — a late detail fetch
+    // must not reopen a modal the user already closed or replace another CR.
+    setSelectedCR(prev => (prev && prev.crid === updated.crid ? updated : prev));
     setAllCrs(prev => prev.map(c => c.crid === updated.crid ? updated : c));
   };
 

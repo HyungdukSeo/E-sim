@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, 
   ExternalLink, 
@@ -83,20 +83,40 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
   const [analyzingDiff, setAnalyzingDiff] = useState(false);
   const [diffCacheStatus, setDiffCacheStatus] = useState<{ cached: boolean; fileCount?: number } | null>(null);
 
+  // Tracks the CRID we already auto-fetched details for, so a CR that has no
+  // check-in files / attachments (or whose Mantis fetch failed) is fetched once
+  // per open instead of re-fetching every time onUpdateCR hands back a new
+  // object — that re-render → re-fetch cycle used to spin forever and could even
+  // reopen the modal after it was closed.
+  const autoFetchedCridRef = useRef<string | null>(null);
+
   useEffect(() => {
     setCurrentCR(cr);
-    if (cr && (!cr.detailsFetched || !Array.isArray(cr.details?.attachments) || !cr.filePaths?.length)) {
-      setLoadingDetails(true);
-      fetchCRDetail(cr.crid, mantisUrl)
-        .then(res => {
-          if (res && res.cr) {
-            setCurrentCR(res.cr);
-            onUpdateCR?.(res.cr);
-          }
-        })
-        .catch(err => console.warn('Failed to fetch full CR details:', err))
-        .finally(() => setLoadingDetails(false));
+    if (!cr) {
+      autoFetchedCridRef.current = null;
+      return;
     }
+    const needsDetails = !cr.detailsFetched || !Array.isArray(cr.details?.attachments);
+    if (!needsDetails || autoFetchedCridRef.current === cr.crid) return;
+
+    autoFetchedCridRef.current = cr.crid;
+    let cancelled = false;
+    setLoadingDetails(true);
+    fetchCRDetail(cr.crid, mantisUrl)
+      .then(res => {
+        if (cancelled) return;
+        if (res && res.cr) {
+          setCurrentCR(res.cr);
+          onUpdateCR?.(res.cr);
+        }
+      })
+      .catch(err => console.warn('Failed to fetch full CR details:', err))
+      .finally(() => {
+        if (!cancelled) setLoadingDetails(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [cr, mantisUrl]);
 
   const handleRefreshFromMantis = async () => {
