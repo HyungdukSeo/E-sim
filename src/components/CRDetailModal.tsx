@@ -96,7 +96,13 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
       autoFetchedCridRef.current = null;
       return;
     }
-    const needsDetails = !cr.detailsFetched || !Array.isArray(cr.details?.attachments);
+    // "VOB 생성" CRs have no Check-in Log by nature, so an empty filePaths list
+    // is not a reason to re-fetch them.
+    const expectsCheckinFiles = cr.project !== 'VOB 생성';
+    const needsDetails =
+      !cr.detailsFetched ||
+      !Array.isArray(cr.details?.attachments) ||
+      (expectsCheckinFiles && !cr.filePaths?.length);
     if (!needsDetails || autoFetchedCridRef.current === cr.crid) return;
 
     autoFetchedCridRef.current = cr.crid;

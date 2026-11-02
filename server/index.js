@@ -495,11 +495,12 @@ app.get('/api/cr/:id', async (req, res) => {
     return res.status(404).json({ ok: false, error: 'CR not found' });
   }
 
-  // If details not fetched yet, attachments not populated, or refresh requested, fetch on-demand from Mantis.
-  // An empty filePaths list is NOT a reason by itself: CRs without a Check-in
-  // Log (e.g. administrator-created ones) would otherwise be re-scraped on
-  // every single view. Sync already clears detailsFetched when the CR changes.
-  if (!found.detailsFetched || !Array.isArray(found.details?.attachments) || req.query.refresh === 'true') {
+  // If details not fetched yet, attachments not populated, refresh requested, or
+  // no check-in files yet (a later check-in may have been added), fetch on-demand from Mantis.
+  // "VOB 생성" project CRs never carry a Check-in Log, so an empty filePaths list
+  // is their normal state — re-scraping them on every view is pointless.
+  const expectsCheckinFiles = found.project !== 'VOB 생성';
+  if (!found.detailsFetched || !Array.isArray(found.details?.attachments) || req.query.refresh === 'true' || (expectsCheckinFiles && !found.filePaths?.length)) {
     try {
       const { meta } = getLocalDatabase();
       const targetMantisUrl = req.query.mantisUrl || req.headers['x-mantis-url'] || meta?.mantisUrl || 'http://192.168.16.200';
