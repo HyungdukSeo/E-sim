@@ -20,13 +20,35 @@ export function getRecordKind(cr?: CRItem | null): RecordKind {
   }
 }
 
-/** Short label shown in front of the number: "CR #0016126", "VOB #0016096", "PKG #0013713", "장애 #0012240". */
+/**
+ * ClearCase check-in comments tag each CR with its Mantis DB id, e.g.
+ * ",crdb00016126," or ",nqadb00012345,". Pick the tag this CR's own log uses;
+ * for CRs without a log fall back to the tag their project normally uses.
+ */
+const CHECKIN_TAG_RE = /,(crdb|nqadb)(\d{5,8})\b/g;
+const NQADB_PROJECTS = new Set(['XIP G3', 'X-XIC']);
+
+export function getCheckinDbTag(cr?: CRItem | null): string {
+  if (!cr) return 'crdb';
+  const counts: Record<string, number> = {};
+  for (const m of (cr.checkinLog || '').matchAll(CHECKIN_TAG_RE)) {
+    counts[m[1]] = (counts[m[1]] || 0) + 1;
+  }
+  const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+  if (best) return best[0];
+  return NQADB_PROJECTS.has(cr.project) ? 'nqadb' : 'crdb';
+}
+
+/**
+ * Label shown in front of the number, using the original naming:
+ * "crdb #0016126" (or "nqadb #…"), "vob #0016096", "Package 제작 #0013713", "장애내역 #0012240".
+ */
 export function getRecordPrefix(cr?: CRItem | null): string {
   switch (getRecordKind(cr)) {
-    case 'vob': return 'VOB';
-    case 'package': return 'PKG';
-    case 'report': return '장애';
-    default: return 'CR';
+    case 'vob': return 'vob';
+    case 'package': return PACKAGE_PROJECT;
+    case 'report': return INCIDENT_REPORT_PROJECT;
+    default: return getCheckinDbTag(cr);
   }
 }
 
