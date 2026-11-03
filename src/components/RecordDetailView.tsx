@@ -29,7 +29,7 @@ import {
 import { CRItem, AttachmentItem } from '../types/cr';
 import { fetchCRDetail, getAttachmentDownloadUrl } from '../services/api';
 import { copyToClipboard } from '../utils/clipboard';
-import { getRecordKind, getVobCreationTarget, getPackageTargetVob, parseVobCreationTitle, RecordKind } from '../utils/vobUtils';
+import { getRecordKind, getVobCreationTarget, getPackageTargetVob, parseVobCreationTitle, formatRecordId, RecordKind } from '../utils/vobUtils';
 
 interface RecordDetailViewProps {
   cr: CRItem;
@@ -155,7 +155,7 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({
             <span className={`px-2 py-0.5 rounded-md border text-xs font-bold flex items-center gap-1 ${meta.chip}`}>
               {meta.icon} {meta.label}
             </span>
-            <span className="font-mono text-xs text-slate-400">#{current.crid}</span>
+            <span className="font-mono text-xs text-slate-400">{formatRecordId(current)}</span>
             {title.stage && kind !== 'report' && (
               <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 text-[11px] font-semibold">
                 {title.stage}

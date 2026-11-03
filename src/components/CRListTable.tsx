@@ -15,6 +15,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { CRItem } from '../types/cr';
+import { formatRecordId } from '../utils/vobUtils';
 import { highlightText } from '../services/searchEngine';
 import { copyToClipboard } from '../utils/clipboard';
 
@@ -263,8 +264,8 @@ export const CRListTable: React.FC<CRListTableProps> = ({
                       {/* CRID with quick copy */}
                       <td className="py-2.5 px-3.5 font-mono font-bold text-slate-200">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-mantis-400 group-hover:text-mantis-300 transition-colors">
-                            {cr.crid}
+                          <span className="text-mantis-400 group-hover:text-mantis-300 transition-colors whitespace-nowrap">
+                            {formatRecordId(cr)}
                           </span>
                           <button
                             onClick={e => handleCopyId(e, cr.crid)}

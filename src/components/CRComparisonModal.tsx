@@ -20,6 +20,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { CRItem, AppSettings, SSHConfig } from '../types/cr';
+import { formatRecordId } from '../utils/vobUtils';
 import { compareCRsAPI, fetchCRDiffCache, loadSettings } from '../services/api';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -193,7 +194,7 @@ export const CRComparisonModal: React.FC<CRComparisonModalProps> = ({
                           {idx + 1}
                         </span>
                         <span className="font-mono text-base font-extrabold text-mantis-400">
-                          #{cr.crid}
+                          {formatRecordId(cr)}
                         </span>
                         <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 font-semibold">
                           {cr.status}

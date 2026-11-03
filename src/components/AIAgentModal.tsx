@@ -25,6 +25,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { CRItem, AppSettings, SSHConfig } from '../types/cr';
+import { formatRecordId } from '../utils/vobUtils';
 import { queryAI, fetchCRDetail, fetchAIProvidersStatus, AIProviderStatusItem } from '../services/api';
 import { SimilarCRs } from './SimilarCRs';
 import { FileTreeView } from './FileTreeView';
@@ -493,7 +494,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                                         <span className={`font-mono text-sm font-extrabold px-2 py-0.5 rounded-lg ${
                                           isSelected ? 'bg-mantis-500 text-slate-950' : 'bg-slate-800 text-mantis-400 group-hover:text-mantis-300'
                                         }`}>
-                                          #{item.crid}
+                                          {formatRecordId(item)}
                                         </span>
 
                                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${getStatusBadgeClass(item.status)}`}>
@@ -698,7 +699,7 @@ export const AIAgentModal: React.FC<AIAgentModalProps> = ({
                   <div className="space-y-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-base font-extrabold text-mantis-400">
-                        #{previewCR.crid}
+                        {formatRecordId(previewCR)}
                       </span>
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${getStatusBadgeClass(previewCR.status)}`}>
                         {previewCR.status}

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Sparkles, ArrowRight, FileCode, CheckCircle2 } from 'lucide-react';
 import { CRItem } from '../types/cr';
+import { formatRecordId } from '../utils/vobUtils';
 
 interface SimilarCRsProps {
   currentCR: CRItem;
@@ -80,7 +81,7 @@ export const SimilarCRs: React.FC<SimilarCRsProps> = ({
           >
             <div className="space-y-1 truncate">
               <div className="flex items-center gap-2 text-xs">
-                <span className="font-mono font-bold text-mantis-400">#{cr.crid}</span>
+                <span className="font-mono font-bold text-mantis-400 whitespace-nowrap">{formatRecordId(cr)}</span>
                 <span className="text-slate-400 truncate max-w-[280px] font-medium text-[11px] group-hover:text-main">
                   {cr.cleanSummary || cr.summary}
                 </span>

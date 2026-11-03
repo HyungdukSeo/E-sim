@@ -137,7 +137,7 @@ export function isNonCrRecord(cr) {
 function extractVobName(text) {
   if (!text) return '';
   const clean = String(text).replace(/<[^>]+>/g, ' ').replace(/[\[\]\(\)]/g, ' ');
-  const m = clean.match(/\b([A-Z0-9]{2,}(?:_[A-Za-z0-9]+)+)\b/);
+  const m = clean.match(/\b([A-Z0-9]{2,}(?:_[A-Za-z0-9]+)+(?:\.[0-9]+)*)\b/);
   return m ? m[1] : '';
 }
 
@@ -147,20 +147,54 @@ function extractVobName(text) {
  * so the generic CR title parser would put "완료" into customer and leave vob
  * empty. Map stage → (none), customer → 2nd bracket, vob → VOB name.
  */
+const TITLE_STAGE_RE = /^(완료|complete|completed|진행중|진행|예정|취소|보류|대기)$/i;
+
 export function parseVobCreationTitle(title) {
   const base = parseTitleTags(title);
   if (!title) return base;
   const brackets = [...title.matchAll(/\[([^\]]*)\]/g)].map(m => m[1].trim());
-  const stripped = title.replace(/^\s*(?:\[[^\]]*\]\s*)+/, '').trim();
+  let stripped = title.replace(/^\s*(?:\[[^\]]*\]\s*)+/, '').trim();
+  // Stage markers ("[완료]") are not customers; take the first non-stage bracket.
+  let customer = brackets.find(b => b && !TITLE_STAGE_RE.test(b)) || '';
+  // Typo'd titles like "[완료]LGU+시내] SSW_..." lose the opening bracket.
+  const dangling = stripped.match(/^([^\[\]\s][^\]]{0,30})\]\s*/);
+  if (dangling) {
+    if (!customer) customer = dangling[1].trim();
+    stripped = stripped.slice(dangling[0].length).trim();
+  }
   const vob = extractVobName(stripped) || extractVobName(title);
   return {
     ...base,
-    customer: brackets.length >= 2 ? brackets[1] : (brackets[0] || ''),
+    customer,
     vob,
     module: '',
     authorInTitle: '',
     cleanSummary: stripped || base.cleanSummary
   };
+}
+
+/**
+ * Records synced before the project-aware title parser existed carry
+ * customer="완료" / vob="" for VOB 생성 & Package 제작 issues. Re-derive the
+ * title fields in place whenever the DB is loaded or imported (idempotent).
+ */
+export function normalizeNonCrTitles(crs) {
+  let fixed = 0;
+  for (const cr of crs) {
+    if (!cr || !NON_CR_PROJECTS.has(cr.project)) continue;
+    const t = parseTitleForProject(cr.summary, cr.project);
+    if (cr.customer !== t.customer || cr.vob !== t.vob || cr.module !== t.module ||
+        cr.authorInTitle !== t.authorInTitle || cr.cleanSummary !== t.cleanSummary) {
+      cr.customer = t.customer;
+      cr.vob = t.vob;
+      cr.module = t.module;
+      cr.authorInTitle = t.authorInTitle;
+      cr.cleanSummary = t.cleanSummary;
+      fixed++;
+    }
+  }
+  if (fixed > 0) console.log(`[DB] Normalized title fields of ${fixed} non-CR records (VOB 생성 / Package 제작 / 장애내역)`);
+  return fixed;
 }
 
 export function parseTitleForProject(title, project) {
@@ -342,6 +376,7 @@ export function getLocalDatabase() {
       delete parsedCrs[i].checkinEntries;
       cleanCRFilePaths(parsedCrs[i]);
     }
+    normalizeNonCrTitles(parsedCrs);
     inMemoryCrs = parsedCrs;
     inMemoryMeta = { status: 'cached', totalCount: inMemoryCrs.length, lastSyncTime: null };
     if (fs.existsSync(META_FILE)) {
@@ -644,6 +679,7 @@ export function importDatabase(importedCrs) {
 
   const merged = Array.from(crMap.values());
   merged.sort((a, b) => b.id - a.id);
+  normalizeNonCrTitles(merged);
 
   fs.writeFileSync(DB_FILE, JSON.stringify(merged), 'utf-8');
 

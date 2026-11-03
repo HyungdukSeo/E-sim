@@ -30,7 +30,7 @@ import { SimilarCRs } from './SimilarCRs';
 import { FileTreeView, filterOutDirectories } from './FileTreeView';
 import { CRCodeChangesView } from './CRCodeChangesView';
 import { RecordDetailView } from './RecordDetailView';
-import { isNonCrRecord } from '../utils/vobUtils';
+import { isNonCrRecord, formatRecordId } from '../utils/vobUtils';
 import { DiffViewerModal } from './DiffViewerModal';
 import { copyToClipboard } from '../utils/clipboard';
 import { fetchCRDetail, fetchCRDiffCache, analyzeCRDiffAPI, loadSettings } from '../services/api';
@@ -233,7 +233,7 @@ export const CRDetailModal: React.FC<CRDetailModalProps> = ({
         <div className="space-y-1.5 min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-lg font-extrabold text-mantis-400">
-              #{crItem.crid}
+              {formatRecordId(crItem)}
             </span>
 
             <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase ${getStatusBadgeClass(crItem.status)}`}>

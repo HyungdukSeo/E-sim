@@ -1,6 +1,7 @@
 import React from 'react';
 import { ExternalLink, Bookmark, FileCode, Calendar, User, Tag, Layers } from 'lucide-react';
 import { CRItem } from '../types/cr';
+import { formatRecordId } from '../utils/vobUtils';
 import { highlightText } from '../services/searchEngine';
 
 interface CRCardGridProps {
@@ -62,7 +63,7 @@ export const CRCardGrid: React.FC<CRCardGridProps> = ({
               <div className="flex items-center justify-between gap-2 mb-2">
                 <div className="flex items-center gap-2">
                   <span className="font-mono font-bold text-sm text-mantis-400">
-                    #{cr.crid}
+                    {formatRecordId(cr)}
                   </span>
                   <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
                     {cr.project}
